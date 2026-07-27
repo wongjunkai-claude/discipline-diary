@@ -1,9 +1,23 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Only signed-in users (your teachers, via Firebase Auth) can read or write.
-    // Nobody can delete entries or history from the client — keeps the audit trail intact.
+    // Discipline log entries — signed-in users only, deletes blocked entirely
+    // so the audit trail can never be erased from the client.
     match /incidents/{incidentId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if false;
+    }
+
+    // ISS / OSS suspension records — same protection.
+    match /suspensions/{suspensionId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if false;
+    }
+
+    // Rolling backup snapshot ("backups/latest"). Signed-in users can read it
+    // (to manually recover data) and the app can update it, but it can never
+    // be deleted from the client.
+    match /backups/{backupId} {
       allow read, create, update: if request.auth != null;
       allow delete: if false;
     }

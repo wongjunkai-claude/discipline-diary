@@ -54,14 +54,67 @@ That URL is the app. Send it to your discipline team.
 
 ## How data is structured
 
-Every entry lives in the `incidents` collection in Firestore:
-
+**Discipline log** — `incidents` collection:
 - `studentName`, `date`, `issue`, `actionTaken`, `status` (Open / Monitoring / Resolved)
 - `loggedBy`, `loggedByUid`, `createdAt`
 - `followUps`: append-only list of `{ date, note, by }`
 - `history`: append-only audit trail of every creation, status change, and
-  follow-up, each stamped with who and when. The security rules block deletes
-  from the client, so this trail can't be erased.
+  follow-up, each stamped with who and when.
+
+**Suspensions** — `suspensions` collection:
+- `studentName`, `type` (ISS or OSS), `startDate`, `days` (duration), `venue`
+  (in-school suspension only), `reason`, `loggedBy`, `createdAt`
+- Status (Upcoming / Active / Completed) is calculated automatically from
+  today's date — nothing to update manually
+- The Suspensions tab shows a live count of who's currently in ISS and OSS,
+  plus the full history for reference
+
+Security rules block **deletes** on both collections entirely — nothing can
+be erased from the client, only added to.
+
+## Data safety / backups
+
+Two layers of protection, on top of the delete-blocking rule above:
+
+1. **Automatic rolling snapshot.** Every time data changes, the full current
+   dataset (all incidents + all suspensions) is mirrored into a single
+   document: `backups/latest` in Firestore. If a bug ever corrupts or
+   overwrites something in the live data, open Firebase Console →
+   Firestore Database → Data → `backups` → `latest` to see the most recent
+   good copy in full, and manually copy values back into the affected
+   record.
+2. **Manual download.** The **"⬇ Backup"** button in the app header downloads
+   a dated `.json` file of everything, right to your device. Worth doing
+   this occasionally (e.g. weekly) and keeping a copy somewhere like Google
+   Drive — this one is safe even if your Firebase project itself ever has a
+   problem, since it isn't stored in Firebase at all.
+3. **Google Sheets mirror (optional but recommended).** Every entry created,
+   status change, follow-up, and suspension logged is also sent to a Google
+   Sheet you control — completely independent of Firebase. Setup:
+   1. Go to https://sheets.new to create a fresh spreadsheet
+   2. **Extensions → Apps Script**
+   3. Delete the placeholder code, paste in the contents of `apps-script.gs`
+      (in this folder)
+   4. Click **Deploy → New deployment** → gear icon → **Web app**
+      - Execute as: **Me**
+      - Who has access: **Anyone**
+   5. Click **Deploy**, click **Authorize access**, and approve (it's your
+      own script — this prompt is expected)
+   6. Copy the **Web app URL** it gives you
+   7. In `app.js`, find the line near the top that says:
+      `const SHEET_WEBHOOK_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";`
+      and replace the placeholder text with that URL
+   8. Commit the updated `app.js` to GitHub (same edit-in-browser process as
+      before)
+
+   From then on, a "Log" tab in that spreadsheet fills in automatically —
+   readable by anyone you share the sheet with, with zero dependency on
+   Firebase or this app staying online.
+
+None of these are a substitute for the others — they're deliberately
+redundant. Firestore is the live source of truth the app reads from; the
+rolling snapshot and the Sheet are both independent copies for the (hopefully
+rare) day something goes wrong.
 
 ## Making changes later
 
