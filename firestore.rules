@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only signed-in users (your teachers, via Firebase Auth) can read or write.
+    // Nobody can delete entries or history from the client — keeps the audit trail intact.
+    match /incidents/{incidentId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if false;
+    }
+  }
+}
