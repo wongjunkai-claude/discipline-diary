@@ -3,12 +3,21 @@
 Plain HTML/CSS/JS — no Node, no npm, no build step, no Terminal. Firebase is
 loaded directly from Google's CDN in the browser.
 
-## 1. Lock down Firestore (no CLI needed)
+## 1. Enable anonymous sign-in (invisible to your team, keeps the database locked to the app)
 
 1. Go to https://console.firebase.google.com → your `discipline-diary` project
-2. **Build → Firestore Database → Rules** tab
-3. Delete what's there and paste in the contents of `firestore.rules` (in this folder)
-4. Click **Publish**
+2. **Build → Authentication → Sign-in method**
+3. Click **Anonymous** in the list of providers, toggle it **on**, click **Save**
+
+This lets the app quietly authenticate each visitor in the background so your
+Firestore security rules can still block anyone who doesn't go through the
+app itself — but nobody ever sees a login screen. They just type their name.
+
+## 2. Lock down Firestore
+
+1. Same project → **Build → Firestore Database → Rules** tab
+2. Paste in the contents of `firestore.rules` (in this folder)
+3. Click **Publish**
 
 ## 2. Put it on GitHub (all in the browser)
 
@@ -35,8 +44,10 @@ That URL is the app. Send it to your discipline team.
 ## 4. First use
 
 1. Open the link
-2. Click **Sign up**, create the first teacher account (name, email, password)
-3. Have each teacher do the same the first time they open it
+2. Type your name and click **"Enter the log"** — that's it, no email or password
+3. Each teacher does the same the first time they open it on their device
+   (their name is remembered after that; "Not you?" in the header lets
+   someone switch names on a shared device)
 4. On phones: open the link in the browser, then use the browser's
    **"Add to Home Screen"** option (Safari: Share button → Add to Home Screen)
    — it'll behave like an installed app from then on

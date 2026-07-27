@@ -1,8 +1,7 @@
 // ---------- Firebase (loaded directly from Google's CDN, no npm/build needed) ----------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, updateProfile, signOut,
+  getAuth, onAuthStateChanged, signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, arrayUnion,
@@ -42,10 +41,9 @@ function formatDateTime(ms) {
 
 // ---------- App state ----------
 const state = {
-  user: undefined, // undefined = loading, null = signed out
-  authMode: "signin",
-  authError: "",
-  authBusy: false,
+  authReady: false, // true once anonymous sign-in completes
+  teacherName: localStorage.getItem("dd-teacher-name") || "",
+  nameDraft: "",
   incidents: [],
   dataLoaded: false,
   tab: "All",
@@ -61,51 +59,46 @@ const state = {
 const root = document.getElementById("app");
 let unsubIncidents = null;
 
+signInAnonymously(auth).catch(() => { state.authError = "Could not connect. Check your internet connection."; render(); });
+
 onAuthStateChanged(auth, (u) => {
-  state.user = u;
+  state.authReady = !!u;
   if (unsubIncidents) { unsubIncidents(); unsubIncidents = null; }
-  if (u) {
-    state.dataLoaded = false;
-    unsubIncidents = onSnapshot(
-      collection(db, "incidents"),
-      (snap) => {
-        state.incidents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        state.dataLoaded = true;
-        render();
-      },
-      () => { state.dataLoaded = true; render(); }
-    );
+  if (u && state.teacherName) {
+    startListening();
   }
   render();
 });
 
+function startListening() {
+  state.dataLoaded = false;
+  unsubIncidents = onSnapshot(
+    collection(db, "incidents"),
+    (snap) => {
+      state.incidents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.dataLoaded = true;
+      render();
+    },
+    () => { state.dataLoaded = true; render(); }
+  );
+}
+
 function teacherName() {
-  return state.user?.displayName || state.user?.email || "Unnamed teacher";
+  return state.teacherName || "Unnamed teacher";
+}
+
+function saveTeacherName(name) {
+  state.teacherName = name;
+  localStorage.setItem("dd-teacher-name", name);
+  if (state.authReady) startListening();
+  render();
 }
 
 // ---------- Actions ----------
-async function handleAuthSubmit(e) {
+function handleNameSubmit(e) {
   e.preventDefault();
-  const form = e.target;
-  const name = form.name?.value?.trim();
-  const email = form.email.value.trim();
-  const password = form.password.value;
-  state.authError = "";
-  state.authBusy = true;
-  render();
-  try {
-    if (state.authMode === "signup") {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(cred.user, { displayName: name || email.split("@")[0] });
-    } else {
-      await signInWithEmailAndPassword(auth, email, password);
-    }
-  } catch (err) {
-    state.authError = err.message.replace("Firebase: ", "");
-  } finally {
-    state.authBusy = false;
-    render();
-  }
+  const name = e.target.name.value.trim();
+  if (name) saveTeacherName(name);
 }
 
 async function submitNewIncident(e) {
@@ -124,7 +117,7 @@ async function submitNewIncident(e) {
     await addDoc(collection(db, "incidents"), {
       studentName, date, issue, actionTaken, status,
       loggedBy: teacherName(),
-      loggedByUid: state.user.uid,
+      loggedByUid: auth.currentUser?.uid || null,
       createdAt: now,
       followUps: [],
       history: [{ id: uid(), type: "created", detail: `Entry created — status set to ${status}`, by: teacherName(), at: now }],
@@ -170,13 +163,13 @@ async function addFollowUp(id) {
 
 // ---------- Rendering ----------
 function render() {
-  if (state.user === undefined) {
+  if (!state.authReady) {
     root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`;
     return;
   }
-  if (state.user === null) {
-    root.innerHTML = renderAuthScreen();
-    attachAuthListeners();
+  if (!state.teacherName) {
+    root.innerHTML = renderNameScreen();
+    attachNameListeners();
     return;
   }
   if (!state.dataLoaded) {
@@ -187,36 +180,21 @@ function render() {
   attachMainListeners();
 }
 
-function renderAuthScreen() {
-  const isSignup = state.authMode === "signup";
+function renderNameScreen() {
   return `
     <div class="dd-app"><div class="dd-center">
-      <form id="auth-form" class="dd-auth-card">
+      <form id="name-form" class="dd-auth-card">
         <div class="dd-title">Discipline Diary</div>
-        <div class="dd-subtitle">${isSignup ? "Create your account to join the shared discipline log." : "Sign in with your school account to view and log entries."}</div>
-        ${isSignup ? `<label class="dd-label">Your name</label><input class="dd-input" name="name" placeholder="e.g. Mr. Adams" required />` : ""}
-        <label class="dd-label">Email</label>
-        <input class="dd-input" name="email" type="email" required />
-        <label class="dd-label">Password</label>
-        <input class="dd-input" name="password" type="password" minlength="6" required />
-        ${state.authError ? `<div class="dd-error">${escapeHtml(state.authError)}</div>` : ""}
-        <button class="dd-btn-primary" type="submit" ${state.authBusy ? "disabled" : ""}>${state.authBusy ? "Please wait…" : isSignup ? "Create account" : "Sign in"}</button>
-        <div class="dd-switch">
-          ${isSignup
-            ? `Already have an account? <button type="button" id="switch-mode">Sign in</button>`
-            : `No account yet? <button type="button" id="switch-mode">Sign up</button>`}
-        </div>
+        <div class="dd-subtitle">Sign the register to begin. This name is saved on this device only, and will tag every entry and follow-up you log.</div>
+        <label class="dd-label">Your name</label>
+        <input class="dd-input" name="name" placeholder="e.g. Mr. Adams" required autofocus />
+        <button class="dd-btn-primary" type="submit">Enter the log</button>
       </form>
     </div></div>`;
 }
 
-function attachAuthListeners() {
-  document.getElementById("auth-form").addEventListener("submit", handleAuthSubmit);
-  document.getElementById("switch-mode").addEventListener("click", () => {
-    state.authMode = state.authMode === "signin" ? "signup" : "signin";
-    state.authError = "";
-    render();
-  });
+function attachNameListeners() {
+  document.getElementById("name-form").addEventListener("submit", handleNameSubmit);
 }
 
 function filteredIncidents() {
@@ -298,7 +276,7 @@ function renderMain() {
           </div>
           <div class="dd-header-actions">
             <button class="dd-newbtn" id="btn-new">+ New entry</button>
-            <button class="dd-signout" id="btn-signout">Sign out</button>
+            <button class="dd-signout" id="btn-change-name">Not you?</button>
           </div>
         </div>
       </div>
@@ -348,7 +326,12 @@ function renderNewForm() {
 
 function attachMainListeners() {
   document.getElementById("btn-new").addEventListener("click", () => { state.showNewForm = true; state.expandedId = null; state._newStatus = "Open"; render(); });
-  document.getElementById("btn-signout").addEventListener("click", () => signOut(auth));
+  document.getElementById("btn-change-name").addEventListener("click", () => {
+    localStorage.removeItem("dd-teacher-name");
+    state.teacherName = "";
+    if (unsubIncidents) { unsubIncidents(); unsubIncidents = null; }
+    render();
+  });
 
   document.querySelectorAll('[data-action="set-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.tab = el.dataset.tab; render(); }));
