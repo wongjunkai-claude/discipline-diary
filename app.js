@@ -41,9 +41,10 @@ function logToSheet(record) {
 const STATUSES = ["Open", "Monitoring", "Resolved"];
 const STATUS_STYLE = {
   Open: { ink: "#A3372B", label: "OPEN" },
-  Monitoring: { ink: "#B8863B", label: "MONITORING" },
+  Monitoring: { ink: "#B8863B", label: "IN PROGRESS" },
   Resolved: { ink: "#3C6E47", label: "RESOLVED" },
 };
+const STATUS_TEXT = { Open: "Open", Monitoring: "In Progress", Resolved: "Resolved" };
 const SUSP_TYPE_STYLE = {
   ISS: { ink: "#B8863B", label: "ISS" },
   OSS: { ink: "#A3372B", label: "OSS" },
@@ -190,6 +191,8 @@ function askDeletePassword() {
   }
   return true;
 }
+
+function teacherName() {
   return state.teacherName || "Unnamed teacher";
 }
 
@@ -226,7 +229,7 @@ async function submitNewIncident(e) {
       loggedByUid: auth.currentUser?.uid || null,
       createdAt: now,
       followUps: [],
-      history: [{ id: uid(), type: "created", detail: `Entry created — status set to ${status}`, by: teacherName(), at: now }],
+      history: [{ id: uid(), type: "created", detail: `Entry created — status set to ${STATUS_TEXT[status]}`, by: teacherName(), at: now }],
     });
     state.showNewForm = false;
     state._newStatus = "Open";
@@ -249,7 +252,7 @@ async function updateStatus(id, newStatus, currentStatus) {
   try {
     await updateDoc(doc(db, "incidents", id), {
       status: newStatus,
-      history: arrayUnion({ id: uid(), type: "status", detail: `Status changed from ${currentStatus} to ${newStatus}`, by: teacherName(), at: now }),
+      history: arrayUnion({ id: uid(), type: "status", detail: `Status changed from ${STATUS_TEXT[currentStatus]} to ${STATUS_TEXT[newStatus]}`, by: teacherName(), at: now }),
     });
     logToSheet({
       recordType: "Incident", action: "Status changed", studentName: it?.studentName || "",
@@ -573,7 +576,7 @@ function renderLogSection() {
           <button class="dd-newbtn" id="btn-new">+ New entry</button>
         </div>
         <div class="dd-tabs">
-          ${["All", ...STATUSES, "Deleted"].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
+          ${["All", ...STATUSES, "Deleted"].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t === "All" || t === "Deleted" ? t : STATUS_TEXT[t]}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">

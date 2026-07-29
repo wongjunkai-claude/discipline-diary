@@ -21,6 +21,13 @@ body { margin: 0; background: #E3E1D6; }
   width: 100%; font-family: 'IBM Plex Sans', sans-serif; border: 1px solid #C9C4B4; background: #fff;
   padding: 9px 12px; border-radius: 3px; font-size: 14px; outline: none;
 }
+input[type="date"].dd-input, input[type="number"].dd-input {
+  box-sizing: border-box;
+  max-width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+}
 .dd-input:focus, .dd-textarea:focus { border-color: #1B2A41; }
 .dd-textarea { resize: none; }
 .dd-btn-primary {
