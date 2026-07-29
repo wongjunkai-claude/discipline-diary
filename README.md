@@ -72,6 +72,30 @@ That URL is the app. Send it to your discipline team.
 Security rules block **deletes** on both collections entirely — nothing can
 be erased from the client, only added to.
 
+## Removing entries
+
+There's no true delete — matching the "nothing can be erased" promise above.
+Instead, clicking **"Remove entry"** (inside an expanded discipline entry) or
+**"Remove"** (on a suspension) asks for a password before hiding it from the
+normal views. The record itself stays in Firestore untouched, just tagged as
+removed, and shows up under the **"Deleted"** tab where it can be restored
+any time with no password needed.
+
+The password is set in `app.js`:
+```
+const DELETE_PASSWORD = "shsm";
+```
+Change it there (and re-commit to GitHub) any time you want a different one.
+
+**Important:** because this is a plain client-side app with no server, this
+password only stops accidental clicks in the interface — it's not
+cryptographically secure. Anyone who opened their browser's developer tools
+could bypass it and call the underlying delete function directly. It's a
+"are you sure, and do you know the code" gate, not a real access-control
+boundary. Real security here would need Firestore rules keyed to something
+the client can't see or fake (e.g. real per-teacher accounts with roles),
+which is a bigger step up from this project's current design.
+
 ## Data safety / backups
 
 Two layers of protection, on top of the delete-blocking rule above:

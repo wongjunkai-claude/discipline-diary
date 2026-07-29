@@ -22,7 +22,7 @@ const db = getFirestore(app);
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
-const SHEET_WEBHOOK_URL = "https://script.google.com/a/macros/moe.edu.sg/s/AKfycbyEXCtdtriLO9Qli9OIEHLH2348T9oc5VFEX9Qr7_nsrEv8zoYlrZftMExpEjcg4h_T/exec";
+const SHEET_WEBHOOK_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 function logToSheet(record) {
   if (!SHEET_WEBHOOK_URL || SHEET_WEBHOOK_URL.startsWith("PASTE_")) return;
@@ -179,7 +179,17 @@ function downloadBackupFile() {
   URL.revokeObjectURL(url);
 }
 
-function teacherName() {
+const DELETE_PASSWORD = "shsm";
+
+function askDeletePassword() {
+  const pw = window.prompt("Enter password to remove this entry:");
+  if (pw === null) return false;
+  if (pw !== DELETE_PASSWORD) {
+    alert("Incorrect password. Entry was not removed.");
+    return false;
+  }
+  return true;
+}
   return state.teacherName || "Unnamed teacher";
 }
 
@@ -271,7 +281,34 @@ async function addFollowUp(id) {
   }
 }
 
-// ---------- Suspension actions ----------
+async function deleteIncident(id) {
+  if (!askDeletePassword()) return;
+  const it = state.incidents.find((i) => i.id === id);
+  const now = Date.now();
+  try {
+    await updateDoc(doc(db, "incidents", id), {
+      deleted: true, deletedAt: now, deletedBy: teacherName(),
+      history: arrayUnion({ id: uid(), type: "deleted", detail: "Entry removed", by: teacherName(), at: now }),
+    });
+    logToSheet({ recordType: "Incident", action: "Removed", studentName: it?.studentName || "", details: "", loggedBy: teacherName() });
+  } catch (err) {
+    state.saveError = true; render();
+  }
+}
+
+async function restoreIncident(id) {
+  const it = state.incidents.find((i) => i.id === id);
+  const now = Date.now();
+  try {
+    await updateDoc(doc(db, "incidents", id), {
+      deleted: false,
+      history: arrayUnion({ id: uid(), type: "restored", detail: "Entry restored", by: teacherName(), at: now }),
+    });
+    logToSheet({ recordType: "Incident", action: "Restored", studentName: it?.studentName || "", details: "", loggedBy: teacherName() });
+  } catch (err) {
+    state.saveError = true; render();
+  }
+}
 async function submitNewSuspension(e) {
   e.preventDefault();
   const f = e.target;
@@ -303,6 +340,27 @@ async function submitNewSuspension(e) {
   } finally {
     state.saving = false;
     render();
+  }
+}
+
+async function deleteSuspension(id) {
+  if (!askDeletePassword()) return;
+  const s = state.suspensions.find((i) => i.id === id);
+  try {
+    await updateDoc(doc(db, "suspensions", id), { deleted: true, deletedAt: Date.now(), deletedBy: teacherName() });
+    logToSheet({ recordType: "Suspension", action: "Removed", studentName: s?.studentName || "", details: "", loggedBy: teacherName() });
+  } catch (err) {
+    state.saveError = true; render();
+  }
+}
+
+async function restoreSuspension(id) {
+  const s = state.suspensions.find((i) => i.id === id);
+  try {
+    await updateDoc(doc(db, "suspensions", id), { deleted: false });
+    logToSheet({ recordType: "Suspension", action: "Restored", studentName: s?.studentName || "", details: "", loggedBy: teacherName() });
+  } catch (err) {
+    state.saveError = true; render();
   }
 }
 
@@ -344,7 +402,12 @@ function attachNameListeners() {
 
 function filteredIncidents() {
   let list = state.incidents;
-  if (state.tab !== "All") list = list.filter((it) => it.status === state.tab);
+  if (state.tab === "Deleted") {
+    list = list.filter((it) => it.deleted);
+  } else {
+    list = list.filter((it) => !it.deleted);
+    if (state.tab !== "All") list = list.filter((it) => it.status === state.tab);
+  }
   if (state.query.trim()) {
     const q = state.query.trim().toLowerCase();
     list = list.filter((it) => it.studentName.toLowerCase().includes(q));
@@ -353,25 +416,34 @@ function filteredIncidents() {
 }
 
 function counts() {
-  const c = { Open: 0, Monitoring: 0, Resolved: 0 };
-  state.incidents.forEach((it) => { if (c[it.status] !== undefined) c[it.status]++; });
+  const c = { Open: 0, Monitoring: 0, Resolved: 0, Deleted: 0 };
+  state.incidents.forEach((it) => {
+    if (it.deleted) { c.Deleted++; return; }
+    if (c[it.status] !== undefined) c[it.status]++;
+  });
   return c;
 }
 
 function filteredSuspensions() {
   let list = state.suspensions.map((s) => ({ ...s, _status: suspensionStatus(s) }));
-  if (state.suspTab !== "All") list = list.filter((s) => s._status === state.suspTab);
+  if (state.suspTab === "Deleted") {
+    list = list.filter((s) => s.deleted);
+  } else {
+    list = list.filter((s) => !s.deleted);
+    if (state.suspTab !== "All") list = list.filter((s) => s._status === state.suspTab);
+  }
   if (state.suspQuery.trim()) {
     const q = state.suspQuery.trim().toLowerCase();
     list = list.filter((s) => s.studentName.toLowerCase().includes(q));
   }
   const order = { Active: 0, Upcoming: 1, Completed: 2 };
-  return list.sort((a, b) => order[a._status] - order[b._status] || b.startDate.localeCompare(a.startDate));
+  return list.sort((a, b) => (order[a._status] ?? 3) - (order[b._status] ?? 3) || b.startDate.localeCompare(a.startDate));
 }
 
 function suspCounts() {
-  const c = { Upcoming: 0, Active: 0, Completed: 0, ISS: 0, OSS: 0 };
+  const c = { Upcoming: 0, Active: 0, Completed: 0, ISS: 0, OSS: 0, Deleted: 0 };
   state.suspensions.forEach((s) => {
+    if (s.deleted) { c.Deleted++; return; }
     c[suspensionStatus(s)]++;
     if (s.type === "ISS") c.ISS++; else c.OSS++;
   });
@@ -424,13 +496,19 @@ function renderCard(it) {
           <div class="dd-history">
             ${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}
           </div>` : ""}
+        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4">
+          ${it.deleted
+            ? `<div class="dd-mono-muted" style="font-size:11px;margin-bottom:6px">Removed by ${escapeHtml(it.deletedBy || "")} on ${formatDateTime(it.deletedAt)}</div>
+               <button class="dd-add-btn" data-action="restore-incident" data-id="${it.id}">Restore entry</button>`
+            : `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>`}
+        </div>
       </div>` : ""}
     </div>`;
 }
 
 function renderSuspCard(s) {
   const typeStyle = SUSP_TYPE_STYLE[s.type];
-  const statusStyle = SUSP_STATUS_STYLE[s._status];
+  const statusStyle = s.deleted ? { ink: "#8A8571", label: "REMOVED" } : SUSP_STATUS_STYLE[s._status];
   const endDate = addDays(s.startDate, s.days);
   return `
     <div class="dd-card">
@@ -448,6 +526,11 @@ function renderSuspCard(s) {
           <span class="dd-stamp" style="color:${typeStyle.ink}">${typeStyle.label}</span>
           <span class="dd-stamp" style="color:${statusStyle.ink}">${statusStyle.label}</span>
         </div>
+      </div>
+      <div style="padding:0 16px 12px">
+        ${s.deleted
+          ? `<button class="dd-add-btn" data-action="restore-suspension" data-id="${s.id}">Restore</button>`
+          : `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>`}
       </div>
     </div>`;
 }
@@ -490,7 +573,7 @@ function renderLogSection() {
           <button class="dd-newbtn" id="btn-new">+ New entry</button>
         </div>
         <div class="dd-tabs">
-          ${["All", ...STATUSES].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
+          ${["All", ...STATUSES, "Deleted"].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -527,7 +610,7 @@ function renderSuspensionSection() {
           <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
         </div>
         <div class="dd-tabs">
-          ${["All", "Active", "Upcoming", "Completed"].map((t) => `<button class="dd-tab ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
+          ${["All", "Active", "Upcoming", "Completed", "Deleted"].map((t) => `<button class="dd-tab ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -653,6 +736,11 @@ function attachLogListeners() {
       render();
     }));
 
+  document.querySelectorAll('[data-action="delete-incident"]').forEach((el) =>
+    el.addEventListener("click", () => deleteIncident(el.dataset.id)));
+  document.querySelectorAll('[data-action="restore-incident"]').forEach((el) =>
+    el.addEventListener("click", () => restoreIncident(el.dataset.id)));
+
   if (state.showNewForm) {
     document.getElementById("new-form").addEventListener("submit", submitNewIncident);
     document.getElementById("modal-close").addEventListener("click", () => { state.showNewForm = false; render(); });
@@ -678,6 +766,11 @@ function attachSuspListeners() {
     const newSearch = document.getElementById("susp-search-input");
     if (newSearch) { newSearch.focus(); newSearch.setSelectionRange(cursor, cursor); }
   });
+
+  document.querySelectorAll('[data-action="delete-suspension"]').forEach((el) =>
+    el.addEventListener("click", () => deleteSuspension(el.dataset.id)));
+  document.querySelectorAll('[data-action="restore-suspension"]').forEach((el) =>
+    el.addEventListener("click", () => restoreSuspension(el.dataset.id)));
 
   if (state.showNewSuspForm) {
     document.getElementById("new-susp-form").addEventListener("submit", submitNewSuspension);
