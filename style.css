@@ -136,7 +136,7 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-dash-col { min-width: 0; overflow: hidden; }
 .dd-dash-col-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
 .dd-dash-count { font-size: 26px; font-weight: 700; line-height: 1; margin-bottom: 6px; }
-.dd-dash-list { max-height: 130px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.dd-dash-list { min-height: 130px; display: flex; flex-direction: column; gap: 3px; }
 .dd-dash-row { display: flex; justify-content: space-between; gap: 6px; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; }
 .dd-dash-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .dd-dash-class { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; flex: 0 0 auto; }
@@ -146,6 +146,9 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-dash-location { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #4C6B8A; font-weight: 600; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-dash-location:first-child { margin-top: 0; }
 
-.dd-venue-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dd-venue-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .dd-venue-date { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; width: 82px; flex-shrink: 0; }
-.dd-venue-row .dd-venue-input { flex: 1; }
+.dd-venue-row .dd-venue-input { flex: 1; min-width: 100px; }
+.dd-venue-date-input { width: 34px; height: 30px; padding: 0; border: 1px solid #C9C4B4; border-radius: 3px; background: #fff; flex-shrink: 0; color: transparent; }
+.dd-venue-date-input::-webkit-calendar-picker-indicator { position: absolute; opacity: 1; cursor: pointer; }
+.dd-venue-date-input { position: relative; }

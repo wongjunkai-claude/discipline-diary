@@ -96,6 +96,17 @@ every student assigned there listed underneath (name, then class). Within
 Next 2 Days, this grouping happens separately for each date. Out-of-School
 Suspension has no location concept, so its columns stay a flat list.
 
+## Weekend-aware scheduling
+
+When a suspension spans more than one day, day 2 onward defaults to the
+**next school day** — weekends are skipped automatically (a suspension
+starting Friday continues Monday, not Saturday). This only knows about
+weekends, not public holidays or school-specific closure days, since the
+app has no calendar data source for those. For day 2 and beyond, a small
+date field sits next to each day's location — tap it to override that
+day's date manually for holidays or any other exception. Changing one
+day's date doesn't shift any other day.
+
 ## Hybrid (linked) suspensions
 
 For a suspension that's part OSS and part ISS (e.g. 3 days out of school
@@ -211,5 +222,8 @@ about a minute of committing — no build or deploy command needed.
 
 ## Icons
 
+The current icon crops tightly to the book artwork and places it on a
+parchment (#E3E1D6) background matching the app's own color palette, so the
+dark navy book stands out clearly rather than blending into a dark backdrop.
 Swap `icons/icon-192.png` and `icons/icon-512.png` for your school's own
 branding any time — same filenames, same sizes.

@@ -74,11 +74,61 @@ function addDays(iso, days) {
   dt.setUTCDate(dt.getUTCDate() + days);
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }
+function isWeekend(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday, 6 = Saturday
+  return dow === 0 || dow === 6;
+}
+// Next school day after a given date, skipping weekends. Does not know about
+// public holidays or school-specific closure days — those need the manual
+// calendar override on day 2+ of a suspension.
+function nextSchoolDay(iso) {
+  let d = addDays(iso, 1);
+  while (isWeekend(d)) d = addDays(d, 1);
+  return d;
+}
+// Builds the default day-by-day date list for a new suspension: day 1 is
+// whatever start date was chosen, each following day defaults to the next
+// school day (Mon-Fri), skipping weekends automatically.
+function defaultDateList(startDate, days) {
+  const list = [startDate];
+  let cur = startDate;
+  for (let i = 1; i < days; i++) {
+    cur = nextSchoolDay(cur);
+    list.push(cur);
+  }
+  return list;
+}
+// Recomputes a form draft's date list when start date or duration changes,
+// while preserving any dates the teacher manually overrode for days that
+// still exist at the same position.
+function computeDraftDateList(draft) {
+  const wanted = draft.days || 1;
+  const startDate = draft.startDate || todayISO();
+  const existing = draft.dateList || [];
+  const fresh = defaultDateList(startDate, wanted);
+  if (existing[0] === startDate) {
+    for (let i = 1; i < Math.min(existing.length, fresh.length); i++) {
+      if (existing[i]) fresh[i] = existing[i];
+    }
+  }
+  return fresh;
+}
+// Returns the real list of dates a suspension covers. Uses the explicit
+// per-day dateList if present (weekend-aware, individually editable);
+// falls back to plain consecutive calendar days for older records saved
+// before this existed.
+function getDateList(s) {
+  if (Array.isArray(s.dateList) && s.dateList.length === s.days) return s.dateList;
+  return suspensionDateRange(s.startDate, s.days);
+}
 function suspensionStatus(s) {
+  const dates = getDateList(s);
   const today = todayISO();
-  const end = addDays(s.startDate, s.days);
-  if (today < s.startDate) return "Upcoming";
-  if (today < end) return "Active";
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  if (today < first) return "Upcoming";
+  if (today <= last) return "Active";
   return "Completed";
 }
 function suspensionDateRange(startDate, days) {
@@ -114,8 +164,7 @@ function diffText(oldObj, newObj, fields) {
 function studentsOnDate(type, dateISO) {
   return state.suspensions.filter((s) => {
     if (s.deleted || s.type !== type) return false;
-    const end = addDays(s.startDate, s.days);
-    return dateISO >= s.startDate && dateISO < end;
+    return getDateList(s).includes(dateISO);
   });
 }
 function renderDashboardBox(type, title, color) {
@@ -196,7 +245,7 @@ const state = {
   _newSuspType: "ISS",
   editingSuspensionId: null,
   expandedSuspId: null,
-  _suspFormDraft: { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venue: "", differentVenues: false, venues: {} },
+  _suspFormDraft: { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venue: "", differentVenues: false, venues: {}, dateList: [] },
   _linkedCaseId: null,
 
   saveError: false,
@@ -282,7 +331,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.15.1";
+const APP_VERSION = "1.16.0";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {
@@ -462,14 +511,14 @@ async function submitEditIncident(e) {
   }
 }
 
-function buildVenuesByDate(form, startDate, days) {
+function buildVenuesByDate(form, dateList) {
   const differentVenues = form.elements["differentVenues"]?.checked;
   const venuesByDate = {};
   if (differentVenues) {
     form.querySelectorAll(".dd-venue-input").forEach((el) => { venuesByDate[el.dataset.date] = el.value.trim(); });
   } else {
     const singleVenue = (form.elements["venue"]?.value || "").trim();
-    suspensionDateRange(startDate, days).forEach((d) => { venuesByDate[d] = singleVenue; });
+    dateList.forEach((d) => { venuesByDate[d] = singleVenue; });
   }
   return venuesByDate;
 }
@@ -484,14 +533,17 @@ async function submitNewSuspension(e) {
   const type = state._newSuspType;
   const reason = f.reason.value.trim();
   if (!studentName || !studentClass || !startDate || !days) return;
-  const venuesByDate = type === "ISS" ? buildVenuesByDate(f, startDate, days) : {};
+  const dateList = state._suspFormDraft.dateList && state._suspFormDraft.dateList.length === days
+    ? state._suspFormDraft.dateList
+    : defaultDateList(startDate, days);
+  const venuesByDate = type === "ISS" ? buildVenuesByDate(f, dateList) : {};
   state.saving = true;
   render();
   try {
     const now = Date.now();
     const caseId = state._linkedCaseId || null;
     await addDoc(collection(db, "suspensions"), {
-      studentName, studentClass, type, startDate, days, venuesByDate, reason,
+      studentName, studentClass, type, startDate, days, dateList, venuesByDate, reason,
       ...(caseId ? { caseId } : {}),
       loggedBy: teacherName(),
       loggedByUid: auth.currentUser?.uid || null,
@@ -507,7 +559,7 @@ async function submitNewSuspension(e) {
     state.showNewSuspForm = false;
     state._newSuspType = "ISS";
     state._linkedCaseId = null;
-    state._suspFormDraft = { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venue: "", differentVenues: false, venues: {} };
+    state._suspFormDraft = { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venue: "", differentVenues: false, venues: {}, dateList: [] };
     const venueSummary = Object.entries(venuesByDate).map(([d, v]) => `${formatDate(d)}: ${v || "—"}`).join(", ");
     logToSheet({
       recordType: "Suspension", action: "Created", studentName,
@@ -567,13 +619,14 @@ async function openLinkedSuspension(id) {
     }
   }
   const suggestedType = original.type === "ISS" ? "OSS" : "ISS";
-  const suggestedStart = addDays(original.startDate, original.days);
+  const originalDates = getDateList(original);
+  const suggestedStart = nextSchoolDay(originalDates[originalDates.length - 1]);
   state._linkedCaseId = caseId;
   state._newSuspType = suggestedType;
   state._suspFormDraft = {
     studentName: original.studentName, studentClass: original.studentClass,
     startDate: suggestedStart, days: 1, reason: original.reason || "",
-    venue: "", differentVenues: false, venues: {},
+    venue: "", differentVenues: false, venues: {}, dateList: [suggestedStart],
   };
   state.showNewSuspForm = true;
   render();
@@ -584,7 +637,7 @@ function openEditSuspension(id) {
   const s = state.suspensions.find((i) => i.id === id);
   if (s) {
     state._newSuspType = s.type;
-    const dates = suspensionDateRange(s.startDate, s.days);
+    const dates = getDateList(s);
     const venues = {};
     dates.forEach((d) => { venues[d] = venueForDate(s, d); });
     const uniqueVenues = [...new Set(Object.values(venues))];
@@ -593,7 +646,7 @@ function openEditSuspension(id) {
       studentName: s.studentName, studentClass: s.studentClass,
       startDate: s.startDate, days: s.days, reason: s.reason || "",
       venue: differentVenues ? "" : (uniqueVenues[0] || ""),
-      differentVenues, venues,
+      differentVenues, venues, dateList: dates,
     };
   }
   render();
@@ -608,13 +661,17 @@ async function submitEditSuspension(e) {
   const type = state._newSuspType;
   const startDate = f.startDate.value;
   const days = parseInt(f.days.value, 10);
-  const venuesByDate = type === "ISS" ? buildVenuesByDate(f, startDate, days) : {};
+  const dateList = state._suspFormDraft.dateList && state._suspFormDraft.dateList.length === days
+    ? state._suspFormDraft.dateList
+    : defaultDateList(startDate, days);
+  const venuesByDate = type === "ISS" ? buildVenuesByDate(f, dateList) : {};
   const updated = {
     studentName: f.studentName.value.trim(),
     studentClass: f.studentClass.value.trim(),
     type,
     startDate,
     days,
+    dateList,
     venuesByDate,
     reason: f.reason.value.trim(),
   };
@@ -627,6 +684,9 @@ async function submitEditSuspension(e) {
     { key: "days", label: "Duration (days)" },
     { key: "reason", label: "Reason" },
   ]);
+  const oldDateKey = JSON.stringify(getDateList(s));
+  const newDateKey = JSON.stringify(dateList);
+  if (oldDateKey !== newDateKey) changes.push("Day-by-day schedule updated");
   const oldVenueKey = JSON.stringify(s.venuesByDate || (s.venue ? { [s.startDate]: s.venue } : {}));
   const newVenueKey = JSON.stringify(venuesByDate);
   if (type === "ISS" && oldVenueKey !== newVenueKey) changes.push("Location schedule updated");
@@ -795,10 +855,10 @@ function renderCard(it) {
 function renderSuspCard(s) {
   const typeStyle = SUSP_TYPE_STYLE[s.type];
   const statusStyle = s.deleted ? { ink: "#8A8571", label: "REMOVED" } : SUSP_STATUS_STYLE[s._status];
-  const endDate = addDays(s.startDate, s.days);
+  const dates = getDateList(s);
+  const endDate = dates[dates.length - 1];
   const expanded = state.expandedSuspId === s.id;
   const history = s.history || [];
-  const dates = suspensionDateRange(s.startDate, s.days);
   const venues = dates.map((d) => venueForDate(s, d));
   const uniqueVenues = [...new Set(venues.filter(Boolean))];
   let venueSummary = "";
@@ -832,7 +892,7 @@ function renderSuspCard(s) {
         ${parts.length > 1 ? `
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Linked suspension — all parts</div>
         <div class="dd-followups" style="margin-bottom:16px">
-          ${parts.map((p, i) => `<div class="dd-followup"><div class="dd-followup-note">${i === partIndex ? "<b>" : ""}Part ${i + 1}: ${SUSP_TYPE_STYLE[p.type].label}, ${p.days} day${p.days > 1 ? "s" : ""}${i === partIndex ? "</b>" : ""}</div><div class="dd-followup-meta">${formatDate(p.startDate)} → ${formatDate(addDays(p.startDate, p.days))}</div></div>`).join("")}
+          ${parts.map((p, i) => `<div class="dd-followup"><div class="dd-followup-note">${i === partIndex ? "<b>" : ""}Part ${i + 1}: ${SUSP_TYPE_STYLE[p.type].label}, ${p.days} day${p.days > 1 ? "s" : ""}${i === partIndex ? "</b>" : ""}</div><div class="dd-followup-meta">${formatDate(p.startDate)} → ${formatDate(getDateList(p)[getDateList(p).length - 1])}</div></div>`).join("")}
         </div>` : ""}
         ${s.type === "ISS" ? `
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Location by day</div>
@@ -1017,11 +1077,11 @@ function renderNewForm() {
     </div>`;
 }
 
-function renderVenueRowsHtml(startDate, days, venuesMap) {
-  const dates = suspensionDateRange(startDate, days || 1);
-  return dates.map((d) => `
+function renderVenueRowsHtml(dateList, venuesMap) {
+  return dateList.map((d, i) => `
     <div class="dd-venue-row">
       <span class="dd-venue-date">${formatDate(d)}</span>
+      ${i > 0 ? `<input type="date" class="dd-venue-date-input" data-idx="${i}" value="${d}" title="Change this day's date" />` : ""}
       <input class="dd-input dd-venue-input" data-date="${d}" placeholder="e.g. Room 204" value="${escapeHtml(venuesMap[d] || "")}" />
     </div>`).join("");
 }
@@ -1036,7 +1096,7 @@ function renderLocationSection(d, idPrefix) {
     </label>
     ${d.differentVenues ? `
     <div class="dd-mono-muted" style="font-size:11px;margin:8px 0 6px">A student can be in a different room on different days.</div>
-    <div id="${idPrefix}-venue-rows">${renderVenueRowsHtml(d.startDate || todayISO(), d.days || 1, d.venues)}</div>` : ""}`;
+    <div id="${idPrefix}-venue-rows">${renderVenueRowsHtml(d.dateList && d.dateList.length ? d.dateList : defaultDateList(d.startDate || todayISO(), d.days || 1), d.venues)}</div>` : ""}`;
 }
 
 function renderNewSuspForm() {
@@ -1218,7 +1278,7 @@ function attachSuspListeners() {
     state.showNewSuspForm = true;
     state._newSuspType = "ISS";
     state._linkedCaseId = null;
-    state._suspFormDraft = { studentName: "", studentClass: "", startDate: todayISO(), days: 1, reason: "", venue: "", differentVenues: false, venues: {} };
+    state._suspFormDraft = { studentName: "", studentClass: "", startDate: todayISO(), days: 1, reason: "", venue: "", differentVenues: false, venues: {}, dateList: [todayISO()] };
     render();
   });
 
@@ -1272,13 +1332,27 @@ function attachSuspListeners() {
   form.querySelectorAll(".dd-venue-input").forEach((el) =>
     el.addEventListener("input", () => { state._suspFormDraft.venues[el.dataset.date] = el.value; }));
 
+  // Manual date override for day 2+ — changing one day's date doesn't shift any other day.
+  form.querySelectorAll(".dd-venue-date-input").forEach((el) =>
+    el.addEventListener("change", () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (!state._suspFormDraft.dateList || !state._suspFormDraft.dateList.length) {
+        state._suspFormDraft.dateList = computeDraftDateList(state._suspFormDraft);
+      }
+      state._suspFormDraft.dateList[idx] = el.value;
+      render();
+    }));
+
   const diffVenuesEl = form.elements["differentVenues"];
   if (diffVenuesEl) {
     diffVenuesEl.addEventListener("change", () => {
       state._suspFormDraft.differentVenues = diffVenuesEl.checked;
       if (diffVenuesEl.checked) {
+        const dl = state._suspFormDraft.dateList && state._suspFormDraft.dateList.length
+          ? state._suspFormDraft.dateList
+          : computeDraftDateList(state._suspFormDraft);
         // seed each day's row with the single location already typed, so switching to per-day mode doesn't blank everything out
-        suspensionDateRange(state._suspFormDraft.startDate || todayISO(), state._suspFormDraft.days || 1).forEach((dt) => {
+        dl.forEach((dt) => {
           if (!state._suspFormDraft.venues[dt]) state._suspFormDraft.venues[dt] = state._suspFormDraft.venue;
         });
       }
@@ -1291,6 +1365,7 @@ function attachSuspListeners() {
   const onDateOrDaysChange = () => {
     state._suspFormDraft.startDate = startDateEl.value;
     state._suspFormDraft.days = parseInt(daysEl.value, 10) || 1;
+    state._suspFormDraft.dateList = computeDraftDateList(state._suspFormDraft);
     render();
   };
   if (startDateEl) startDateEl.addEventListener("change", onDateOrDaysChange);
