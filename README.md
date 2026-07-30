@@ -46,8 +46,9 @@ That URL is the app. Send it to your discipline team.
 1. Open the link
 2. Type your name and click **"Enter the log"** — that's it, no email or password
 3. Each teacher does the same the first time they open it on their device
-   (their name is remembered after that; "Not you?" in the header lets
-   someone switch names on a shared device)
+   (their name is remembered after that — there's no way to switch names on
+   a shared device from within the app; clear the browser's site data for
+   this page to reset it, or use separate devices per teacher)
 4. On phones: open the link in the browser, then use the browser's
    **"Add to Home Screen"** option (Safari: Share button → Add to Home Screen)
    — it'll behave like an installed app from then on
@@ -82,9 +83,18 @@ Bump `APP_VERSION` near the top of `app.js` alongside the `CACHE` version in
 `sw.js` every time you ship a change, so the two stay in sync and the number
 in the header is a reliable signal of what's actually running.
 
-The **"? Help"** button in the header opens a plain-language guide for
+The **circular "?" icon** (above the tabs, next to the Deleted pill and New
+Entry button) opens a plain-language guide for
 teachers — statuses, suspensions, editing, removing, and backups — separate
 from this README, which is aimed at whoever maintains the app.
+
+## ISS dashboard grouping
+
+The Today / Next 2 Days columns for In-School Suspension group students by
+**location first** — each location appears once as a small heading, with
+every student assigned there listed underneath (name, then class). Within
+Next 2 Days, this grouping happens separately for each date. Out-of-School
+Suspension has no location concept, so its columns stay a flat list.
 
 ## Hybrid (linked) suspensions
 
@@ -159,7 +169,8 @@ Two layers of protection, on top of the delete-blocking rule above:
    Firestore Database → Data → `backups` → `latest` to see the most recent
    good copy in full, and manually copy values back into the affected
    record.
-2. **Manual download.** The **"⬇ Backup"** button in the app header downloads
+2. **Manual download.** The circular backup icon (top right of the header)
+   downloads
    a dated `.json` file of everything, right to your device. Worth doing
    this occasionally (e.g. weekly) and keeping a copy somewhere like Google
    Drive — this one is safe even if your Firebase project itself ever has a

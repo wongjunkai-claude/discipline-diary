@@ -46,8 +46,8 @@ const STATUS_STYLE = {
 };
 const STATUS_TEXT = { Open: "Open", Monitoring: "In Progress", Resolved: "Resolved" };
 const SUSP_TYPE_STYLE = {
-  ISS: { ink: "#B8863B", label: "ISS" },
-  OSS: { ink: "#A3372B", label: "OSS" },
+  ISS: { ink: "#B8863B", label: "IN-SCHOOL" },
+  OSS: { ink: "#A3372B", label: "OUT-OF-SCHOOL" },
 };
 const SUSP_STATUS_STYLE = {
   Upcoming: { ink: "#4C6B8A", label: "UPCOMING" },
@@ -127,16 +127,25 @@ function renderDashboardBox(type, title, color) {
     { date: tomorrow, students: studentsOnDate(type, tomorrow) },
     { date: dayAfter, students: studentsOnDate(type, dayAfter) },
   ];
-  const rowHtml = (s, dateForVenue) => {
-    const venue = type === "ISS" ? venueForDate(s, dateForVenue) : "";
-    return `
-    <div class="dd-dash-row-wrap">
-      <div class="dd-dash-row">
-        <span class="dd-dash-name">${escapeHtml(truncateName(s.studentName))}</span>
-        <span class="dd-dash-class">${escapeHtml(s.studentClass || "")}</span>
-      </div>
-      ${type === "ISS" ? `<div class="dd-dash-venue">${escapeHtml(truncateName(venue || "(no location set)", 20))}</div>` : ""}
+  const studentRowHtml = (s) => `
+    <div class="dd-dash-row">
+      <span class="dd-dash-name">${escapeHtml(truncateName(s.studentName))}</span>
+      <span class="dd-dash-class">${escapeHtml(s.studentClass || "")}</span>
     </div>`;
+  // ISS: group students by their location on that specific date, location shown once above the names that share it.
+  // OSS: no location concept, so just list students directly.
+  const dayGroupHtml = (students, dateForVenue) => {
+    if (students.length === 0) return "";
+    if (type !== "ISS") return students.map(studentRowHtml).join("");
+    const groups = {};
+    students.forEach((s) => {
+      const loc = venueForDate(s, dateForVenue) || "(no location set)";
+      (groups[loc] = groups[loc] || []).push(s);
+    });
+    return Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((loc) => `
+      <div class="dd-dash-location">${escapeHtml(truncateName(loc, 20))}</div>
+      ${groups[loc].map(studentRowHtml).join("")}
+    `).join("");
   };
   return `
     <div class="dd-panel dd-dash-box">
@@ -146,7 +155,7 @@ function renderDashboardBox(type, title, color) {
           <div class="dd-mono-muted dd-dash-col-label">Today</div>
           <div class="dd-serif dd-dash-count" style="color:${color}">${todayList.length}</div>
           <div class="dd-dash-list">
-            ${todayList.length === 0 ? `<div class="dd-dash-empty">None</div>` : todayList.map((s) => rowHtml(s, today)).join("")}
+            ${todayList.length === 0 ? `<div class="dd-dash-empty">None</div>` : dayGroupHtml(todayList, today)}
           </div>
         </div>
         <div class="dd-dash-col">
@@ -154,7 +163,7 @@ function renderDashboardBox(type, title, color) {
           <div class="dd-dash-list">
             ${nextDays.every((d) => d.students.length === 0) ? `<div class="dd-dash-empty">None</div>` : nextDays.map((d) => d.students.length === 0 ? "" : `
               <div class="dd-dash-date">${formatDate(d.date)}</div>
-              ${d.students.map((s) => rowHtml(s, d.date)).join("")}
+              ${dayGroupHtml(d.students, d.date)}
             `).join("")}
           </div>
         </div>
@@ -273,7 +282,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.10.0";
+const APP_VERSION = "1.13.0";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {
@@ -854,22 +863,20 @@ function renderMain() {
 
 function renderNav() {
   return `
-    <div class="dd-header">
+    <div class="dd-header" style="position:relative">
+      <button class="dd-circle-btn dd-header-backup" id="btn-backup" title="Download a full backup as a file">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg>
+      </button>
       <div class="dd-header-inner">
         <div>
           <div class="dd-header-title">Discipline Diary</div>
           <div class="dd-header-sub">Signed in as ${escapeHtml(teacherName())} · v${APP_VERSION}</div>
         </div>
-        <div class="dd-header-actions">
-          <button class="dd-newbtn" id="btn-help" style="background:#F2EFE6;opacity:.9" title="How to use this app">? Help</button>
-          <button class="dd-newbtn" id="btn-backup" style="background:#F2EFE6;opacity:.9" title="Download a full backup as a file">⬇ Backup</button>
-          <button class="dd-signout" id="btn-change-name">Not you?</button>
-        </div>
       </div>
       <div class="dd-header-inner" style="margin-top:14px">
-        <div style="display:flex;gap:8px">
-          <button class="dd-tab ${state.section === "log" ? "active" : ""}" data-action="set-section" data-section="log" style="border-radius:3px;background:${state.section === "log" ? "#F2EFE6" : "transparent"};color:${state.section === "log" ? "#1B2A41" : "#B7C0CE"};border-color:#4A5A72">Discipline Log</button>
-          <button class="dd-tab ${state.section === "suspensions" ? "active" : ""}" data-action="set-section" data-section="suspensions" style="border-radius:3px;background:${state.section === "suspensions" ? "#F2EFE6" : "transparent"};color:${state.section === "suspensions" ? "#1B2A41" : "#B7C0CE"};border-color:#4A5A72">Suspensions</button>
+        <div style="display:flex;gap:10px;width:100%">
+          <button class="dd-pill-tab ${state.section === "log" ? "active" : ""}" data-action="set-section" data-section="log">Discipline Log</button>
+          <button class="dd-pill-tab ${state.section === "suspensions" ? "active" : ""}" data-action="set-section" data-section="suspensions">Suspensions</button>
         </div>
       </div>
     </div>
@@ -908,11 +915,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Backups</div>
-          <p>The <b>⬇ Backup</b> button downloads a full copy of everything as a file. Worth doing occasionally and keeping a copy somewhere safe, like Google Drive.</p>
-        </div>
-        <div class="dd-help-section">
-          <div class="dd-help-heading">Not you?</div>
-          <p>If this is a shared device, tap <b>Not you?</b> to switch to your own name — everything you log after that is tagged with your name instead.</p>
+          <p>The backup icon (top right, downward-arrow circle) downloads a full copy of everything as a file. Worth doing occasionally and keeping a copy somewhere safe, like Google Drive.</p>
         </div>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
@@ -926,9 +929,12 @@ function renderLogSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:10px">
-          <button class="dd-pill ${state.tab === "Deleted" ? "active" : ""}" data-action="set-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
-          <button class="dd-newbtn" id="btn-new">+ New entry</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
+          <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="dd-pill ${state.tab === "Deleted" ? "active" : ""}" data-action="set-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
+            <button class="dd-newbtn" id="btn-new">+ New entry</button>
+          </div>
         </div>
         <div class="dd-tabs">
           ${["All", ...STATUSES].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t === "All" ? t : STATUS_TEXT[t]}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
@@ -960,9 +966,12 @@ function renderSuspensionSection() {
           <div style="height:12px"></div>
           ${renderDashboardBox("OSS", "Out of School Suspension", "#A3372B")}
         </div>
-        <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:10px">
-          <button class="dd-pill ${state.suspTab === "Deleted" ? "active" : ""}" data-action="set-susp-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
-          <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
+          <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="dd-pill ${state.suspTab === "Deleted" ? "active" : ""}" data-action="set-susp-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
+            <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
+          </div>
         </div>
         <div class="dd-tabs">
           ${["All", "Active", "Upcoming", "Completed"].map((t) => `<button class="dd-tab ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
@@ -1043,8 +1052,8 @@ function renderNewSuspForm() {
         ${state._linkedCaseId ? `<div class="dd-mono-muted" style="font-size:11px;margin-bottom:10px;color:#4C6B8A">Adding a linked part to an existing suspension — student, class, and reason are carried over.</div>` : ""}
         <label class="dd-label">Type</label>
         <div class="dd-status-row">
-          <button type="button" class="dd-stamp" data-action="pick-susp-type" data-type="ISS" style="color:${SUSP_TYPE_STYLE.ISS.ink};opacity:${type === "ISS" ? 1 : 0.35}">IN-SCHOOL (ISS)</button>
-          <button type="button" class="dd-stamp" data-action="pick-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL (OSS)</button>
+          <button type="button" class="dd-stamp" data-action="pick-susp-type" data-type="ISS" style="color:${SUSP_TYPE_STYLE.ISS.ink};opacity:${type === "ISS" ? 1 : 0.35}">IN-SCHOOL</button>
+          <button type="button" class="dd-stamp" data-action="pick-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL</button>
         </div>
         <label class="dd-label">Student name</label>
         <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
@@ -1102,8 +1111,8 @@ function renderEditSuspensionForm() {
         </div>
         <label class="dd-label">Type</label>
         <div class="dd-status-row">
-          <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="ISS" style="color:${SUSP_TYPE_STYLE.ISS.ink};opacity:${type === "ISS" ? 1 : 0.35}">IN-SCHOOL (ISS)</button>
-          <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL (OSS)</button>
+          <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="ISS" style="color:${SUSP_TYPE_STYLE.ISS.ink};opacity:${type === "ISS" ? 1 : 0.35}">IN-SCHOOL</button>
+          <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL</button>
         </div>
         <label class="dd-label">Student name</label>
         <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
@@ -1135,14 +1144,6 @@ function attachMainListeners() {
       if (e.target.id === "help-modal-backdrop") { state.showHelp = false; render(); }
     });
   }
-
-  document.getElementById("btn-change-name").addEventListener("click", () => {
-    localStorage.removeItem("dd-teacher-name");
-    state.teacherName = "";
-    if (unsubIncidents) { unsubIncidents(); unsubIncidents = null; }
-    if (unsubSuspensions) { unsubSuspensions(); unsubSuspensions = null; }
-    render();
-  });
 
   if (state.section === "log") attachLogListeners();
   else attachSuspListeners();
