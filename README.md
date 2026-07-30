@@ -72,6 +72,30 @@ That URL is the app. Send it to your discipline team.
 Security rules block **deletes** on both collections entirely — nothing can
 be erased from the client, only added to.
 
+## Version number & in-app help
+
+The header shows the current version (e.g. `v1.7.0`) — useful for confirming
+a teacher's device has actually picked up your latest update, especially
+after a cache-clearing troubleshooting step.
+
+Bump `APP_VERSION` near the top of `app.js` alongside the `CACHE` version in
+`sw.js` every time you ship a change, so the two stay in sync and the number
+in the header is a reliable signal of what's actually running.
+
+The **"? Help"** button in the header opens a plain-language guide for
+teachers — statuses, suspensions, editing, removing, and backups — separate
+from this README, which is aimed at whoever maintains the app.
+
+## Per-day ISS locations
+
+A student's in-school suspension can now have a different location each day
+(e.g. Room 204 on Monday, the Library on Tuesday). When logging or editing
+an ISS suspension, each day of the duration gets its own "Location by day"
+row. The Suspensions dashboard's Today / Next 2 Days columns show the
+correct location for that specific date automatically. Older suspensions
+logged before this feature still show their original single location for
+every day, until edited.
+
 ## Editing entries
 
 Both discipline log entries and suspensions can now be edited (click a card

@@ -77,6 +77,17 @@ function suspensionStatus(s) {
   if (today < end) return "Active";
   return "Completed";
 }
+function suspensionDateRange(startDate, days) {
+  const out = [];
+  for (let i = 0; i < days; i++) out.push(addDays(startDate, i));
+  return out;
+}
+// Falls back to the old single `venue` field for suspensions logged before
+// per-day locations existed, so nothing old breaks.
+function venueForDate(s, dateISO) {
+  if (s.venuesByDate && s.venuesByDate[dateISO] !== undefined) return s.venuesByDate[dateISO];
+  return s.venue || "";
+}
 function truncateName(name, n = 15) {
   const s = name || "";
   return s.length > n ? s.slice(0, n) + "…" : s;
@@ -106,11 +117,17 @@ function renderDashboardBox(type, title, color) {
     { date: tomorrow, students: studentsOnDate(type, tomorrow) },
     { date: dayAfter, students: studentsOnDate(type, dayAfter) },
   ];
-  const rowHtml = (s) => `
-    <div class="dd-dash-row">
-      <span class="dd-dash-name">${escapeHtml(truncateName(s.studentName))}</span>
-      <span class="dd-dash-class">${escapeHtml(s.studentClass || "")}</span>
+  const rowHtml = (s, dateForVenue) => {
+    const venue = type === "ISS" ? venueForDate(s, dateForVenue) : "";
+    return `
+    <div class="dd-dash-row-wrap">
+      <div class="dd-dash-row">
+        <span class="dd-dash-name">${escapeHtml(truncateName(s.studentName))}</span>
+        <span class="dd-dash-class">${escapeHtml(s.studentClass || "")}</span>
+      </div>
+      ${type === "ISS" ? `<div class="dd-dash-venue">${escapeHtml(truncateName(venue || "(no location set)", 20))}</div>` : ""}
     </div>`;
+  };
   return `
     <div class="dd-panel dd-dash-box">
       <div class="dd-dash-title" style="color:${color}">${title}</div>
@@ -119,7 +136,7 @@ function renderDashboardBox(type, title, color) {
           <div class="dd-mono-muted dd-dash-col-label">Today</div>
           <div class="dd-serif dd-dash-count" style="color:${color}">${todayList.length}</div>
           <div class="dd-dash-list">
-            ${todayList.length === 0 ? `<div class="dd-dash-empty">None</div>` : todayList.map(rowHtml).join("")}
+            ${todayList.length === 0 ? `<div class="dd-dash-empty">None</div>` : todayList.map((s) => rowHtml(s, today)).join("")}
           </div>
         </div>
         <div class="dd-dash-col">
@@ -127,7 +144,7 @@ function renderDashboardBox(type, title, color) {
           <div class="dd-dash-list">
             ${nextDays.every((d) => d.students.length === 0) ? `<div class="dd-dash-empty">None</div>` : nextDays.map((d) => d.students.length === 0 ? "" : `
               <div class="dd-dash-date">${formatDate(d.date)}</div>
-              ${d.students.map(rowHtml).join("")}
+              ${d.students.map((s) => rowHtml(s, d.date)).join("")}
             `).join("")}
           </div>
         </div>
@@ -140,6 +157,7 @@ const state = {
   authReady: false,
   teacherName: localStorage.getItem("dd-teacher-name") || "",
   section: "log", // 'log' | 'suspensions'
+  showHelp: false,
 
   incidents: [],
   dataLoaded: false,
@@ -159,6 +177,7 @@ const state = {
   _newSuspType: "ISS",
   editingSuspensionId: null,
   expandedSuspId: null,
+  _suspFormDraft: { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venues: {} },
 
   saveError: false,
   saving: false,
@@ -240,6 +259,10 @@ function downloadBackupFile() {
   URL.revokeObjectURL(url);
 }
 
+// Bump this alongside the CACHE version in sw.js whenever you ship an update —
+// makes it easy to confirm (in the app footer, or a screenshot from a teacher)
+// exactly which version is actually running on a given device.
+const APP_VERSION = "1.8.0";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {
@@ -427,15 +450,18 @@ async function submitNewSuspension(e) {
   const startDate = f.startDate.value;
   const days = parseInt(f.days.value, 10);
   const type = state._newSuspType;
-  const venue = type === "ISS" ? (f.venue?.value || "").trim() : "";
   const reason = f.reason.value.trim();
   if (!studentName || !studentClass || !startDate || !days) return;
+  const venuesByDate = {};
+  if (type === "ISS") {
+    f.querySelectorAll(".dd-venue-input").forEach((el) => { venuesByDate[el.dataset.date] = el.value.trim(); });
+  }
   state.saving = true;
   render();
   try {
     const now = Date.now();
     await addDoc(collection(db, "suspensions"), {
-      studentName, studentClass, type, startDate, days, venue, reason,
+      studentName, studentClass, type, startDate, days, venuesByDate, reason,
       loggedBy: teacherName(),
       loggedByUid: auth.currentUser?.uid || null,
       createdAt: now,
@@ -443,9 +469,11 @@ async function submitNewSuspension(e) {
     });
     state.showNewSuspForm = false;
     state._newSuspType = "ISS";
+    state._suspFormDraft = { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venues: {} };
+    const venueSummary = Object.entries(venuesByDate).map(([d, v]) => `${formatDate(d)}: ${v || "—"}`).join(", ");
     logToSheet({
       recordType: "Suspension", action: "Created", studentName,
-      details: `Class: ${studentClass} — ${type} — ${days} day${days > 1 ? "s" : ""} from ${startDate}${venue ? ` — ${venue}` : ""}${reason ? ` — ${reason}` : ""}`,
+      details: `Class: ${studentClass} — ${type} — ${days} day${days > 1 ? "s" : ""} from ${startDate}${venueSummary ? ` — Locations: ${venueSummary}` : ""}${reason ? ` — ${reason}` : ""}`,
       loggedBy: teacherName(),
     });
   } catch (err) {
@@ -488,7 +516,16 @@ async function restoreSuspension(id) {
 function openEditSuspension(id) {
   state.editingSuspensionId = id;
   const s = state.suspensions.find((i) => i.id === id);
-  if (s) state._newSuspType = s.type;
+  if (s) {
+    state._newSuspType = s.type;
+    const dates = suspensionDateRange(s.startDate, s.days);
+    const venues = {};
+    dates.forEach((d) => { venues[d] = venueForDate(s, d); });
+    state._suspFormDraft = {
+      studentName: s.studentName, studentClass: s.studentClass,
+      startDate: s.startDate, days: s.days, reason: s.reason || "", venues,
+    };
+  }
   render();
 }
 
@@ -499,13 +536,17 @@ async function submitEditSuspension(e) {
   const s = state.suspensions.find((i) => i.id === id);
   if (!s) return;
   const type = state._newSuspType;
+  const venuesByDate = {};
+  if (type === "ISS") {
+    f.querySelectorAll(".dd-venue-input").forEach((el) => { venuesByDate[el.dataset.date] = el.value.trim(); });
+  }
   const updated = {
     studentName: f.studentName.value.trim(),
     studentClass: f.studentClass.value.trim(),
     type,
     startDate: f.startDate.value,
     days: parseInt(f.days.value, 10),
-    venue: type === "ISS" ? (f.venue?.value || "").trim() : "",
+    venuesByDate,
     reason: f.reason.value.trim(),
   };
   if (!updated.studentName || !updated.studentClass || !updated.startDate || !updated.days) return;
@@ -515,9 +556,11 @@ async function submitEditSuspension(e) {
     { key: "type", label: "Type" },
     { key: "startDate", label: "Start date" },
     { key: "days", label: "Duration (days)" },
-    { key: "venue", label: "Venue" },
     { key: "reason", label: "Reason" },
   ]);
+  const oldVenueKey = JSON.stringify(s.venuesByDate || (s.venue ? { [s.startDate]: s.venue } : {}));
+  const newVenueKey = JSON.stringify(venuesByDate);
+  if (type === "ISS" && oldVenueKey !== newVenueKey) changes.push("Location schedule updated");
   if (changes.length === 0) { state.editingSuspensionId = null; render(); return; }
   const now = Date.now();
   state.saving = true;
@@ -686,6 +729,14 @@ function renderSuspCard(s) {
   const endDate = addDays(s.startDate, s.days);
   const expanded = state.expandedSuspId === s.id;
   const history = s.history || [];
+  const dates = suspensionDateRange(s.startDate, s.days);
+  const venues = dates.map((d) => venueForDate(s, d));
+  const uniqueVenues = [...new Set(venues.filter(Boolean))];
+  let venueSummary = "";
+  if (s.type === "ISS") {
+    if (uniqueVenues.length === 1) venueSummary = ` · ${escapeHtml(uniqueVenues[0])}`;
+    else if (uniqueVenues.length > 1) venueSummary = ` · Multiple locations`;
+  }
   return `
     <div class="dd-card">
       <button class="dd-card-head" data-action="toggle-susp-expand" data-id="${s.id}">
@@ -694,7 +745,7 @@ function renderSuspCard(s) {
           <div class="dd-card-issue">
             ${formatDate(s.startDate)} → ${formatDate(endDate)} · ${s.days} day${s.days > 1 ? "s" : ""}
             ${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""}
-            ${s.type === "ISS" && s.venue ? ` · ${escapeHtml(s.venue)}` : ""}
+            ${venueSummary}
           </div>
           ${s.reason ? `<div class="dd-card-meta">${escapeHtml(s.reason)}</div>` : ""}
           <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
@@ -707,6 +758,11 @@ function renderSuspCard(s) {
       </button>
       ${expanded ? `
       <div class="dd-expand">
+        ${s.type === "ISS" ? `
+        <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Location by day</div>
+        <div class="dd-followups" style="margin-bottom:16px">
+          ${dates.map((dt, i) => `<div class="dd-followup"><div class="dd-followup-note">${escapeHtml(venues[i] || "(not set)")}</div><div class="dd-followup-meta">${formatDate(dt)}</div></div>`).join("")}
+        </div>` : ""}
         <button class="dd-history-toggle" data-action="toggle-susp-history" data-id="${s.id}">${state.historyOpen[s.id] ? "Hide audit trail" : "Show audit trail"}</button>
         ${state.historyOpen[s.id] ? `
           <div class="dd-history">
@@ -734,9 +790,10 @@ function renderNav() {
       <div class="dd-header-inner">
         <div>
           <div class="dd-header-title">Discipline Diary</div>
-          <div class="dd-header-sub">Signed in as ${escapeHtml(teacherName())}</div>
+          <div class="dd-header-sub">Signed in as ${escapeHtml(teacherName())} · v${APP_VERSION}</div>
         </div>
         <div class="dd-header-actions">
+          <button class="dd-newbtn" id="btn-help" style="background:#F2EFE6;opacity:.9" title="How to use this app">? Help</button>
           <button class="dd-newbtn" id="btn-backup" style="background:#F2EFE6;opacity:.9" title="Download a full backup as a file">⬇ Backup</button>
           <button class="dd-signout" id="btn-change-name">Not you?</button>
         </div>
@@ -746,6 +803,50 @@ function renderNav() {
           <button class="dd-tab ${state.section === "log" ? "active" : ""}" data-action="set-section" data-section="log" style="border-radius:3px;background:${state.section === "log" ? "#F2EFE6" : "transparent"};color:${state.section === "log" ? "#1B2A41" : "#B7C0CE"};border-color:#4A5A72">Discipline Log</button>
           <button class="dd-tab ${state.section === "suspensions" ? "active" : ""}" data-action="set-section" data-section="suspensions" style="border-radius:3px;background:${state.section === "suspensions" ? "#F2EFE6" : "transparent"};color:${state.section === "suspensions" ? "#1B2A41" : "#B7C0CE"};border-color:#4A5A72">Suspensions</button>
         </div>
+      </div>
+    </div>
+    ${state.showHelp ? renderHelpModal() : ""}`;
+}
+
+function renderHelpModal() {
+  return `
+    <div class="dd-modal-backdrop" id="help-modal-backdrop">
+      <div class="dd-modal" id="help-modal">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">How to use Discipline Diary</div>
+          <button type="button" class="dd-modal-close" id="help-modal-close">✕</button>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Discipline Log</div>
+          <p>Log an issue with <b>+ New entry</b>. Status means:</p>
+          <ul>
+            <li><b>Open</b> — logged, action not yet taken</li>
+            <li><b>In Progress</b> — action taken, still being watched</li>
+            <li><b>Resolved</b> — closed, nothing further expected</li>
+          </ul>
+          <p>Tap an entry to expand it — add follow-up notes, change status, edit details, or remove it.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Suspensions</div>
+          <p>Track In-School (ISS) and Out-of-School (OSS) suspensions. The dashboard shows who's serving <b>today</b> and who's coming up in the <b>next 2 days</b>. Tap a suspension card to edit it, view its history, or remove it.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Editing &amp; audit trail</div>
+          <p>Every entry can be edited. Every edit, status change, and follow-up is permanently recorded — tap "Show audit trail" on any entry to see the full history of who changed what and when.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Removing entries</div>
+          <p>Removing asks for a password and only hides the entry — it's never truly deleted. Find removed entries under the <b>Deleted</b> tab to restore them any time.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Backups</div>
+          <p>The <b>⬇ Backup</b> button downloads a full copy of everything as a file. Worth doing occasionally and keeping a copy somewhere safe, like Google Drive.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Not you?</div>
+          <p>If this is a shared device, tap <b>Not you?</b> to switch to your own name — everything you log after that is tagged with your name instead.</p>
+        </div>
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
     </div>`;
 }
@@ -837,8 +938,18 @@ function renderNewForm() {
     </div>`;
 }
 
+function renderVenueRowsHtml(startDate, days, venuesMap) {
+  const dates = suspensionDateRange(startDate, days || 1);
+  return dates.map((d) => `
+    <div class="dd-venue-row">
+      <span class="dd-venue-date">${formatDate(d)}</span>
+      <input class="dd-input dd-venue-input" data-date="${d}" placeholder="e.g. Room 204" value="${escapeHtml(venuesMap[d] || "")}" />
+    </div>`).join("");
+}
+
 function renderNewSuspForm() {
   const type = state._newSuspType;
+  const d = state._suspFormDraft;
   return `
     <div class="dd-modal-backdrop" id="susp-modal-backdrop">
       <form class="dd-modal" id="new-susp-form">
@@ -852,18 +963,19 @@ function renderNewSuspForm() {
           <button type="button" class="dd-stamp" data-action="pick-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL (OSS)</button>
         </div>
         <label class="dd-label">Student name</label>
-        <input class="dd-input" name="studentName" required />
+        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
         <label class="dd-label">Class</label>
-        <input class="dd-input" name="studentClass" placeholder="e.g. 5A" required />
+        <input class="dd-input" name="studentClass" placeholder="e.g. 5A" required value="${escapeHtml(d.studentClass)}" />
         <label class="dd-label">Start date</label>
-        <input class="dd-input" type="date" name="startDate" required value="${todayISO()}" />
+        <input class="dd-input" type="date" name="startDate" id="susp-start-date" required value="${d.startDate || todayISO()}" />
         <label class="dd-label">Duration (days)</label>
-        <input class="dd-input" type="number" name="days" min="1" required value="1" />
+        <input class="dd-input" type="number" name="days" id="susp-days" min="1" required value="${d.days || 1}" />
         ${type === "ISS" ? `
-        <label class="dd-label">Venue</label>
-        <input class="dd-input" name="venue" placeholder="e.g. Room 204 / Detention Hall" />` : ""}
+        <label class="dd-label">Location by day</label>
+        <div class="dd-mono-muted" style="font-size:11px;margin-bottom:6px">A student can be in a different room on different days.</div>
+        <div id="venue-rows">${renderVenueRowsHtml(d.startDate || todayISO(), d.days || 1, d.venues)}</div>` : ""}
         <label class="dd-label">Reason</label>
-        <textarea class="dd-textarea dd-input" name="reason" rows="2" placeholder="Why was this issued? (optional)"></textarea>
+        <textarea class="dd-textarea dd-input" name="reason" rows="2" placeholder="Why was this issued? (optional)">${escapeHtml(d.reason)}</textarea>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save suspension"}</button>
       </form>
     </div>`;
@@ -899,6 +1011,7 @@ function renderEditSuspensionForm() {
   const s = state.suspensions.find((i) => i.id === state.editingSuspensionId);
   if (!s) return "";
   const type = state._newSuspType || s.type;
+  const d = state._suspFormDraft;
   return `
     <div class="dd-modal-backdrop" id="edit-susp-modal-backdrop">
       <form class="dd-modal" id="edit-susp-form">
@@ -912,18 +1025,19 @@ function renderEditSuspensionForm() {
           <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL (OSS)</button>
         </div>
         <label class="dd-label">Student name</label>
-        <input class="dd-input" name="studentName" required value="${escapeHtml(s.studentName)}" />
+        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
         <label class="dd-label">Class</label>
-        <input class="dd-input" name="studentClass" required value="${escapeHtml(s.studentClass || "")}" />
+        <input class="dd-input" name="studentClass" required value="${escapeHtml(d.studentClass)}" />
         <label class="dd-label">Start date</label>
-        <input class="dd-input" type="date" name="startDate" required value="${s.startDate}" />
+        <input class="dd-input" type="date" name="startDate" id="edit-susp-start-date" required value="${d.startDate}" />
         <label class="dd-label">Duration (days)</label>
-        <input class="dd-input" type="number" name="days" min="1" required value="${s.days}" />
+        <input class="dd-input" type="number" name="days" id="edit-susp-days" min="1" required value="${d.days}" />
         ${type === "ISS" ? `
-        <label class="dd-label">Venue</label>
-        <input class="dd-input" name="venue" value="${escapeHtml(s.venue || "")}" />` : ""}
+        <label class="dd-label">Location by day</label>
+        <div class="dd-mono-muted" style="font-size:11px;margin-bottom:6px">A student can be in a different room on different days.</div>
+        <div id="edit-venue-rows">${renderVenueRowsHtml(d.startDate, d.days, d.venues)}</div>` : ""}
         <label class="dd-label">Reason</label>
-        <textarea class="dd-textarea dd-input" name="reason" rows="2">${escapeHtml(s.reason || "")}</textarea>
+        <textarea class="dd-textarea dd-input" name="reason" rows="2">${escapeHtml(d.reason)}</textarea>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
       </form>
@@ -935,6 +1049,14 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.section = el.dataset.section; render(); }));
 
   document.getElementById("btn-backup").addEventListener("click", downloadBackupFile);
+
+  document.getElementById("btn-help").addEventListener("click", () => { state.showHelp = true; render(); });
+  if (state.showHelp) {
+    document.getElementById("help-modal-close").addEventListener("click", () => { state.showHelp = false; render(); });
+    document.getElementById("help-modal-backdrop").addEventListener("click", (e) => {
+      if (e.target.id === "help-modal-backdrop") { state.showHelp = false; render(); }
+    });
+  }
 
   document.getElementById("btn-change-name").addEventListener("click", () => {
     localStorage.removeItem("dd-teacher-name");
@@ -1013,7 +1135,12 @@ function attachLogListeners() {
 }
 
 function attachSuspListeners() {
-  document.getElementById("btn-new-susp").addEventListener("click", () => { state.showNewSuspForm = true; state._newSuspType = "ISS"; render(); });
+  document.getElementById("btn-new-susp").addEventListener("click", () => {
+    state.showNewSuspForm = true;
+    state._newSuspType = "ISS";
+    state._suspFormDraft = { studentName: "", studentClass: "", startDate: todayISO(), days: 1, reason: "", venues: {} };
+    render();
+  });
 
   document.querySelectorAll('[data-action="set-susp-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
@@ -1048,7 +1175,32 @@ function attachSuspListeners() {
       render();
     }));
 
-  if (state.showNewSuspForm) {
+  function attachSuspFormFieldSync(formId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const syncTextField = (name) => {
+    const el = form.elements[name];
+    if (el) el.addEventListener("input", () => { state._suspFormDraft[name] = el.value; });
+  };
+  syncTextField("studentName");
+  syncTextField("studentClass");
+  syncTextField("reason");
+
+  form.querySelectorAll(".dd-venue-input").forEach((el) =>
+    el.addEventListener("input", () => { state._suspFormDraft.venues[el.dataset.date] = el.value; }));
+
+  const startDateEl = form.elements["startDate"];
+  const daysEl = form.elements["days"];
+  const onDateOrDaysChange = () => {
+    state._suspFormDraft.startDate = startDateEl.value;
+    state._suspFormDraft.days = parseInt(daysEl.value, 10) || 1;
+    render();
+  };
+  if (startDateEl) startDateEl.addEventListener("change", onDateOrDaysChange);
+  if (daysEl) daysEl.addEventListener("change", onDateOrDaysChange);
+}
+
+if (state.showNewSuspForm) {
     document.getElementById("new-susp-form").addEventListener("submit", submitNewSuspension);
     document.getElementById("susp-modal-close").addEventListener("click", () => { state.showNewSuspForm = false; render(); });
     document.getElementById("susp-modal-backdrop").addEventListener("click", (e) => {
@@ -1056,6 +1208,7 @@ function attachSuspListeners() {
     });
     document.querySelectorAll('[data-action="pick-susp-type"]').forEach((el) =>
       el.addEventListener("click", () => { state._newSuspType = el.dataset.type; render(); }));
+    attachSuspFormFieldSync("new-susp-form");
   }
 
   if (state.editingSuspensionId) {
@@ -1066,6 +1219,7 @@ function attachSuspListeners() {
     });
     document.querySelectorAll('[data-action="pick-edit-susp-type"]').forEach((el) =>
       el.addEventListener("click", () => { state._newSuspType = el.dataset.type; render(); }));
+    attachSuspFormFieldSync("edit-susp-form");
   }
 }
 
