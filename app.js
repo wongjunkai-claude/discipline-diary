@@ -77,6 +77,54 @@ function suspensionStatus(s) {
   if (today < end) return "Active";
   return "Completed";
 }
+function truncateName(name, n = 15) {
+  const s = name || "";
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+function studentsOnDate(type, dateISO) {
+  return state.suspensions.filter((s) => {
+    if (s.deleted || s.type !== type) return false;
+    const end = addDays(s.startDate, s.days);
+    return dateISO >= s.startDate && dateISO < end;
+  });
+}
+function renderDashboardBox(type, title, color) {
+  const today = todayISO();
+  const tomorrow = addDays(today, 1);
+  const dayAfter = addDays(today, 2);
+  const todayList = studentsOnDate(type, today);
+  const nextDays = [
+    { date: tomorrow, students: studentsOnDate(type, tomorrow) },
+    { date: dayAfter, students: studentsOnDate(type, dayAfter) },
+  ];
+  const rowHtml = (s) => `
+    <div class="dd-dash-row">
+      <span class="dd-dash-name">${escapeHtml(truncateName(s.studentName))}</span>
+      <span class="dd-dash-class">${escapeHtml(s.studentClass || "")}</span>
+    </div>`;
+  return `
+    <div class="dd-panel dd-dash-box">
+      <div class="dd-dash-title" style="color:${color}">${title}</div>
+      <div class="dd-dash-cols">
+        <div class="dd-dash-col">
+          <div class="dd-mono-muted dd-dash-col-label">Today</div>
+          <div class="dd-serif dd-dash-count" style="color:${color}">${todayList.length}</div>
+          <div class="dd-dash-list">
+            ${todayList.length === 0 ? `<div class="dd-dash-empty">None</div>` : todayList.map(rowHtml).join("")}
+          </div>
+        </div>
+        <div class="dd-dash-col">
+          <div class="dd-mono-muted dd-dash-col-label">Next 2 Days</div>
+          <div class="dd-dash-list">
+            ${nextDays.every((d) => d.students.length === 0) ? `<div class="dd-dash-empty">None</div>` : nextDays.map((d) => d.students.length === 0 ? "" : `
+              <div class="dd-dash-date">${formatDate(d.date)}</div>
+              ${d.students.map(rowHtml).join("")}
+            `).join("")}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
 
 // ---------- App state ----------
 const state = {
@@ -214,17 +262,18 @@ async function submitNewIncident(e) {
   e.preventDefault();
   const f = e.target;
   const studentName = f.studentName.value.trim();
+  const studentClass = f.studentClass.value.trim();
   const date = f.date.value;
   const issue = f.issue.value.trim();
   const actionTaken = f.actionTaken.value.trim();
   const status = state._newStatus || "Open";
-  if (!studentName || !issue) return;
+  if (!studentName || !studentClass || !issue) return;
   state.saving = true;
   render();
   try {
     const now = Date.now();
     await addDoc(collection(db, "incidents"), {
-      studentName, date, issue, actionTaken, status,
+      studentName, studentClass, date, issue, actionTaken, status,
       loggedBy: teacherName(),
       loggedByUid: auth.currentUser?.uid || null,
       createdAt: now,
@@ -235,7 +284,7 @@ async function submitNewIncident(e) {
     state._newStatus = "Open";
     logToSheet({
       recordType: "Incident", action: "Created", studentName,
-      details: `Status: ${status} — ${issue}`, loggedBy: teacherName(),
+      details: `Class: ${studentClass} — Status: ${status} — ${issue}`, loggedBy: teacherName(),
     });
   } catch (err) {
     state.saveError = true;
@@ -316,17 +365,18 @@ async function submitNewSuspension(e) {
   e.preventDefault();
   const f = e.target;
   const studentName = f.studentName.value.trim();
+  const studentClass = f.studentClass.value.trim();
   const startDate = f.startDate.value;
   const days = parseInt(f.days.value, 10);
   const type = state._newSuspType;
   const venue = type === "ISS" ? (f.venue?.value || "").trim() : "";
   const reason = f.reason.value.trim();
-  if (!studentName || !startDate || !days) return;
+  if (!studentName || !studentClass || !startDate || !days) return;
   state.saving = true;
   render();
   try {
     await addDoc(collection(db, "suspensions"), {
-      studentName, type, startDate, days, venue, reason,
+      studentName, studentClass, type, startDate, days, venue, reason,
       loggedBy: teacherName(),
       loggedByUid: auth.currentUser?.uid || null,
       createdAt: Date.now(),
@@ -335,7 +385,7 @@ async function submitNewSuspension(e) {
     state._newSuspType = "ISS";
     logToSheet({
       recordType: "Suspension", action: "Created", studentName,
-      details: `${type} — ${days} day${days > 1 ? "s" : ""} from ${startDate}${venue ? ` — ${venue}` : ""}${reason ? ` — ${reason}` : ""}`,
+      details: `Class: ${studentClass} — ${type} — ${days} day${days > 1 ? "s" : ""} from ${startDate}${venue ? ` — ${venue}` : ""}${reason ? ` — ${reason}` : ""}`,
       loggedBy: teacherName(),
     });
   } catch (err) {
@@ -465,7 +515,7 @@ function renderCard(it) {
           <div class="dd-card-student">${escapeHtml(it.studentName)}</div>
           <div class="dd-card-issue">${escapeHtml(it.issue)}</div>
           <div class="dd-card-meta">
-            ${formatDate(it.date)} · logged by ${escapeHtml(it.loggedBy)}
+            ${formatDate(it.date)}${it.studentClass ? ` · Class ${escapeHtml(it.studentClass)}` : ""} · logged by ${escapeHtml(it.loggedBy)}
             ${followUps.length ? ` · ${followUps.length} follow-up${followUps.length > 1 ? "s" : ""}` : ""}
             ${history.length > 1 ? ` · last activity ${formatDateTime(history[history.length - 1].at)}` : ""}
           </div>
@@ -520,6 +570,7 @@ function renderSuspCard(s) {
           <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-issue">
             ${formatDate(s.startDate)} → ${formatDate(endDate)} · ${s.days} day${s.days > 1 ? "s" : ""}
+            ${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""}
             ${s.type === "ISS" && s.venue ? ` · ${escapeHtml(s.venue)}` : ""}
           </div>
           ${s.reason ? `<div class="dd-card-meta">${escapeHtml(s.reason)}</div>` : ""}
@@ -599,15 +650,10 @@ function renderSuspensionSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div class="dd-grid2" style="margin-bottom:16px">
-          <div class="dd-panel" style="text-align:center">
-            <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase">In ISS right now</div>
-            <div class="dd-serif" style="font-size:32px;font-weight:700;color:#B8863B">${state.suspensions.filter((s) => s.type === "ISS" && suspensionStatus(s) === "Active").length}</div>
-          </div>
-          <div class="dd-panel" style="text-align:center">
-            <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase">In OSS right now</div>
-            <div class="dd-serif" style="font-size:32px;font-weight:700;color:#A3372B">${state.suspensions.filter((s) => s.type === "OSS" && suspensionStatus(s) === "Active").length}</div>
-          </div>
+        <div style="margin-bottom:16px">
+          ${renderDashboardBox("ISS", "In-School Suspension", "#B8863B")}
+          <div style="height:12px"></div>
+          ${renderDashboardBox("OSS", "Out of School Suspension", "#A3372B")}
         </div>
         <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
           <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
@@ -638,6 +684,8 @@ function renderNewForm() {
         </div>
         <label class="dd-label">Student name</label>
         <input class="dd-input" name="studentName" required />
+        <label class="dd-label">Class</label>
+        <input class="dd-input" name="studentClass" placeholder="e.g. 5A" required />
         <label class="dd-label">Date</label>
         <input class="dd-input" type="date" name="date" required value="${todayISO()}" />
         <label class="dd-label">Issue</label>
@@ -669,6 +717,8 @@ function renderNewSuspForm() {
         </div>
         <label class="dd-label">Student name</label>
         <input class="dd-input" name="studentName" required />
+        <label class="dd-label">Class</label>
+        <input class="dd-input" name="studentClass" placeholder="e.g. 5A" required />
         <label class="dd-label">Start date</label>
         <input class="dd-input" type="date" name="startDate" required value="${todayISO()}" />
         <label class="dd-label">Duration (days)</label>

@@ -51,8 +51,8 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-newbtn:hover { opacity: 0.9; }
 
 .dd-main { max-width: 760px; margin: 0 auto; padding: 24px 20px; }
-.dd-tabs { display: flex; gap: 6px; margin-bottom: -1px; position: relative; z-index: 1; }
-.dd-tab { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; padding: 8px 16px; border-radius: 3px 3px 0 0; border: 1px solid #C9C4B4; cursor: pointer; color: #1B2A41; background: #DAD6C8; }
+.dd-tabs { display: flex; gap: 4px; margin-bottom: -1px; position: relative; z-index: 1; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+.dd-tab { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 7px 9px; border-radius: 3px 3px 0 0; border: 1px solid #C9C4B4; cursor: pointer; color: #1B2A41; background: #DAD6C8; flex: 0 0 auto; white-space: nowrap; }
 .dd-tab.active { background: #FBFAF6; border-bottom-color: #FBFAF6; font-weight: 600; z-index: 2; }
 .dd-tab .count { opacity: 0.6; margin-left: 4px; }
 
@@ -103,3 +103,17 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-modal-close { background: none; border: none; cursor: pointer; color: #8A8571; }
 
 .dd-toast { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-family: 'IBM Plex Sans', sans-serif; }
+
+.dd-dash-box { padding: 14px; }
+.dd-dash-title { font-family: 'Zilla Slab', serif; font-weight: 600; font-size: 15px; margin-bottom: 10px; }
+.dd-dash-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.dd-dash-col { min-width: 0; overflow: hidden; }
+.dd-dash-col-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.dd-dash-count { font-size: 26px; font-weight: 700; line-height: 1; margin-bottom: 6px; }
+.dd-dash-list { max-height: 130px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.dd-dash-row { display: flex; justify-content: space-between; gap: 6px; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; }
+.dd-dash-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.dd-dash-class { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; flex: 0 0 auto; }
+.dd-dash-date { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8A8571; text-transform: uppercase; margin-top: 4px; }
+.dd-dash-date:first-child { margin-top: 0; }
+.dd-dash-empty { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #8A8571; font-style: italic; }
