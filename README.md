@@ -72,6 +72,15 @@ That URL is the app. Send it to your discipline team.
 Security rules block **deletes** on both collections entirely — nothing can
 be erased from the client, only added to.
 
+## Editing entries
+
+Both discipline log entries and suspensions can now be edited (click a card
+to expand it → **"Edit entry"**). Every field change is recorded in that
+entry's audit trail — e.g. `Entry edited — Issue changed from "..." to
+"..."` — with who made the change and when, the same way status changes and
+follow-ups already were. Nothing about an edit is silent; the full history
+stays visible under "Show audit trail."
+
 ## Removing entries
 
 There's no true delete — matching the "nothing can be erased" promise above.

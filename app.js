@@ -81,6 +81,15 @@ function truncateName(name, n = 15) {
   const s = name || "";
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
+function diffText(oldObj, newObj, fields) {
+  const changes = [];
+  fields.forEach(({ key, label }) => {
+    const before = (oldObj[key] ?? "").toString();
+    const after = (newObj[key] ?? "").toString();
+    if (before !== after) changes.push(`${label} changed from "${before || "(blank)"}" to "${after || "(blank)"}"`);
+  });
+  return changes;
+}
 function studentsOnDate(type, dateISO) {
   return state.suspensions.filter((s) => {
     if (s.deleted || s.type !== type) return false;
@@ -138,6 +147,7 @@ const state = {
   query: "",
   expandedId: null,
   showNewForm: false,
+  editingIncidentId: null,
   historyOpen: {},
   followDraft: {},
 
@@ -147,6 +157,8 @@ const state = {
   suspQuery: "",
   showNewSuspForm: false,
   _newSuspType: "ISS",
+  editingSuspensionId: null,
+  expandedSuspId: null,
 
   saveError: false,
   saving: false,
@@ -361,6 +373,52 @@ async function restoreIncident(id) {
     state.saveError = true; render();
   }
 }
+
+function openEditIncident(id) {
+  state.editingIncidentId = id;
+  render();
+}
+
+async function submitEditIncident(e) {
+  e.preventDefault();
+  const f = e.target;
+  const id = state.editingIncidentId;
+  const it = state.incidents.find((i) => i.id === id);
+  if (!it) return;
+  const updated = {
+    studentName: f.studentName.value.trim(),
+    studentClass: f.studentClass.value.trim(),
+    date: f.date.value,
+    issue: f.issue.value.trim(),
+    actionTaken: f.actionTaken.value.trim(),
+  };
+  if (!updated.studentName || !updated.studentClass || !updated.issue) return;
+  const changes = diffText(it, updated, [
+    { key: "studentName", label: "Student name" },
+    { key: "studentClass", label: "Class" },
+    { key: "date", label: "Date" },
+    { key: "issue", label: "Issue" },
+    { key: "actionTaken", label: "Action taken" },
+  ]);
+  if (changes.length === 0) { state.editingIncidentId = null; render(); return; }
+  const now = Date.now();
+  state.saving = true;
+  render();
+  try {
+    await updateDoc(doc(db, "incidents", id), {
+      ...updated,
+      history: arrayUnion({ id: uid(), type: "edited", detail: `Entry edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
+    });
+    logToSheet({ recordType: "Incident", action: "Edited", studentName: updated.studentName, details: changes.join("; "), loggedBy: teacherName() });
+    state.editingIncidentId = null;
+  } catch (err) {
+    state.saveError = true;
+  } finally {
+    state.saving = false;
+    render();
+  }
+}
+
 async function submitNewSuspension(e) {
   e.preventDefault();
   const f = e.target;
@@ -375,11 +433,13 @@ async function submitNewSuspension(e) {
   state.saving = true;
   render();
   try {
+    const now = Date.now();
     await addDoc(collection(db, "suspensions"), {
       studentName, studentClass, type, startDate, days, venue, reason,
       loggedBy: teacherName(),
       loggedByUid: auth.currentUser?.uid || null,
-      createdAt: Date.now(),
+      createdAt: now,
+      history: [{ id: uid(), type: "created", detail: `Suspension created — ${type}, ${days} day${days > 1 ? "s" : ""} from ${startDate}`, by: teacherName(), at: now }],
     });
     state.showNewSuspForm = false;
     state._newSuspType = "ISS";
@@ -399,8 +459,12 @@ async function submitNewSuspension(e) {
 async function deleteSuspension(id) {
   if (!askDeletePassword()) return;
   const s = state.suspensions.find((i) => i.id === id);
+  const now = Date.now();
   try {
-    await updateDoc(doc(db, "suspensions", id), { deleted: true, deletedAt: Date.now(), deletedBy: teacherName() });
+    await updateDoc(doc(db, "suspensions", id), {
+      deleted: true, deletedAt: now, deletedBy: teacherName(),
+      history: arrayUnion({ id: uid(), type: "deleted", detail: "Suspension removed", by: teacherName(), at: now }),
+    });
     logToSheet({ recordType: "Suspension", action: "Removed", studentName: s?.studentName || "", details: "", loggedBy: teacherName() });
   } catch (err) {
     state.saveError = true; render();
@@ -409,11 +473,67 @@ async function deleteSuspension(id) {
 
 async function restoreSuspension(id) {
   const s = state.suspensions.find((i) => i.id === id);
+  const now = Date.now();
   try {
-    await updateDoc(doc(db, "suspensions", id), { deleted: false });
+    await updateDoc(doc(db, "suspensions", id), {
+      deleted: false,
+      history: arrayUnion({ id: uid(), type: "restored", detail: "Suspension restored", by: teacherName(), at: now }),
+    });
     logToSheet({ recordType: "Suspension", action: "Restored", studentName: s?.studentName || "", details: "", loggedBy: teacherName() });
   } catch (err) {
     state.saveError = true; render();
+  }
+}
+
+function openEditSuspension(id) {
+  state.editingSuspensionId = id;
+  const s = state.suspensions.find((i) => i.id === id);
+  if (s) state._newSuspType = s.type;
+  render();
+}
+
+async function submitEditSuspension(e) {
+  e.preventDefault();
+  const f = e.target;
+  const id = state.editingSuspensionId;
+  const s = state.suspensions.find((i) => i.id === id);
+  if (!s) return;
+  const type = state._newSuspType;
+  const updated = {
+    studentName: f.studentName.value.trim(),
+    studentClass: f.studentClass.value.trim(),
+    type,
+    startDate: f.startDate.value,
+    days: parseInt(f.days.value, 10),
+    venue: type === "ISS" ? (f.venue?.value || "").trim() : "",
+    reason: f.reason.value.trim(),
+  };
+  if (!updated.studentName || !updated.studentClass || !updated.startDate || !updated.days) return;
+  const changes = diffText(s, updated, [
+    { key: "studentName", label: "Student name" },
+    { key: "studentClass", label: "Class" },
+    { key: "type", label: "Type" },
+    { key: "startDate", label: "Start date" },
+    { key: "days", label: "Duration (days)" },
+    { key: "venue", label: "Venue" },
+    { key: "reason", label: "Reason" },
+  ]);
+  if (changes.length === 0) { state.editingSuspensionId = null; render(); return; }
+  const now = Date.now();
+  state.saving = true;
+  render();
+  try {
+    await updateDoc(doc(db, "suspensions", id), {
+      ...updated,
+      history: arrayUnion({ id: uid(), type: "edited", detail: `Suspension edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
+    });
+    logToSheet({ recordType: "Suspension", action: "Edited", studentName: updated.studentName, details: changes.join("; "), loggedBy: teacherName() });
+    state.editingSuspensionId = null;
+  } catch (err) {
+    state.saveError = true;
+  } finally {
+    state.saving = false;
+    render();
   }
 }
 
@@ -549,11 +669,12 @@ function renderCard(it) {
           <div class="dd-history">
             ${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}
           </div>` : ""}
-        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4">
+        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           ${it.deleted
-            ? `<div class="dd-mono-muted" style="font-size:11px;margin-bottom:6px">Removed by ${escapeHtml(it.deletedBy || "")} on ${formatDateTime(it.deletedAt)}</div>
+            ? `<div class="dd-mono-muted" style="font-size:11px">Removed by ${escapeHtml(it.deletedBy || "")} on ${formatDateTime(it.deletedAt)}</div>
                <button class="dd-add-btn" data-action="restore-incident" data-id="${it.id}">Restore entry</button>`
-            : `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>`}
+            : `<button class="dd-add-btn" data-action="edit-incident" data-id="${it.id}">Edit entry</button>
+               <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>`}
         </div>
       </div>` : ""}
     </div>`;
@@ -563,9 +684,11 @@ function renderSuspCard(s) {
   const typeStyle = SUSP_TYPE_STYLE[s.type];
   const statusStyle = s.deleted ? { ink: "#8A8571", label: "REMOVED" } : SUSP_STATUS_STYLE[s._status];
   const endDate = addDays(s.startDate, s.days);
+  const expanded = state.expandedSuspId === s.id;
+  const history = s.history || [];
   return `
     <div class="dd-card">
-      <div class="dd-card-head" style="cursor:default">
+      <button class="dd-card-head" data-action="toggle-susp-expand" data-id="${s.id}">
         <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-issue">
@@ -579,13 +702,24 @@ function renderSuspCard(s) {
         <div class="dd-card-right">
           <span class="dd-stamp" style="color:${typeStyle.ink}">${typeStyle.label}</span>
           <span class="dd-stamp" style="color:${statusStyle.ink}">${statusStyle.label}</span>
+          <span>${expanded ? "▲" : "▼"}</span>
         </div>
-      </div>
-      <div style="padding:0 16px 12px">
-        ${s.deleted
-          ? `<button class="dd-add-btn" data-action="restore-suspension" data-id="${s.id}">Restore</button>`
-          : `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>`}
-      </div>
+      </button>
+      ${expanded ? `
+      <div class="dd-expand">
+        <button class="dd-history-toggle" data-action="toggle-susp-history" data-id="${s.id}">${state.historyOpen[s.id] ? "Hide audit trail" : "Show audit trail"}</button>
+        ${state.historyOpen[s.id] ? `
+          <div class="dd-history">
+            ${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded for this entry yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}
+          </div>` : ""}
+        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${s.deleted
+            ? `<div class="dd-mono-muted" style="font-size:11px">Removed by ${escapeHtml(s.deletedBy || "")} on ${formatDateTime(s.deletedAt)}</div>
+               <button class="dd-add-btn" data-action="restore-suspension" data-id="${s.id}">Restore</button>`
+            : `<button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
+               <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>`}
+        </div>
+      </div>` : ""}
     </div>`;
 }
 
@@ -640,6 +774,7 @@ function renderLogSection() {
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
       </div>
       ${state.showNewForm ? renderNewForm() : ""}
+      ${state.editingIncidentId ? renderEditIncidentForm() : ""}
     </div>`;
 }
 
@@ -670,6 +805,7 @@ function renderSuspensionSection() {
         </div>
       </div>
       ${state.showNewSuspForm ? renderNewSuspForm() : ""}
+      ${state.editingSuspensionId ? renderEditSuspensionForm() : ""}
     </div>`;
 }
 
@@ -729,6 +865,67 @@ function renderNewSuspForm() {
         <label class="dd-label">Reason</label>
         <textarea class="dd-textarea dd-input" name="reason" rows="2" placeholder="Why was this issued? (optional)"></textarea>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save suspension"}</button>
+      </form>
+    </div>`;
+}
+
+function renderEditIncidentForm() {
+  const it = state.incidents.find((i) => i.id === state.editingIncidentId);
+  if (!it) return "";
+  return `
+    <div class="dd-modal-backdrop" id="edit-modal-backdrop">
+      <form class="dd-modal" id="edit-form">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Edit entry</div>
+          <button type="button" class="dd-modal-close" id="edit-modal-close">✕</button>
+        </div>
+        <label class="dd-label">Student name</label>
+        <input class="dd-input" name="studentName" required value="${escapeHtml(it.studentName)}" />
+        <label class="dd-label">Class</label>
+        <input class="dd-input" name="studentClass" required value="${escapeHtml(it.studentClass || "")}" />
+        <label class="dd-label">Date</label>
+        <input class="dd-input" type="date" name="date" required value="${it.date}" />
+        <label class="dd-label">Issue</label>
+        <textarea class="dd-textarea dd-input" name="issue" rows="3" required>${escapeHtml(it.issue)}</textarea>
+        <label class="dd-label">Action taken</label>
+        <textarea class="dd-textarea dd-input" name="actionTaken" rows="2">${escapeHtml(it.actionTaken || "")}</textarea>
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
+        <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
+      </form>
+    </div>`;
+}
+
+function renderEditSuspensionForm() {
+  const s = state.suspensions.find((i) => i.id === state.editingSuspensionId);
+  if (!s) return "";
+  const type = state._newSuspType || s.type;
+  return `
+    <div class="dd-modal-backdrop" id="edit-susp-modal-backdrop">
+      <form class="dd-modal" id="edit-susp-form">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Edit suspension</div>
+          <button type="button" class="dd-modal-close" id="edit-susp-modal-close">✕</button>
+        </div>
+        <label class="dd-label">Type</label>
+        <div class="dd-status-row">
+          <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="ISS" style="color:${SUSP_TYPE_STYLE.ISS.ink};opacity:${type === "ISS" ? 1 : 0.35}">IN-SCHOOL (ISS)</button>
+          <button type="button" class="dd-stamp" data-action="pick-edit-susp-type" data-type="OSS" style="color:${SUSP_TYPE_STYLE.OSS.ink};opacity:${type === "OSS" ? 1 : 0.35}">OUT-OF-SCHOOL (OSS)</button>
+        </div>
+        <label class="dd-label">Student name</label>
+        <input class="dd-input" name="studentName" required value="${escapeHtml(s.studentName)}" />
+        <label class="dd-label">Class</label>
+        <input class="dd-input" name="studentClass" required value="${escapeHtml(s.studentClass || "")}" />
+        <label class="dd-label">Start date</label>
+        <input class="dd-input" type="date" name="startDate" required value="${s.startDate}" />
+        <label class="dd-label">Duration (days)</label>
+        <input class="dd-input" type="number" name="days" min="1" required value="${s.days}" />
+        ${type === "ISS" ? `
+        <label class="dd-label">Venue</label>
+        <input class="dd-input" name="venue" value="${escapeHtml(s.venue || "")}" />` : ""}
+        <label class="dd-label">Reason</label>
+        <textarea class="dd-textarea dd-input" name="reason" rows="2">${escapeHtml(s.reason || "")}</textarea>
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
+        <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
       </form>
     </div>`;
 }
@@ -793,6 +990,8 @@ function attachLogListeners() {
     el.addEventListener("click", () => deleteIncident(el.dataset.id)));
   document.querySelectorAll('[data-action="restore-incident"]').forEach((el) =>
     el.addEventListener("click", () => restoreIncident(el.dataset.id)));
+  document.querySelectorAll('[data-action="edit-incident"]').forEach((el) =>
+    el.addEventListener("click", () => openEditIncident(el.dataset.id)));
 
   if (state.showNewForm) {
     document.getElementById("new-form").addEventListener("submit", submitNewIncident);
@@ -802,6 +1001,14 @@ function attachLogListeners() {
     });
     document.querySelectorAll('[data-action="pick-new-status"]').forEach((el) =>
       el.addEventListener("click", () => { state._newStatus = el.dataset.status; render(); }));
+  }
+
+  if (state.editingIncidentId) {
+    document.getElementById("edit-form").addEventListener("submit", submitEditIncident);
+    document.getElementById("edit-modal-close").addEventListener("click", () => { state.editingIncidentId = null; render(); });
+    document.getElementById("edit-modal-backdrop").addEventListener("click", (e) => {
+      if (e.target.id === "edit-modal-backdrop") { state.editingIncidentId = null; render(); }
+    });
   }
 }
 
@@ -824,6 +1031,22 @@ function attachSuspListeners() {
     el.addEventListener("click", () => deleteSuspension(el.dataset.id)));
   document.querySelectorAll('[data-action="restore-suspension"]').forEach((el) =>
     el.addEventListener("click", () => restoreSuspension(el.dataset.id)));
+  document.querySelectorAll('[data-action="edit-suspension"]').forEach((el) =>
+    el.addEventListener("click", () => openEditSuspension(el.dataset.id)));
+
+  document.querySelectorAll('[data-action="toggle-susp-expand"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const id = el.dataset.id;
+      state.expandedSuspId = state.expandedSuspId === id ? null : id;
+      render();
+    }));
+
+  document.querySelectorAll('[data-action="toggle-susp-history"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const id = el.dataset.id;
+      state.historyOpen[id] = !state.historyOpen[id];
+      render();
+    }));
 
   if (state.showNewSuspForm) {
     document.getElementById("new-susp-form").addEventListener("submit", submitNewSuspension);
@@ -832,6 +1055,16 @@ function attachSuspListeners() {
       if (e.target.id === "susp-modal-backdrop") { state.showNewSuspForm = false; render(); }
     });
     document.querySelectorAll('[data-action="pick-susp-type"]').forEach((el) =>
+      el.addEventListener("click", () => { state._newSuspType = el.dataset.type; render(); }));
+  }
+
+  if (state.editingSuspensionId) {
+    document.getElementById("edit-susp-form").addEventListener("submit", submitEditSuspension);
+    document.getElementById("edit-susp-modal-close").addEventListener("click", () => { state.editingSuspensionId = null; render(); });
+    document.getElementById("edit-susp-modal-backdrop").addEventListener("click", (e) => {
+      if (e.target.id === "edit-susp-modal-backdrop") { state.editingSuspensionId = null; render(); }
+    });
+    document.querySelectorAll('[data-action="pick-edit-susp-type"]').forEach((el) =>
       el.addEventListener("click", () => { state._newSuspType = el.dataset.type; render(); }));
   }
 }
