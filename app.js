@@ -22,7 +22,7 @@ const db = getFirestore(app);
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
-const SHEET_WEBHOOK_URL = https://script.google.com/macros/s/AKfycbyEXCtdtriLO9Qli9OIEHLH2348T9oc5VFEX9Qr7_nsrEv8zoYlrZftMExpEjcg4h_T/exec;
+const SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyEXCtdtriLO9Qli9OIEHLH2348T9oc5VFEX9Qr7_nsrEv8zoYlrZftMExpEjcg4h_T/exec";
 
 function logToSheet(record) {
   if (!SHEET_WEBHOOK_URL || SHEET_WEBHOOK_URL.startsWith("PASTE_")) return;
@@ -282,7 +282,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.14.0";
+const APP_VERSION = "1.15.1";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {
