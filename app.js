@@ -55,7 +55,10 @@ const SUSP_STATUS_STYLE = {
   Completed: { ink: "#3C6E47", label: "COMPLETED" },
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function formatDate(iso) {
   if (!iso) return "";
@@ -66,9 +69,10 @@ function formatDateTime(ms) {
   return new Date(ms).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function addDays(iso, days) {
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }
 function suspensionStatus(s) {
   const today = todayISO();
@@ -87,6 +91,12 @@ function suspensionDateRange(startDate, days) {
 function venueForDate(s, dateISO) {
   if (s.venuesByDate && s.venuesByDate[dateISO] !== undefined) return s.venuesByDate[dateISO];
   return s.venue || "";
+}
+function linkedParts(s) {
+  if (!s.caseId) return [];
+  return state.suspensions
+    .filter((x) => x.caseId === s.caseId && !x.deleted)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 }
 function truncateName(name, n = 15) {
   const s = name || "";
@@ -177,7 +187,8 @@ const state = {
   _newSuspType: "ISS",
   editingSuspensionId: null,
   expandedSuspId: null,
-  _suspFormDraft: { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venues: {} },
+  _suspFormDraft: { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venue: "", differentVenues: false, venues: {} },
+  _linkedCaseId: null,
 
   saveError: false,
   saving: false,
@@ -262,7 +273,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.10.0";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {
@@ -442,6 +453,18 @@ async function submitEditIncident(e) {
   }
 }
 
+function buildVenuesByDate(form, startDate, days) {
+  const differentVenues = form.elements["differentVenues"]?.checked;
+  const venuesByDate = {};
+  if (differentVenues) {
+    form.querySelectorAll(".dd-venue-input").forEach((el) => { venuesByDate[el.dataset.date] = el.value.trim(); });
+  } else {
+    const singleVenue = (form.elements["venue"]?.value || "").trim();
+    suspensionDateRange(startDate, days).forEach((d) => { venuesByDate[d] = singleVenue; });
+  }
+  return venuesByDate;
+}
+
 async function submitNewSuspension(e) {
   e.preventDefault();
   const f = e.target;
@@ -452,24 +475,30 @@ async function submitNewSuspension(e) {
   const type = state._newSuspType;
   const reason = f.reason.value.trim();
   if (!studentName || !studentClass || !startDate || !days) return;
-  const venuesByDate = {};
-  if (type === "ISS") {
-    f.querySelectorAll(".dd-venue-input").forEach((el) => { venuesByDate[el.dataset.date] = el.value.trim(); });
-  }
+  const venuesByDate = type === "ISS" ? buildVenuesByDate(f, startDate, days) : {};
   state.saving = true;
   render();
   try {
     const now = Date.now();
+    const caseId = state._linkedCaseId || null;
     await addDoc(collection(db, "suspensions"), {
       studentName, studentClass, type, startDate, days, venuesByDate, reason,
+      ...(caseId ? { caseId } : {}),
       loggedBy: teacherName(),
       loggedByUid: auth.currentUser?.uid || null,
       createdAt: now,
-      history: [{ id: uid(), type: "created", detail: `Suspension created — ${type}, ${days} day${days > 1 ? "s" : ""} from ${startDate}`, by: teacherName(), at: now }],
+      history: [{
+        id: uid(), type: "created",
+        detail: caseId
+          ? `Suspension created — ${type}, ${days} day${days > 1 ? "s" : ""} from ${startDate} (linked part of an existing suspension)`
+          : `Suspension created — ${type}, ${days} day${days > 1 ? "s" : ""} from ${startDate}`,
+        by: teacherName(), at: now,
+      }],
     });
     state.showNewSuspForm = false;
     state._newSuspType = "ISS";
-    state._suspFormDraft = { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venues: {} };
+    state._linkedCaseId = null;
+    state._suspFormDraft = { studentName: "", studentClass: "", startDate: "", days: 1, reason: "", venue: "", differentVenues: false, venues: {} };
     const venueSummary = Object.entries(venuesByDate).map(([d, v]) => `${formatDate(d)}: ${v || "—"}`).join(", ");
     logToSheet({
       recordType: "Suspension", action: "Created", studentName,
@@ -513,6 +542,34 @@ async function restoreSuspension(id) {
   }
 }
 
+async function openLinkedSuspension(id) {
+  const original = state.suspensions.find((s) => s.id === id);
+  if (!original) return;
+  let caseId = original.caseId;
+  if (!caseId) {
+    caseId = uid();
+    try {
+      await updateDoc(doc(db, "suspensions", id), {
+        caseId,
+        history: arrayUnion({ id: uid(), type: "linked", detail: "Marked as part of a multi-part suspension", by: teacherName(), at: Date.now() }),
+      });
+    } catch (err) {
+      state.saveError = true; render(); return;
+    }
+  }
+  const suggestedType = original.type === "ISS" ? "OSS" : "ISS";
+  const suggestedStart = addDays(original.startDate, original.days);
+  state._linkedCaseId = caseId;
+  state._newSuspType = suggestedType;
+  state._suspFormDraft = {
+    studentName: original.studentName, studentClass: original.studentClass,
+    startDate: suggestedStart, days: 1, reason: original.reason || "",
+    venue: "", differentVenues: false, venues: {},
+  };
+  state.showNewSuspForm = true;
+  render();
+}
+
 function openEditSuspension(id) {
   state.editingSuspensionId = id;
   const s = state.suspensions.find((i) => i.id === id);
@@ -521,9 +578,13 @@ function openEditSuspension(id) {
     const dates = suspensionDateRange(s.startDate, s.days);
     const venues = {};
     dates.forEach((d) => { venues[d] = venueForDate(s, d); });
+    const uniqueVenues = [...new Set(Object.values(venues))];
+    const differentVenues = uniqueVenues.length > 1;
     state._suspFormDraft = {
       studentName: s.studentName, studentClass: s.studentClass,
-      startDate: s.startDate, days: s.days, reason: s.reason || "", venues,
+      startDate: s.startDate, days: s.days, reason: s.reason || "",
+      venue: differentVenues ? "" : (uniqueVenues[0] || ""),
+      differentVenues, venues,
     };
   }
   render();
@@ -536,16 +597,15 @@ async function submitEditSuspension(e) {
   const s = state.suspensions.find((i) => i.id === id);
   if (!s) return;
   const type = state._newSuspType;
-  const venuesByDate = {};
-  if (type === "ISS") {
-    f.querySelectorAll(".dd-venue-input").forEach((el) => { venuesByDate[el.dataset.date] = el.value.trim(); });
-  }
+  const startDate = f.startDate.value;
+  const days = parseInt(f.days.value, 10);
+  const venuesByDate = type === "ISS" ? buildVenuesByDate(f, startDate, days) : {};
   const updated = {
     studentName: f.studentName.value.trim(),
     studentClass: f.studentClass.value.trim(),
     type,
-    startDate: f.startDate.value,
-    days: parseInt(f.days.value, 10),
+    startDate,
+    days,
     venuesByDate,
     reason: f.reason.value.trim(),
   };
@@ -737,11 +797,13 @@ function renderSuspCard(s) {
     if (uniqueVenues.length === 1) venueSummary = ` · ${escapeHtml(uniqueVenues[0])}`;
     else if (uniqueVenues.length > 1) venueSummary = ` · Multiple locations`;
   }
+  const parts = linkedParts(s);
+  const partIndex = parts.findIndex((p) => p.id === s.id);
   return `
     <div class="dd-card">
       <button class="dd-card-head" data-action="toggle-susp-expand" data-id="${s.id}">
         <div style="min-width:0">
-          <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
+          <div class="dd-card-student">${escapeHtml(s.studentName)}${parts.length > 1 ? ` <span class="dd-mono-muted" style="font-size:11px;font-weight:400">— part ${partIndex + 1} of ${parts.length}</span>` : ""}</div>
           <div class="dd-card-issue">
             ${formatDate(s.startDate)} → ${formatDate(endDate)} · ${s.days} day${s.days > 1 ? "s" : ""}
             ${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""}
@@ -758,6 +820,11 @@ function renderSuspCard(s) {
       </button>
       ${expanded ? `
       <div class="dd-expand">
+        ${parts.length > 1 ? `
+        <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Linked suspension — all parts</div>
+        <div class="dd-followups" style="margin-bottom:16px">
+          ${parts.map((p, i) => `<div class="dd-followup"><div class="dd-followup-note">${i === partIndex ? "<b>" : ""}Part ${i + 1}: ${SUSP_TYPE_STYLE[p.type].label}, ${p.days} day${p.days > 1 ? "s" : ""}${i === partIndex ? "</b>" : ""}</div><div class="dd-followup-meta">${formatDate(p.startDate)} → ${formatDate(addDays(p.startDate, p.days))}</div></div>`).join("")}
+        </div>` : ""}
         ${s.type === "ISS" ? `
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Location by day</div>
         <div class="dd-followups" style="margin-bottom:16px">
@@ -773,6 +840,7 @@ function renderSuspCard(s) {
             ? `<div class="dd-mono-muted" style="font-size:11px">Removed by ${escapeHtml(s.deletedBy || "")} on ${formatDateTime(s.deletedAt)}</div>
                <button class="dd-add-btn" data-action="restore-suspension" data-id="${s.id}">Restore</button>`
             : `<button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
+               <button class="dd-add-btn" style="background:#4C6B8A" data-action="link-suspension" data-id="${s.id}">+ Add linked part</button>
                <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>`}
         </div>
       </div>` : ""}
@@ -858,11 +926,12 @@ function renderLogSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:10px">
+          <button class="dd-pill ${state.tab === "Deleted" ? "active" : ""}" data-action="set-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
           <button class="dd-newbtn" id="btn-new">+ New entry</button>
         </div>
         <div class="dd-tabs">
-          ${["All", ...STATUSES, "Deleted"].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t === "All" || t === "Deleted" ? t : STATUS_TEXT[t]}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
+          ${["All", ...STATUSES].map((t) => `<button class="dd-tab ${state.tab === t ? "active" : ""}" data-action="set-tab" data-tab="${t}">${t === "All" ? t : STATUS_TEXT[t]}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -891,11 +960,12 @@ function renderSuspensionSection() {
           <div style="height:12px"></div>
           ${renderDashboardBox("OSS", "Out of School Suspension", "#A3372B")}
         </div>
-        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:10px">
+          <button class="dd-pill ${state.suspTab === "Deleted" ? "active" : ""}" data-action="set-susp-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
           <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
         </div>
         <div class="dd-tabs">
-          ${["All", "Active", "Upcoming", "Completed", "Deleted"].map((t) => `<button class="dd-tab ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
+          ${["All", "Active", "Upcoming", "Completed"].map((t) => `<button class="dd-tab ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -947,6 +1017,19 @@ function renderVenueRowsHtml(startDate, days, venuesMap) {
     </div>`).join("");
 }
 
+function renderLocationSection(d, idPrefix) {
+  return `
+    <label class="dd-label">Location</label>
+    <input class="dd-input" name="venue" placeholder="e.g. Room 204" value="${escapeHtml(d.venue)}" style="${d.differentVenues ? "display:none" : ""}" />
+    <label style="display:flex;align-items:center;gap:6px;margin-top:${d.differentVenues ? "0" : "8px"};cursor:pointer">
+      <input type="checkbox" name="differentVenues" ${d.differentVenues ? "checked" : ""} />
+      <span class="dd-mono-muted" style="font-size:12px">Different location each day</span>
+    </label>
+    ${d.differentVenues ? `
+    <div class="dd-mono-muted" style="font-size:11px;margin:8px 0 6px">A student can be in a different room on different days.</div>
+    <div id="${idPrefix}-venue-rows">${renderVenueRowsHtml(d.startDate || todayISO(), d.days || 1, d.venues)}</div>` : ""}`;
+}
+
 function renderNewSuspForm() {
   const type = state._newSuspType;
   const d = state._suspFormDraft;
@@ -957,6 +1040,7 @@ function renderNewSuspForm() {
           <div class="dd-modal-title">New suspension</div>
           <button type="button" class="dd-modal-close" id="susp-modal-close">✕</button>
         </div>
+        ${state._linkedCaseId ? `<div class="dd-mono-muted" style="font-size:11px;margin-bottom:10px;color:#4C6B8A">Adding a linked part to an existing suspension — student, class, and reason are carried over.</div>` : ""}
         <label class="dd-label">Type</label>
         <div class="dd-status-row">
           <button type="button" class="dd-stamp" data-action="pick-susp-type" data-type="ISS" style="color:${SUSP_TYPE_STYLE.ISS.ink};opacity:${type === "ISS" ? 1 : 0.35}">IN-SCHOOL (ISS)</button>
@@ -970,10 +1054,7 @@ function renderNewSuspForm() {
         <input class="dd-input" type="date" name="startDate" id="susp-start-date" required value="${d.startDate || todayISO()}" />
         <label class="dd-label">Duration (days)</label>
         <input class="dd-input" type="number" name="days" id="susp-days" min="1" required value="${d.days || 1}" />
-        ${type === "ISS" ? `
-        <label class="dd-label">Location by day</label>
-        <div class="dd-mono-muted" style="font-size:11px;margin-bottom:6px">A student can be in a different room on different days.</div>
-        <div id="venue-rows">${renderVenueRowsHtml(d.startDate || todayISO(), d.days || 1, d.venues)}</div>` : ""}
+        ${type === "ISS" ? renderLocationSection(d, "new") : ""}
         <label class="dd-label">Reason</label>
         <textarea class="dd-textarea dd-input" name="reason" rows="2" placeholder="Why was this issued? (optional)">${escapeHtml(d.reason)}</textarea>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save suspension"}</button>
@@ -1032,10 +1113,7 @@ function renderEditSuspensionForm() {
         <input class="dd-input" type="date" name="startDate" id="edit-susp-start-date" required value="${d.startDate}" />
         <label class="dd-label">Duration (days)</label>
         <input class="dd-input" type="number" name="days" id="edit-susp-days" min="1" required value="${d.days}" />
-        ${type === "ISS" ? `
-        <label class="dd-label">Location by day</label>
-        <div class="dd-mono-muted" style="font-size:11px;margin-bottom:6px">A student can be in a different room on different days.</div>
-        <div id="edit-venue-rows">${renderVenueRowsHtml(d.startDate, d.days, d.venues)}</div>` : ""}
+        ${type === "ISS" ? renderLocationSection(d, "edit") : ""}
         <label class="dd-label">Reason</label>
         <textarea class="dd-textarea dd-input" name="reason" rows="2">${escapeHtml(d.reason)}</textarea>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
@@ -1138,7 +1216,8 @@ function attachSuspListeners() {
   document.getElementById("btn-new-susp").addEventListener("click", () => {
     state.showNewSuspForm = true;
     state._newSuspType = "ISS";
-    state._suspFormDraft = { studentName: "", studentClass: "", startDate: todayISO(), days: 1, reason: "", venues: {} };
+    state._linkedCaseId = null;
+    state._suspFormDraft = { studentName: "", studentClass: "", startDate: todayISO(), days: 1, reason: "", venue: "", differentVenues: false, venues: {} };
     render();
   });
 
@@ -1160,6 +1239,8 @@ function attachSuspListeners() {
     el.addEventListener("click", () => restoreSuspension(el.dataset.id)));
   document.querySelectorAll('[data-action="edit-suspension"]').forEach((el) =>
     el.addEventListener("click", () => openEditSuspension(el.dataset.id)));
+  document.querySelectorAll('[data-action="link-suspension"]').forEach((el) =>
+    el.addEventListener("click", () => openLinkedSuspension(el.dataset.id)));
 
   document.querySelectorAll('[data-action="toggle-susp-expand"]').forEach((el) =>
     el.addEventListener("click", () => {
@@ -1185,9 +1266,24 @@ function attachSuspListeners() {
   syncTextField("studentName");
   syncTextField("studentClass");
   syncTextField("reason");
+  syncTextField("venue");
 
   form.querySelectorAll(".dd-venue-input").forEach((el) =>
     el.addEventListener("input", () => { state._suspFormDraft.venues[el.dataset.date] = el.value; }));
+
+  const diffVenuesEl = form.elements["differentVenues"];
+  if (diffVenuesEl) {
+    diffVenuesEl.addEventListener("change", () => {
+      state._suspFormDraft.differentVenues = diffVenuesEl.checked;
+      if (diffVenuesEl.checked) {
+        // seed each day's row with the single location already typed, so switching to per-day mode doesn't blank everything out
+        suspensionDateRange(state._suspFormDraft.startDate || todayISO(), state._suspFormDraft.days || 1).forEach((dt) => {
+          if (!state._suspFormDraft.venues[dt]) state._suspFormDraft.venues[dt] = state._suspFormDraft.venue;
+        });
+      }
+      render();
+    });
+  }
 
   const startDateEl = form.elements["startDate"];
   const daysEl = form.elements["days"];
@@ -1202,9 +1298,9 @@ function attachSuspListeners() {
 
 if (state.showNewSuspForm) {
     document.getElementById("new-susp-form").addEventListener("submit", submitNewSuspension);
-    document.getElementById("susp-modal-close").addEventListener("click", () => { state.showNewSuspForm = false; render(); });
+    document.getElementById("susp-modal-close").addEventListener("click", () => { state.showNewSuspForm = false; state._linkedCaseId = null; render(); });
     document.getElementById("susp-modal-backdrop").addEventListener("click", (e) => {
-      if (e.target.id === "susp-modal-backdrop") { state.showNewSuspForm = false; render(); }
+      if (e.target.id === "susp-modal-backdrop") { state.showNewSuspForm = false; state._linkedCaseId = null; render(); }
     });
     document.querySelectorAll('[data-action="pick-susp-type"]').forEach((el) =>
       el.addEventListener("click", () => { state._newSuspType = el.dataset.type; render(); }));

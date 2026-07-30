@@ -51,8 +51,10 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-newbtn:hover { opacity: 0.9; }
 
 .dd-main { max-width: 760px; margin: 0 auto; padding: 24px 20px; }
-.dd-tabs { display: flex; gap: 4px; margin-bottom: -1px; position: relative; z-index: 1; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
-.dd-tab { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 7px 9px; border-radius: 3px 3px 0 0; border: 1px solid #C9C4B4; cursor: pointer; color: #1B2A41; background: #DAD6C8; flex: 0 0 auto; white-space: nowrap; }
+.dd-tabs { display: flex; gap: 4px; margin-bottom: -1px; position: relative; z-index: 1; }
+.dd-tab { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 7px 4px; border-radius: 3px 3px 0 0; border: 1px solid #C9C4B4; cursor: pointer; color: #1B2A41; background: #DAD6C8; flex: 1 1 0; min-width: 0; text-align: center; }
+.dd-pill { font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; padding: 5px 10px; border-radius: 999px; border: 1px solid #C9C4B4; cursor: pointer; color: #5B5748; background: #DAD6C8; white-space: nowrap; }
+.dd-pill.active { background: #1B2A41; color: #F2EFE6; border-color: #1B2A41; }
 .dd-tab.active { background: #FBFAF6; border-bottom-color: #FBFAF6; font-weight: 600; z-index: 2; }
 .dd-tab .count { opacity: 0.6; margin-left: 4px; }
 

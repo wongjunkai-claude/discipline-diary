@@ -86,15 +86,34 @@ The **"? Help"** button in the header opens a plain-language guide for
 teachers — statuses, suspensions, editing, removing, and backups — separate
 from this README, which is aimed at whoever maintains the app.
 
+## Hybrid (linked) suspensions
+
+For a suspension that's part OSS and part ISS (e.g. 3 days out of school
+then 2 in), log it as two separate suspensions and link them: expand the
+first one → **"+ Add linked part"**. This carries over the student's name,
+class, and reason automatically, suggests the opposite type and a start
+date right after the first part ends, and marks both records as one case.
+
+Linked parts show together on both suspension cards — "part 1 of 2" /
+"part 2 of 2" — with the full breakdown visible when expanded. Each part is
+still its own record with its own dates, type, location(s), and audit
+trail; linking only ties them together for display.
+
 ## Per-day ISS locations
 
-A student's in-school suspension can now have a different location each day
-(e.g. Room 204 on Monday, the Library on Tuesday). When logging or editing
-an ISS suspension, each day of the duration gets its own "Location by day"
-row. The Suspensions dashboard's Today / Next 2 Days columns show the
-correct location for that specific date automatically. Older suspensions
-logged before this feature still show their original single location for
-every day, until edited.
+Location defaults to a single field applying to every day of the
+suspension — quick to fill in for the common case. Only check **"Different
+location each day"** if a student is actually moving rooms partway through;
+that reveals one location field per day of the duration. When logging or
+editing an ISS suspension, each day gets its own "Location by day" row. The
+Suspensions dashboard's Today / Next 2 Days columns show the correct
+location for that specific date automatically. Older suspensions logged
+before this feature still show their original single location for every
+day, until edited.
+
+(v1.9.0 also fixed a date bug where the location-by-day list and some
+suspension date math were off by one day for anyone in a timezone ahead of
+UTC — e.g. Singapore/Malaysia.)
 
 ## Editing entries
 
