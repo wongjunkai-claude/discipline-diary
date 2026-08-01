@@ -124,22 +124,38 @@ function strictNextWeekday(iso, targetDow) {
 // matched exactly in every one of those years, as did Youth Day, Teachers'
 // Day, and the National Day in-lieu rule.
 //
-// Two known soft spots found during that check:
-// 1. Term 1's start: in years where 1 January falls on a Saturday or Sunday,
-//    MOE has added an extra buffer day beyond what this formula predicts
-//    (seen in 2022 and 2023 — a real, documented policy of staggering
-//    Primary 1's start date that began in the pandemic and continued after).
-// 2. Children's Day ("first Friday of October") was wrong for 2020 — the
-//    real date was the second Friday, not the first. Every other year
-//    checked (2021, 2022, 2023, 2025, 2026) matched the first-Friday rule
-//    exactly, so this is kept as the best default, not a confirmed formula.
+// Term 1's start date also accounts for 1 January falling on a Saturday or
+// Sunday, in which case MOE has consistently pushed the actual start one
+// day later than the plain weekday rule would give — verified exactly
+// against 2021 (no shift needed), 2022, and 2023 (both shifted, matching
+// the real confirmed dates for each).
+//
+// Children's Day ("first Friday of October") checked out for 2024, 2025,
+// and 2026, including against a source that cited the official MOE press
+// release directly. 2020-2023 actually used a different rule (Friday of
+// Term 4 Week 4) — the policy appears to have changed after 2023, so the
+// current first-Friday rule is what's implemented here.
+// One simplification worth knowing: MOE actually stages the very first day
+// of the school year — Primary 1 attends starting this computed date, but
+// other levels report one school day later. This app doesn't track
+// grade-level-specific calendars, so it treats P1's (earlier) date as "the"
+// start for scheduling purposes — the more inclusive definition, since some
+// students genuinely are in school that day.
 function computeMoeCalendar(year) {
+  const jan1Dow = weekdayOf(`${year}-01-01`);
   const jan2 = `${year}-01-02`;
   const jan2Dow = weekdayOf(jan2);
   let w1;
   if (jan2Dow === 1) w1 = jan2;
   else if (jan2Dow === 2) w1 = addDays(jan2, -1);
   else w1 = strictNextWeekday(jan2, 1);
+  // When 1 January itself falls on a Saturday or Sunday, MOE has
+  // consistently pushed the actual first day of school one day later than
+  // this would otherwise give — verified exactly against 2021 (no shift
+  // needed, Jan 1 was a Friday), 2022 (Jan 1 Sat -> shifts Term 1 start
+  // from 3 Jan to 4 Jan), and 2023 (Jan 1 Sun -> shifts from 2 Jan to
+  // 3 Jan, matching the confirmed 2023 start date exactly).
+  if (jan1Dow === 0 || jan1Dow === 6) w1 = addDays(w1, 1);
 
   const term1End = addDays(w1, 67);
   const marchStart = addDays(term1End, 1);
@@ -406,6 +422,7 @@ function startListening() {
     () => { state.suspLoaded = true; render(); }
   );
   ensureHolidaysSeeded();
+  syncPublicHolidaysFromDataGovSg();
   unsubHolidays = onSnapshot(
     doc(db, "holidays", "singapore"),
     (snap) => {
@@ -426,6 +443,53 @@ async function ensureHolidaysSeeded() {
     }
   } catch (e) {
     // non-fatal — falls back to weekend-only skipping if this never loads
+  }
+}
+
+// MOM publishes an evergreen "consolidated" public holidays dataset on
+// data.gov.sg that they update in place every year (unlike their per-year
+// datasets, which get a new ID each year and can't be tracked automatically).
+// This tries to keep holidays/singapore in sync with it on its own, with no
+// action needed most years. If this fetch ever fails — offline, the browser
+// blocks the request, data.gov.sg changes its API — it fails completely
+// silently and the app just keeps using whatever is already stored, exactly
+// as before. This is a bonus convenience, never a dependency.
+const SG_HOLIDAYS_DATASET_URL = "https://data.gov.sg/api/action/datastore_search?resource_id=d_8ef23381f9417e4d4254ee8b4dcdb176&limit=200";
+
+async function syncPublicHolidaysFromDataGovSg() {
+  try {
+    const res = await fetch(SG_HOLIDAYS_DATASET_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    const records = data?.result?.records;
+    if (!Array.isArray(records) || records.length < 50) return; // sanity check — too few rows means something's off, don't trust it
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const dates = new Set();
+    for (const rec of records) {
+      for (const key of Object.keys(rec)) {
+        if (dateRegex.test(rec[key])) {
+          dates.add(rec[key]);
+          // The dataset lists the raw holiday date only — Singapore's actual
+          // rule (a holiday landing on Sunday gets the following Monday off
+          // in lieu; Saturday holidays don't) isn't in the data, so it's
+          // derived here.
+          if (weekdayOf(rec[key]) === 0) dates.add(addDays(rec[key], 1));
+          break;
+        }
+      }
+    }
+    if (dates.size < 50) return; // same sanity check, applied to what we actually extracted
+
+    const fresh = [...dates].sort();
+    const current = state.holidays?.publicHolidays || [];
+    const changed = JSON.stringify(fresh) !== JSON.stringify(current);
+    if (changed) {
+      await setDoc(doc(db, "holidays", "singapore"), { publicHolidays: fresh }, { merge: true });
+      // state.holidays updates itself via the live onSnapshot listener already in place
+    }
+  } catch (e) {
+    // silent — this is a nice-to-have, not a requirement
   }
 }
 
@@ -469,7 +533,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.18.1";
+const APP_VERSION = "1.20.0";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {

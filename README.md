@@ -115,22 +115,30 @@ National Day in-lieu school holiday for any year automatically.
 and all four holiday blocks matched exactly in every one; so did Youth Day,
 Teachers' Day, and the National Day in-lieu rule.
 
-**Two known exceptions found during that check:**
-1. **Term 1's start date** is off by a day in years where 1 January falls
-   on a Saturday or Sunday (seen in 2022 and 2023) — MOE staggers Primary
-   1's start in those years as a real, documented policy that began in the
-   pandemic and continued afterward.
-2. **Children's Day** ("first Friday of October") was wrong for 2020 — the
-   actual date was the second Friday, not the first. Every other year
-   checked (2021, 2022, 2023, 2025, 2026) matched the first-Friday rule
-   exactly, so it's kept as the best default rather than a fully confirmed
-   formula.
+**One known exception found during that check — now fixed:** Term 1's
+start date used to be off by a day in years where 1 January falls on a
+Saturday or Sunday. MOE consistently pushes the actual start one day later
+than the plain weekday rule gives in those years; this is now built in and
+verified exactly against 2021 (no shift needed), 2022, and 2023 (both
+shifted, matching the real confirmed dates).
 
-**Public holidays still need annual updates** — Chinese New Year, Hari
-Raya, Vesak Day, and Deepavali follow lunar/religious calendars that
-genuinely can't be calculated, only sourced from MOM's actual gazetted
-list each year. See "Public holiday data" below for why this can't be
-fully automated either, and what the update process looks like.
+One simplification worth knowing: MOE stages the very first day of the
+school year — Primary 1 attends starting on the computed date, but other
+levels report one school day later. This app doesn't track grade-level-
+specific calendars, so it treats P1's (earlier) date as the practical start
+for scheduling — some students genuinely are in school that day, and it's
+the more inclusive definition.
+
+**Children's Day update:** "first Friday of October" checked out for 2024,
+2025, and 2026 — including against a source citing the official MOE press
+release directly. 2020-2023 actually used a different rule (Friday of Term
+4 Week 4); the policy appears to have changed after 2023, so the current
+first-Friday rule is what's implemented.
+
+**Public holidays now sync automatically** — Chinese New Year, Hari Raya,
+Vesak Day, and Deepavali follow lunar/religious calendars that can't be
+calculated, but they no longer need manual updates either. See "Public
+holiday data" below for how the app keeps this current on its own.
 
 For anything the calendar doesn't catch (a one-off closure day, or a year
 where the formula's soft spot applies), a small date field sits next to
@@ -139,17 +147,35 @@ Changing one day's date doesn't shift any other day.
 
 ## Public holiday data
 
-Singapore doesn't offer a stable, evergreen public API for this: MOM
-publishes a *new* dataset (with a new ID) on data.gov.sg every year rather
-than one URL that updates in place, so there's no single link this app
-could point at forever. That means public holidays live in Firestore
-(`holidays/singapore` → `publicHolidays`), seeded once with real 2026 data
-and meant to be updated by hand each year:
-1. Around September/October, MOM publishes next year's list (search
-   "Singapore public holidays [year] MOM" or check data.gov.sg)
-2. Firebase Console → Firestore Database → Data → `holidays` → `singapore`
+**Public holidays now update themselves automatically.** MOM publishes an
+evergreen "Singapore Public Holidays (consolidated)" dataset on data.gov.sg
+that they update in place every year — unlike their per-year datasets,
+which get a brand new ID annually and can't be tracked automatically, this
+one dataset ID stays the same and just grows. The app quietly checks it
+every time it loads, and if it finds new or changed data, updates
+`holidays/singapore` in Firestore on its own.
+
+This is genuinely tested against the real dataset — pulled a live response
+and confirmed it reproduces the exact 2026 public holiday list byte for
+byte, including deriving the "observed" Monday for holidays that land on a
+Sunday (the dataset only lists the raw holiday date; Singapore's actual
+rule — Sunday holidays get the following Monday off in lieu, Saturday ones
+don't — is computed here since it isn't in the source data).
+
+**This is a best-effort convenience, not a dependency.** If a browser
+blocks the request, data.gov.sg is briefly down, or they ever change their
+API, the sync just silently does nothing and the app keeps using whatever
+was already stored — exactly the same as before this existed. Nothing
+breaks either way. If you ever want to check it's working: open browser
+dev tools → Network tab → look for a request to `data.gov.sg` on page
+load.
+
+**Manual updates are now just a safety net, not a requirement** — but the
+same process as before still works if you ever want to force a specific
+year's list or the dataset stops updating:
+1. Firebase Console → Firestore Database → Data → `holidays` → `singapore`
    → edit the `publicHolidays` array
-3. Or paste me the new list and I'll help build the updated document
+2. Or paste me the new list and I'll help build the updated document
 
 ## Hybrid (linked) suspensions
 
