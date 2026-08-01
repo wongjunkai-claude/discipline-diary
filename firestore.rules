@@ -21,5 +21,12 @@ service cloud.firestore {
       allow read, create, update: if request.auth != null;
       allow delete: if false;
     }
+    // Shared Singapore holiday calendar (public holidays + school holiday
+    // blocks) used to auto-schedule multi-day suspensions. Any signed-in
+    // teacher can read/update it — there's nothing sensitive here, and it
+    // needs to be editable each year when MOE/MOM publish new dates.
+    match /holidays/{docId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

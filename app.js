@@ -4,7 +4,7 @@ import {
   getAuth, onAuthStateChanged, signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, arrayUnion, setDoc,
+  getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, arrayUnion, setDoc, getDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -79,17 +79,130 @@ function isWeekend(iso) {
   const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday, 6 = Saturday
   return dow === 0 || dow === 6;
 }
-// Next school day after a given date, skipping weekends. Does not know about
-// public holidays or school-specific closure days — those need the manual
-// calendar override on day 2+ of a suspension.
+
+// Singapore public holidays (MOM, data.gov.sg official dataset) for 2026,
+// used as the starting seed the first time the app runs. Public holidays
+// depend partly on lunar/religious calendars (Chinese New Year, Hari Raya,
+// Vesak, Deepavali) which can't be calculated — this is stored in Firestore
+// (holidays/singapore) so it can be updated for future years directly,
+// without a code change. See README.md for how, once MOM publishes the
+// next year's gazetted list.
+const DEFAULT_HOLIDAYS_2026 = {
+  publicHolidays: [
+    "2026-01-01", // New Year's Day
+    "2026-02-17", "2026-02-18", // Chinese New Year
+    "2026-03-21", // Hari Raya Puasa
+    "2026-04-03", // Good Friday
+    "2026-05-01", // Labour Day
+    "2026-05-27", // Hari Raya Haji
+    "2026-05-31", "2026-06-01", // Vesak Day + Observed
+    "2026-08-09", "2026-08-10", // National Day + Observed
+    "2026-11-08", "2026-11-09", // Deepavali + Observed
+    "2026-12-25", // Christmas Day
+  ],
+};
+
+function weekdayOf(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sun ... 6 = Sat
+}
+function strictNextWeekday(iso, targetDow) {
+  let d = addDays(iso, 1);
+  while (weekdayOf(d) !== targetDow) d = addDays(d, 1);
+  return d;
+}
+
+// Computes MOE's school term structure for a given year — term dates, the
+// four holiday blocks, and the predictable single-day holidays (Youth Day,
+// Teachers' Day, Children's Day, National Day in-lieu). Unlike public
+// holidays, this genuinely follows a fixed formula (each term is 10 weeks;
+// March/September breaks are 1 week; the June break is 4 weeks; the
+// year-end break runs to 31 December).
+//
+// Verified against MOE's actual published calendars for 2019, 2020, 2021,
+// 2024, 2025, and 2026 — term boundaries and all four holiday blocks
+// matched exactly in every one of those years, as did Youth Day, Teachers'
+// Day, and the National Day in-lieu rule.
+//
+// Two known soft spots found during that check:
+// 1. Term 1's start: in years where 1 January falls on a Saturday or Sunday,
+//    MOE has added an extra buffer day beyond what this formula predicts
+//    (seen in 2022 and 2023 — a real, documented policy of staggering
+//    Primary 1's start date that began in the pandemic and continued after).
+// 2. Children's Day ("first Friday of October") was wrong for 2020 — the
+//    real date was the second Friday, not the first. Every other year
+//    checked (2021, 2022, 2023, 2025, 2026) matched the first-Friday rule
+//    exactly, so this is kept as the best default, not a confirmed formula.
+function computeMoeCalendar(year) {
+  const jan2 = `${year}-01-02`;
+  const jan2Dow = weekdayOf(jan2);
+  let w1;
+  if (jan2Dow === 1) w1 = jan2;
+  else if (jan2Dow === 2) w1 = addDays(jan2, -1);
+  else w1 = strictNextWeekday(jan2, 1);
+
+  const term1End = addDays(w1, 67);
+  const marchStart = addDays(term1End, 1);
+  const marchEnd = addDays(marchStart, 8);
+  const term2Start = addDays(marchEnd, 1);
+  const term2End = addDays(term2Start, 67);
+  const juneStart = addDays(term2End, 1);
+  const juneEnd = addDays(juneStart, 29);
+  const term3Start = addDays(juneEnd, 1);
+  const term3End = addDays(term3Start, 67);
+  const sepStart = addDays(term3End, 1);
+  const sepEnd = addDays(sepStart, 8);
+  const term4Start = addDays(sepEnd, 1);
+  const term4End = addDays(term4Start, 67);
+  const yearEndStart = addDays(term4End, 1);
+  const yearEndEnd = `${year}-12-31`;
+
+  const youthDay = addDays(term3Start, 7); // Monday of Term 3 Week 2
+  const teachersDay = term3End; // Friday of Term 3 Week 10
+  const childrensDay = strictNextWeekday(`${year}-09-30`, 5); // first Friday of October
+
+  const nationalDay = `${year}-08-09`;
+  const ndDow = weekdayOf(nationalDay);
+  let nationalDayInLieu = null;
+  if (ndDow >= 1 && ndDow <= 4) nationalDayInLieu = addDays(nationalDay, 1); // Mon-Thu -> 10 Aug
+  else if (ndDow === 6) nationalDayInLieu = addDays(nationalDay, 2); // Sat -> 11 Aug (Mon)
+  // Fri or Sun -> no separate school holiday
+
+  return {
+    ranges: [
+      { start: marchStart, end: marchEnd, label: "March holiday" },
+      { start: juneStart, end: juneEnd, label: "June holiday" },
+      { start: sepStart, end: sepEnd, label: "September holiday" },
+      { start: yearEndStart, end: yearEndEnd, label: "Year-end holiday" },
+    ],
+    singleDays: [youthDay, teachersDay, childrensDay, ...(nationalDayInLieu ? [nationalDayInLieu] : [])],
+  };
+}
+
+function isNonSchoolDay(iso) {
+  if (isWeekend(iso)) return true;
+  const year = parseInt(iso.slice(0, 4), 10);
+  const moe = computeMoeCalendar(year);
+  if (moe.singleDays.includes(iso)) return true;
+  for (const r of moe.ranges) {
+    if (iso >= r.start && iso <= r.end) return true;
+  }
+  const h = state.holidays;
+  if (h && h.publicHolidays && h.publicHolidays.includes(iso)) return true;
+  return false;
+}
+// Next school day after a given date, skipping weekends, the computed MOE
+// term calendar, and gazetted public holidays. Anything neither of those
+// knows about (e.g. a one-off closure day) still needs the manual override
+// on day 2+ of a suspension.
 function nextSchoolDay(iso) {
   let d = addDays(iso, 1);
-  while (isWeekend(d)) d = addDays(d, 1);
+  while (isNonSchoolDay(d)) d = addDays(d, 1);
   return d;
 }
 // Builds the default day-by-day date list for a new suspension: day 1 is
 // whatever start date was chosen, each following day defaults to the next
-// school day (Mon-Fri), skipping weekends automatically.
+// school day, skipping weekends and known holidays automatically.
 function defaultDateList(startDate, days) {
   const list = [startDate];
   let cur = startDate;
@@ -224,6 +337,7 @@ function renderDashboardBox(type, title, color) {
 const state = {
   authReady: false,
   teacherName: localStorage.getItem("dd-teacher-name") || "",
+  holidays: null,
   section: "log", // 'log' | 'suspensions'
   showHelp: false,
 
@@ -255,6 +369,7 @@ const state = {
 const root = document.getElementById("app");
 let unsubIncidents = null;
 let unsubSuspensions = null;
+let unsubHolidays = null;
 
 signInAnonymously(auth).catch(() => { render(); });
 
@@ -262,6 +377,7 @@ onAuthStateChanged(auth, (u) => {
   state.authReady = !!u;
   if (unsubIncidents) { unsubIncidents(); unsubIncidents = null; }
   if (unsubSuspensions) { unsubSuspensions(); unsubSuspensions = null; }
+  if (unsubHolidays) { unsubHolidays(); unsubHolidays = null; }
   if (u && state.teacherName) startListening();
   render();
 });
@@ -289,6 +405,28 @@ function startListening() {
     },
     () => { state.suspLoaded = true; render(); }
   );
+  ensureHolidaysSeeded();
+  unsubHolidays = onSnapshot(
+    doc(db, "holidays", "singapore"),
+    (snap) => {
+      if (snap.exists()) { state.holidays = snap.data(); render(); }
+    },
+    () => {}
+  );
+}
+
+// Seeds the shared holiday calendar with known 2026 data the first time the
+// app runs, so scheduling has something to work with immediately. Never
+// overwrites an existing document — once it exists, it's yours to maintain.
+async function ensureHolidaysSeeded() {
+  try {
+    const snap = await getDoc(doc(db, "holidays", "singapore"));
+    if (!snap.exists()) {
+      await setDoc(doc(db, "holidays", "singapore"), DEFAULT_HOLIDAYS_2026);
+    }
+  } catch (e) {
+    // non-fatal — falls back to weekend-only skipping if this never loads
+  }
 }
 
 // Rolling "last known good" snapshot. Every time data changes, the full
@@ -331,7 +469,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.16.0";
+const APP_VERSION = "1.18.1";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {

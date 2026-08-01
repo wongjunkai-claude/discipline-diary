@@ -99,13 +99,57 @@ Suspension has no location concept, so its columns stay a flat list.
 ## Weekend-aware scheduling
 
 When a suspension spans more than one day, day 2 onward defaults to the
-**next school day** — weekends are skipped automatically (a suspension
-starting Friday continues Monday, not Saturday). This only knows about
-weekends, not public holidays or school-specific closure days, since the
-app has no calendar data source for those. For day 2 and beyond, a small
-date field sits next to each day's location — tap it to override that
-day's date manually for holidays or any other exception. Changing one
-day's date doesn't shift any other day.
+**next school day** — skipping weekends, the computed MOE school calendar,
+and gazetted Singapore public holidays, all automatically.
+
+**School term dates are now calculated, not stored.** MOE's term structure
+turns out to follow a fixed, checkable formula: each term is 10 weeks,
+March/September breaks are 1 week, the June break is 4 weeks, and the
+year-end break runs to 31 December. The only variable is where "Week 1"
+starts, which depends on the weekday 2 January falls on. From that, the app
+computes term boundaries, Youth Day, Teachers' Day, Children's Day, and the
+National Day in-lieu school holiday for any year automatically.
+
+**Verified against MOE's own published calendars for 2019, 2020, 2021,
+2024, 2025, and 2026** — six years, checked date-by-date. Term boundaries
+and all four holiday blocks matched exactly in every one; so did Youth Day,
+Teachers' Day, and the National Day in-lieu rule.
+
+**Two known exceptions found during that check:**
+1. **Term 1's start date** is off by a day in years where 1 January falls
+   on a Saturday or Sunday (seen in 2022 and 2023) — MOE staggers Primary
+   1's start in those years as a real, documented policy that began in the
+   pandemic and continued afterward.
+2. **Children's Day** ("first Friday of October") was wrong for 2020 — the
+   actual date was the second Friday, not the first. Every other year
+   checked (2021, 2022, 2023, 2025, 2026) matched the first-Friday rule
+   exactly, so it's kept as the best default rather than a fully confirmed
+   formula.
+
+**Public holidays still need annual updates** — Chinese New Year, Hari
+Raya, Vesak Day, and Deepavali follow lunar/religious calendars that
+genuinely can't be calculated, only sourced from MOM's actual gazetted
+list each year. See "Public holiday data" below for why this can't be
+fully automated either, and what the update process looks like.
+
+For anything the calendar doesn't catch (a one-off closure day, or a year
+where the formula's soft spot applies), a small date field sits next to
+each day 2+ of a suspension — tap it to override that day's date manually.
+Changing one day's date doesn't shift any other day.
+
+## Public holiday data
+
+Singapore doesn't offer a stable, evergreen public API for this: MOM
+publishes a *new* dataset (with a new ID) on data.gov.sg every year rather
+than one URL that updates in place, so there's no single link this app
+could point at forever. That means public holidays live in Firestore
+(`holidays/singapore` → `publicHolidays`), seeded once with real 2026 data
+and meant to be updated by hand each year:
+1. Around September/October, MOM publishes next year's list (search
+   "Singapore public holidays [year] MOM" or check data.gov.sg)
+2. Firebase Console → Firestore Database → Data → `holidays` → `singapore`
+   → edit the `publicHolidays` array
+3. Or paste me the new list and I'll help build the updated document
 
 ## Hybrid (linked) suspensions
 
