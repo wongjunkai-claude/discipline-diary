@@ -533,7 +533,7 @@ function downloadBackupFile() {
 // Bump this alongside the CACHE version in sw.js whenever you ship an update —
 // makes it easy to confirm (in the app footer, or a screenshot from a teacher)
 // exactly which version is actually running on a given device.
-const APP_VERSION = "1.20.0";
+const APP_VERSION = "1.20.1";
 const DELETE_PASSWORD = "shsm";
 
 function askDeletePassword() {
