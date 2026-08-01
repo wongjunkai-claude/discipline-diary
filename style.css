@@ -67,6 +67,9 @@ input[type="date"].dd-input, input[type="number"].dd-input {
   background: transparent; color: #B7C0CE; cursor: pointer; text-align: center;
 }
 .dd-pill-tab.active { background: #F2EFE6; color: #1B2A41; border-color: #F2EFE6; }
+.dd-pill-tab-sm { font-size: 11px; padding: 10px 4px; }
+.dd-nav-home { background: transparent; border-color: #4A5A72; color: #B7C0CE; }
+.dd-nav-home.active { background: #F2EFE6; color: #1B2A41; border-color: #F2EFE6; }
 
 .dd-main { max-width: 760px; margin: 0 auto; padding: 24px 20px; }
 .dd-tabs { display: flex; gap: 4px; margin-bottom: -1px; position: relative; z-index: 1; }
@@ -152,3 +155,29 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-venue-date-input { width: 34px; height: 30px; padding: 0; border: 1px solid #C9C4B4; border-radius: 3px; background: #fff; flex-shrink: 0; color: transparent; }
 .dd-venue-date-input::-webkit-calendar-picker-indicator { position: absolute; opacity: 1; cursor: pointer; }
 .dd-venue-date-input { position: relative; }
+
+.dd-entry-select { margin-bottom: 16px; }
+
+.dd-detail-card { border: 1px solid #C9C4B4; background: #fff; border-radius: 3px; padding: 16px; }
+.dd-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+
+.dd-stamp-subtle {
+  font-family: 'IBM Plex Mono', monospace; font-weight: 500; letter-spacing: 0.06em;
+  font-size: 10px; padding: 2px 8px; border-radius: 999px; display: inline-block;
+  background: rgba(0,0,0,0.06); color: currentColor; border: 1px solid currentColor;
+}
+
+.dd-checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.dd-checkbox-pill {
+  display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
+  color: #1B2A41; background: #fff; border: 1px solid #C9C4B4; border-radius: 999px; padding: 6px 12px; cursor: pointer;
+}
+.dd-checkbox-pill input { margin: 0; }
+
+.dd-oss-date-input, .dd-iss-date-input {
+  width: 34px; height: 30px; padding: 0; border: 1px solid #C9C4B4; border-radius: 3px; background: #fff;
+  flex-shrink: 0; color: transparent; position: relative;
+}
+.dd-oss-date-input::-webkit-calendar-picker-indicator, .dd-iss-date-input::-webkit-calendar-picker-indicator {
+  position: absolute; opacity: 1; cursor: pointer;
+}

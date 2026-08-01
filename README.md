@@ -56,22 +56,30 @@ That URL is the app. Send it to your discipline team.
 ## How data is structured
 
 **Discipline log** — `incidents` collection:
-- `studentName`, `date`, `issue`, `actionTaken`, `status` (Open / Monitoring / Resolved)
+- `studentName`, `studentClass` (dropdown, e.g. `P3-2`), `date`, `issue`,
+  `actionTaken` (required), `status` (Open / Monitoring / Resolved)
 - `loggedBy`, `loggedByUid`, `createdAt`
 - `followUps`: append-only list of `{ date, note, by }`
-- `history`: append-only audit trail of every creation, status change, and
-  follow-up, each stamped with who and when.
+- `history`: append-only audit trail
 
-**Suspensions** — `suspensions` collection:
-- `studentName`, `type` (ISS or OSS), `startDate`, `days` (duration), `venue`
-  (in-school suspension only), `reason`, `loggedBy`, `createdAt`
-- Status (Upcoming / Active / Completed) is calculated automatically from
-  today's date — nothing to update manually
-- The Suspensions tab shows a live count of who's currently in ISS and OSS,
-  plus the full history for reference
+**Suspensions** — `suspensions` collection, rebuilt in v2.0 around a single
+unified per-day model:
+- `studentName`, `studentClass`, `reason` (required), `startDate`,
+  `totalDays`, `issDays`, `ossDays`
+- `days`: the authoritative list — `[{ date, type: 'ISS'|'OSS', venue? }, ...]`
+  covering every day of the suspension, however the ISS/OSS mix works out.
+  A single record can span both in-school and out-of-school days.
+- Status (Upcoming / Active / Completed) is calculated from the earliest
+  and latest dates in `days`
+- `loggedBy`, `loggedByUid`, `createdAt`, `history`
 
-Security rules block **deletes** on both collections entirely — nothing can
-be erased from the client, only added to.
+**Parent meetings** — `parentMeetings` collection:
+- `studentName`, `studentClass`, `date`, `reason`, `attendees` (array, e.g.
+  `["Father", "Others"]`), `othersText` (free text if "Others" is checked)
+- `loggedBy`, `loggedByUid`, `createdAt`, `history`
+
+Security rules block **deletes** on all three collections entirely —
+nothing can be erased from the client, only added to.
 
 ## Version number & in-app help
 
@@ -83,10 +91,18 @@ Bump `APP_VERSION` near the top of `app.js` alongside the `CACHE` version in
 `sw.js` every time you ship a change, so the two stay in sync and the number
 in the header is a reliable signal of what's actually running.
 
-The **circular "?" icon** (above the tabs, next to the Deleted pill and New
+The **circular "?" icon** (above each list, next to the Deleted pill and New
 Entry button) opens a plain-language guide for
 teachers — statuses, suspensions, editing, removing, and backups — separate
 from this README, which is aimed at whoever maintains the app.
+
+## Dashboard (Home)
+
+The home icon in the nav is the first stop — trends of who's been named
+most often across both discipline and suspension records, current open/
+active counts, and the In-School / Out-of-School Suspension "who's in
+today and over the next 2 days" tracker (moved here from the Suspension Log
+page, since it's more of an at-a-glance overview than a log-browsing task).
 
 ## ISS dashboard grouping
 
@@ -177,34 +193,55 @@ year's list or the dataset stops updating:
    → edit the `publicHolidays` array
 2. Or paste me the new list and I'll help build the updated document
 
-## Hybrid (linked) suspensions
+## Suspension workflow (v2.0 — unified, single entry)
 
-For a suspension that's part OSS and part ISS (e.g. 3 days out of school
-then 2 in), log it as two separate suspensions and link them: expand the
-first one → **"+ Add linked part"**. This carries over the student's name,
-class, and reason automatically, suggests the opposite type and a start
-date right after the first part ends, and marks both records as one case.
+Logging a suspension now works as one flow instead of separate ISS/OSS
+records:
+1. Student name, class (dropdown), and reason (required)
+2. Pick the **total days** (1-14)
+3. Pick how many are **in-school** vs **out-of-school** — these two
+   dropdowns are linked, so setting one recalculates the other to always
+   sum to the total (e.g. set in-school to 4 out of 5 total, out-of-school
+   becomes 1 automatically)
+4. The app then shows a date picker for each out-of-school day and each
+   in-school day separately, defaulting to the next available school day
+   for each — every date has its own small calendar icon to override it
+5. For in-school days, a **location** dropdown (General Office / MPR 1)
+   applies to all of them by default; tick **"Different location each
+   day"** to set a location per day instead
 
-Linked parts show together on both suspension cards — "part 1 of 2" /
-"part 2 of 2" — with the full breakdown visible when expanded. Each part is
-still its own record with its own dates, type, location(s), and audit
-trail; linking only ties them together for display.
+The whole thing saves as **one log entry**, regardless of how the ISS/OSS
+days are split or interleaved — this replaces the earlier "linked
+suspension" feature (two records tied together), which is no longer
+needed now that a single record can natively hold a mix of both types.
 
-## Per-day ISS locations
+This is also the same feature that gives you weekend/holiday-aware
+scheduling and per-day location overrides — see "Weekend-aware scheduling"
+below for how the default dates are calculated.
 
-Location defaults to a single field applying to every day of the
-suspension — quick to fill in for the common case. Only check **"Different
-location each day"** if a student is actually moving rooms partway through;
-that reveals one location field per day of the duration. When logging or
-editing an ISS suspension, each day gets its own "Location by day" row. The
-Suspensions dashboard's Today / Next 2 Days columns show the correct
-location for that specific date automatically. Older suspensions logged
-before this feature still show their original single location for every
-day, until edited.
+## Class dropdown
 
-(v1.9.0 also fixed a date bug where the location-by-day list and some
-suspension date math were off by one day for anyone in a timezone ahead of
-UTC — e.g. Singapore/Malaysia.)
+`studentClass` is a dropdown everywhere (discipline log, suspensions,
+parent meetings), formatted `P<level>-<number>`. P1 and P2 go up to 8
+classes each (`P1-1`...`P1-8`), P3 through P6 go up to 6 each (`P3-1`...
+`P3-6`). Change the range in `buildClassOptions()` near the top of `app.js`
+if your school's numbers differ.
+
+## Parent Meeting
+
+A third log alongside Discipline and Suspensions: student name, class,
+who's attending (multiple people allowed — Father, Mother, Grandfather,
+Grandmother, Guardian, or Others with a free-text field), date, and reason.
+Same editing, audit trail, and remove/restore pattern as the other two logs.
+
+## Dropdown-based entry lists
+
+Instead of an ever-growing stack of cards, each log now shows a dropdown to
+pick one entry at a time — the selected entry's full detail (name, date,
+reason, logged by, plus status/type, follow-ups, and audit trail) displays
+below it. This keeps the page from growing without bound as more entries
+get logged, and keeps focus on one record at a time. Search and the status
+tabs still narrow down what's in the dropdown.
 
 ## Editing entries
 
