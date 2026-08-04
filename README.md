@@ -104,6 +104,28 @@ active counts, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
+**Monthly trend chart** — a stacked bar chart of the last 6 months, one bar
+per month, with checkboxes to toggle Discipline / Suspension / Parent
+Meeting in or out of the stack. Discipline counts by incident date,
+Suspension by start date, Parent Meeting by meeting date; deleted entries
+are excluded.
+
+**Related records** — when logging a new discipline entry, if the student
+already has a suspension or parent meeting on file, a "Related records
+found" box appears under the name field with checkboxes to link them.
+Linking isn't cosmetic — it writes a reference on *both* records, so the
+connection shows up (as a clickable jump-to link) whether you're looking at
+the discipline entry, the suspension, or the meeting.
+
+**"+ New Entry" (Dashboard)** — a guided multi-step flow for logging a
+whole case at once: Discipline details → "Any Suspension?" (Yes reveals a
+Suspension step; No skips it) → "Any Parent Meeting?" (same pattern) →
+Submit. Everything gets created and cross-linked in one go — student name
+and class only get typed once and carry through every step. This is
+separate from the Discipline Log page's own "+ New entry" button, which
+stays as a quick single-entry add with no wizard, for when there's nothing
+else to link.
+
 ## ISS dashboard grouping
 
 The Today / Next 2 Days columns for In-School Suspension group students by
@@ -240,10 +262,27 @@ Instead of an ever-growing stack of cards, each log now shows a dropdown to
 pick one entry at a time — the selected entry's full detail (name, date,
 reason, logged by, plus status/type, follow-ups, and audit trail) displays
 below it. This keeps the page from growing without bound as more entries
-get logged, and keeps focus on one record at a time. Search and the status
-tabs still narrow down what's in the dropdown.
+get logged, and keeps focus on one record at a time. Search still narrows
+down what's in the dropdown.
+
+The **Discipline Log** replaced its status tabs (All/Open/In Progress/
+Resolved) with a **Sort by** dropdown (Date/Name/Class/Level) and a
+**Show All** pill — toggle it on to see every entry at once (the original
+always-expanded list), toggle it off to go back to picking one at a time
+from the dropdown. Deleted entries are a separate pill either way.
+
+## Date format
+
+Dates display as **DD MMM YYYY** (e.g. `02 Aug 2026`) throughout the app.
 
 ## Editing entries
+
+Individual follow-up notes on a discipline entry can also be edited (✎) or
+removed (✕) directly — for typos or notes entered against the wrong entry.
+Both are tracked in that entry's audit trail (what changed and, for edits,
+the before/after text), same as everything else. Removing a follow-up asks
+for a plain confirmation, not the delete password — it's a much lower-
+stakes action than removing a whole entry.
 
 Both discipline log entries and suspensions can now be edited (click a card
 to expand it → **"Edit entry"**). Every field change is recorded in that
@@ -293,9 +332,10 @@ Two layers of protection, on top of the delete-blocking rule above:
    this occasionally (e.g. weekly) and keeping a copy somewhere like Google
    Drive — this one is safe even if your Firebase project itself ever has a
    problem, since it isn't stored in Firebase at all.
-3. **Google Sheets mirror (optional but recommended).** Every entry created,
-   status change, follow-up, and suspension logged is also sent to a Google
-   Sheet you control — completely independent of Firebase. Setup:
+3. **Google Sheets mirror (optional but recommended).** Every discipline
+   entry, suspension, and parent meeting is mirrored into **three separate
+   tabs** in a Google Sheet you control — completely independent of
+   Firebase. Setup:
    1. Go to https://sheets.new to create a fresh spreadsheet
    2. **Extensions → Apps Script**
    3. Delete the placeholder code, paste in the contents of `apps-script.gs`
@@ -306,15 +346,26 @@ Two layers of protection, on top of the delete-blocking rule above:
    5. Click **Deploy**, click **Authorize access**, and approve (it's your
       own script — this prompt is expected)
    6. Copy the **Web app URL** it gives you
-   7. In `app.js`, find the line near the top that says:
-      `const SHEET_WEBHOOK_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";`
-      and replace the placeholder text with that URL
+   7. In `app.js`, find the line near the top that says
+      `const SHEET_WEBHOOK_URL = "...";` and replace it with that URL
    8. Commit the updated `app.js` to GitHub (same edit-in-browser process as
       before)
 
-   From then on, a "Log" tab in that spreadsheet fills in automatically —
-   readable by anyone you share the sheet with, with zero dependency on
-   Firebase or this app staying online.
+   From then on, three tabs fill in automatically — **Discipline Log**,
+   **Suspension Log**, **Parent Meeting Log** — each with columns matching
+   that log's actual fields (e.g. Discipline Log has Student Name, Class,
+   Date, Issue, Action Taken, Status, Follow-ups, Logged By).
+
+   **Each record is one row that updates in place**, not a new row per
+   action — editing an entry, changing its status, or adding a follow-up
+   overwrites that same row (matched by an internal ID in column B) rather
+   than piling up duplicate rows. Follow-up notes on a discipline entry all
+   accumulate into that row's single "Follow-ups" cell, one per line, each
+   stamped with its own date.
+
+   If you had the old single-tab version running, your existing "Log" tab
+   is left alone — the new tabs are created alongside it, and you can
+   delete the old one once you've confirmed the new tabs are working.
 
 None of these are a substitute for the others — they're deliberately
 redundant. Firestore is the live source of truth the app reads from; the
