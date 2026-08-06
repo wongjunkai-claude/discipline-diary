@@ -171,6 +171,7 @@ input[type="date"].dd-input, input[type="number"].dd-input {
   font-size: 10px; padding: 2px 8px; border-radius: 999px; display: inline-block;
   background: rgba(0,0,0,0.06); color: currentColor; border: 1px solid currentColor;
 }
+.dd-status-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15); }
 
 .dd-checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .dd-checkbox-pill {
@@ -198,10 +199,17 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-chart-toggles { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .dd-chart-toggles .dd-checkbox-pill { font-family: 'IBM Plex Mono', monospace; font-size: 11px; padding: 5px 10px; }
 .dd-chart { display: flex; align-items: flex-end; gap: 6px; padding-top: 4px; }
-.dd-chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0; }
-.dd-chart-group { display: flex; align-items: flex-end; justify-content: center; gap: 3px; height: 140px; }
-.dd-chart-bar-single { width: 12px; border-radius: 2px 2px 0 0; }
-.dd-chart-label { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #8A8571; margin-top: 6px; text-align: center; line-height: 1.3; }
+.dd-chart-rows { display: flex; flex-direction: column; gap: 14px; }
+.dd-chart-row-block { min-width: 0; }
+.dd-chart-row-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.dd-chart-row-month { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #1B2A41; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.dd-chart-row-total { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; }
+.dd-chart-hrow { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.dd-chart-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.dd-chart-hbar-track { flex: 1; background: #F2EFE6; border-radius: 2px; overflow: hidden; height: 10px; min-width: 0; background-image: linear-gradient(to right, #D8D4C4 1px, transparent 1px); background-size: 25% 100%; }
+.dd-chart-hbar { height: 100%; border-radius: 2px; }
+.dd-chart-hval { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8A8571; width: 18px; text-align: right; flex-shrink: 0; }
+.dd-chart-axis-track { flex: 1; display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #8A8571; min-width: 0; border-bottom: 1px solid #C9C4B4; padding-bottom: 4px; }
 
 .dd-date-icon-btn { position: relative; width: 32px; height: 30px; flex-shrink: 0; }
 .dd-date-icon-btn input[type="date"] {

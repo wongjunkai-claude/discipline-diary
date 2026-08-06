@@ -104,11 +104,28 @@ active counts, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
-**Monthly trend chart** — a stacked bar chart of the last 6 months, one bar
-per month, with checkboxes to toggle Discipline / Suspension / Parent
-Meeting in or out of the stack. Discipline counts by incident date,
-Suspension by start date, Parent Meeting by meeting date; deleted entries
-are excluded.
+**Monthly trend chart** — 11 months, shown as horizontal bar rows (one row
+per month, stacked vertically) rather than side-by-side vertical bars —
+this fits all 11 clearly on a phone screen with no scrolling or cramped
+bars. A scale row at the top and faint gridlines behind every bar (at
+0/25/50/75/100% of a rounded "nice" maximum, e.g. 5/10/20/50) make bars
+comparable at a glance, not just by their number label. Checkboxes toggle
+Discipline / Suspension / Parent Meeting in or out of the rows. Discipline
+counts by incident date, Suspension by start date, Parent Meeting by
+meeting date; deleted entries are excluded.
+
+**Status indicators are now traffic-light dots, not text pills** — a
+colored circle instead of a labeled badge, with the actual status as a
+tooltip. Discipline Log: red for Open/In Progress, green for Resolved.
+Suspension Log: red for Active, green for Completed, yellow-orange for
+Upcoming (grey for Removed). The Suspension Log's In-School/Out-of-
+School/Mixed type pill was removed from the card header entirely — that
+detail is still fully visible in the day-by-day breakdown below it, just
+not repeated as a summary badge up top.
+
+**Discipline Log no longer has its own "+ New entry" button** — all
+discipline entries (with or without a linked suspension or parent meeting)
+now go through the Dashboard's "+ New Entry" guided flow.
 
 **Related records** — when logging a new discipline entry, if the student
 already has a suspension or parent meeting on file, a "Related records
@@ -258,18 +275,23 @@ Same editing, audit trail, and remove/restore pattern as the other two logs.
 
 ## Dropdown-based entry lists
 
-Instead of an ever-growing stack of cards, each log now shows a dropdown to
-pick one entry at a time — the selected entry's full detail (name, date,
-reason, logged by, plus status/type, follow-ups, and audit trail) displays
-below it. This keeps the page from growing without bound as more entries
-get logged, and keeps focus on one record at a time. Search still narrows
-down what's in the dropdown.
+All three logs went back to always showing every entry as a full stacked
+list (like the very original design), rather than a dropdown-select-one
+pattern tried in an earlier version — that felt like it hid too much.
+Search still narrows what's shown.
 
-The **Discipline Log** replaced its status tabs (All/Open/In Progress/
-Resolved) with a **Sort by** dropdown (Date/Name/Class/Level) and a
-**Show All** pill — toggle it on to see every entry at once (the original
-always-expanded list), toggle it off to go back to picking one at a time
-from the dropdown. Deleted entries are a separate pill either way.
+**Discipline Log filters** are now three pills: **Show All**, **In
+Progress**, **Resolved**. The **Open** status has been removed entirely —
+new entries go straight to "In Progress." Any entries logged before this
+change that were still "Open" keep displaying correctly (they show under
+Show All), just without a dedicated filter pill of their own, since new
+entries can no longer be created or set to that status. A separate **Sort
+by** dropdown (Date / Name / Class / Level) controls ordering independent
+of the filter pills.
+
+**Suspension Log** and **Parent Meeting Log** keep their existing filters
+(Active/Upcoming/Completed tabs, and Deleted) — only the display changed,
+from dropdown-select to always-full-list.
 
 ## Date format
 

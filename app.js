@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.6.1";
+const APP_VERSION = "2.9.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -88,7 +88,11 @@ function syncParentMeetingToSheet(m) {
 }
 
 // ---------- Constants ----------
-const STATUSES = ["Open", "Monitoring", "Resolved"];
+// "Open" removed as a selectable status — new entries default straight to
+// "In Progress" (internally "Monitoring", kept for backward compatibility
+// with existing data). STATUS_STYLE/STATUS_TEXT still map Open for display,
+// so any pre-existing "Open" entries keep rendering correctly.
+const STATUSES = ["Monitoring", "Resolved"];
 const STATUS_STYLE = {
   Open: { ink: "#A3372B", label: "OPEN" },
   Monitoring: { ink: "#B8863B", label: "IN PROGRESS" },
@@ -100,7 +104,7 @@ const SUSP_TYPE_STYLE = {
   OSS: { ink: "#A3372B", label: "OUT-OF-SCHOOL" },
 };
 const SUSP_STATUS_STYLE = {
-  Upcoming: { ink: "#4C6B8A", label: "UPCOMING" },
+  Upcoming: { ink: "#D98F2B", label: "UPCOMING" },
   Active: { ink: "#A3372B", label: "ACTIVE" },
   Completed: { ink: "#3C6E47", label: "COMPLETED" },
 };
@@ -331,7 +335,7 @@ const state = {
   dataLoaded: false,
   query: "",
   incidentSortBy: "date",
-  showAllIncidents: false,
+  disciplineFilter: "all", // 'all' | 'Monitoring' | 'Resolved'
   viewDeletedIncidents: false,
   selectedIncidentId: null,
   showNewForm: false,
@@ -358,10 +362,12 @@ const state = {
   showNewPmForm: false,
   editingPmId: null,
   _pmDraft: null,
+  pmFormError: "",
 
   showNewCaseFlow: false,
   newCaseStep: "discipline",
   _newCaseDraft: null,
+  caseFormError: "",
 
   saveError: false,
   saving: false,
@@ -509,7 +515,7 @@ function handleNameSubmit(e) {
 
 // ==================== DISCIPLINE LOG ====================
 function freshIncidentDraft() {
-  return { studentName: "", studentClass: "", date: todayISO(), issue: "", actionTaken: "", status: "Open", linkedSuspensionIds: [], linkedPmIds: [] };
+  return { studentName: "", studentClass: "", date: todayISO(), issue: "", actionTaken: "", status: "Monitoring", linkedSuspensionIds: [], linkedPmIds: [] };
 }
 function findRelatedRecords(studentName) {
   const name = (studentName || "").trim().toLowerCase();
@@ -523,7 +529,7 @@ function findRelatedRecords(studentName) {
 // ---------- New Case wizard: Discipline -> Suspension? -> Parent Meeting? -> Submit ----------
 function freshNewCaseDraft() {
   return {
-    studentName: "", studentClass: "", date: todayISO(), issue: "", actionTaken: "", status: "Open",
+    studentName: "", studentClass: "", date: todayISO(), issue: "", actionTaken: "", status: "Monitoring",
     wantsSuspension: null, suspDraft: freshSuspDraft(),
     wantsPm: null, pmDraft: freshPmDraft(),
   };
@@ -535,6 +541,21 @@ function newCaseStepValid(step, d) {
   if (step === "ask-pm") return d.wantsPm !== null;
   if (step === "pm") return !!(d.pmDraft.attendees.length && d.pmDraft.reason.trim());
   return true;
+}
+function newCaseStepErrorMessage(step, d) {
+  if (step === "discipline") return "Fill in student name, class, issue, and action taken before continuing.";
+  if (step === "ask-suspension") return "Choose Yes or No.";
+  if (step === "suspension") {
+    if (!d.suspDraft.reason.trim()) return "Enter a reason before continuing.";
+    if (!d.suspDraft.totalDays) return "Choose the total number of days.";
+    return "In-school and out-of-school days must add up to the total.";
+  }
+  if (step === "ask-pm") return "Choose Yes or No.";
+  if (step === "pm") {
+    if (!d.pmDraft.attendees.length) return "Select at least one attendee before continuing.";
+    return "Enter a reason for the meeting before continuing.";
+  }
+  return "";
 }
 function newCaseNextStep(step, d) {
   if (step === "discipline") return "ask-suspension";
@@ -554,6 +575,16 @@ function newCasePrevStep(step, d) {
 }
 async function submitNewCase() {
   const d = state._newCaseDraft;
+  if (!newCaseStepValid("discipline", d)) {
+    state.newCaseStep = "discipline"; state.caseFormError = newCaseStepErrorMessage("discipline", d); render(); return;
+  }
+  if (d.wantsSuspension && !newCaseStepValid("suspension", d)) {
+    state.newCaseStep = "suspension"; state.caseFormError = newCaseStepErrorMessage("suspension", d); render(); return;
+  }
+  if (d.wantsPm && !newCaseStepValid("pm", d)) {
+    state.newCaseStep = "pm"; state.caseFormError = newCaseStepErrorMessage("pm", d); render(); return;
+  }
+  state.caseFormError = "";
   state.saving = true;
   render();
   try {
@@ -956,7 +987,12 @@ async function submitNewParentMeeting(e) {
   const reason = f.reason.value.trim();
   const attendees = state._pmDraft.attendees.slice();
   const othersText = state._pmDraft.othersText.trim();
-  if (!studentName || !studentClass || !date || !reason || attendees.length === 0) return;
+  if (!studentName || !studentClass || !date || !reason || attendees.length === 0) {
+    state.pmFormError = attendees.length === 0 ? "Select at least one attendee before saving." : "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  state.pmFormError = "";
   state.saving = true;
   render();
   try {
@@ -978,6 +1014,7 @@ function openEditParentMeeting(id) {
   if (!m) return;
   state.editingPmId = id;
   state._pmDraft = freshPmDraft(m);
+  state.pmFormError = "";
   render();
 }
 async function submitEditParentMeeting(e) {
@@ -991,7 +1028,12 @@ async function submitEditParentMeeting(e) {
     date: f.date.value, reason: f.reason.value.trim(),
     attendees: state._pmDraft.attendees.slice(), othersText: state._pmDraft.othersText.trim(),
   };
-  if (!updated.studentName || !updated.studentClass || !updated.date || !updated.reason || updated.attendees.length === 0) return;
+  if (!updated.studentName || !updated.studentClass || !updated.date || !updated.reason || updated.attendees.length === 0) {
+    state.pmFormError = updated.attendees.length === 0 ? "Select at least one attendee before saving." : "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  state.pmFormError = "";
   const changes = diffText(m, updated, [
     { key: "studentName", label: "Student name" }, { key: "studentClass", label: "Class" },
     { key: "date", label: "Date" }, { key: "reason", label: "Reason" },
@@ -1132,17 +1174,17 @@ function monthLabelFromKey(key) {
   const [y, m] = key.split("-").map(Number);
   return `${MONTH_ABBR[m - 1]} ${y}`;
 }
-function last6MonthKeys() {
+function lastNMonthKeys(n = 11) {
   const out = [];
   const now = new Date();
-  for (let i = 5; i >= 0; i--) {
+  for (let i = n - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
   return out;
 }
 function computeMonthlyTrend() {
-  const keys = last6MonthKeys();
+  const keys = lastNMonthKeys(11);
   const counts = {};
   keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
@@ -1151,6 +1193,17 @@ function computeMonthlyTrend() {
   return keys.map((k) => ({ key: k, label: monthLabelFromKey(k), ...counts[k] }));
 }
 const CHART_COLORS = { discipline: "#1B2A41", suspension: "#B8863B", parentMeeting: "#3C6E47" };
+function niceAxisMax(v) {
+  if (v <= 5) return Math.max(v, 1);
+  const magnitude = Math.pow(10, Math.floor(Math.log10(v)));
+  const residual = v / magnitude;
+  let niceResidual;
+  if (residual <= 1) niceResidual = 1;
+  else if (residual <= 2) niceResidual = 2;
+  else if (residual <= 5) niceResidual = 5;
+  else niceResidual = 10;
+  return niceResidual * magnitude;
+}
 function renderMonthlyChart() {
   const data = computeMonthlyTrend();
   const incl = {
@@ -1162,9 +1215,10 @@ function renderMonthlyChart() {
   if (incl.discipline) cats.push({ key: "discipline", label: "Discipline" });
   if (incl.suspension) cats.push({ key: "suspension", label: "Suspension" });
   if (incl.parentMeeting) cats.push({ key: "parentMeeting", label: "Parent Meeting" });
-  const CH = 140;
-  const maxVal = Math.max(1, ...data.flatMap((d) => cats.map((c) => d[c.key])));
-  const px = (v) => Math.round((v / maxVal) * CH);
+  const rawMax = Math.max(1, ...data.flatMap((d) => cats.map((c) => d[c.key])));
+  const axisMax = niceAxisMax(rawMax);
+  const pct = (v) => Math.max(v > 0 ? 3 : 0, Math.round((v / axisMax) * 100));
+  const ticks = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map((n) => Math.round(n));
   return `
     <div class="dd-panel" style="margin-top:16px">
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Monthly trend</div>
@@ -1173,14 +1227,30 @@ function renderMonthlyChart() {
         <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-suspension" ${incl.suspension ? "checked" : ""} /><span style="color:${CHART_COLORS.suspension}">■ Suspension</span></label>
         <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-pm" ${incl.parentMeeting ? "checked" : ""} /><span style="color:${CHART_COLORS.parentMeeting}">■ Parent Meeting</span></label>
       </div>
-      <div class="dd-chart">
-        ${data.map((d) => `
-          <div class="dd-chart-col">
-            <div class="dd-chart-group">
-              ${cats.map((c) => `<div class="dd-chart-bar-single" style="height:${Math.max(px(d[c.key]), d[c.key] > 0 ? 2 : 0)}px;background:${CHART_COLORS[c.key]}" title="${c.label}: ${d[c.key]}"></div>`).join("")}
+      <div class="dd-chart-hrow" style="margin-bottom:10px">
+        <span class="dd-chart-dot" style="background:transparent"></span>
+        <div class="dd-chart-axis-track">${ticks.map((t) => `<span>${t}</span>`).join("")}</div>
+        <span class="dd-chart-hval"></span>
+      </div>
+      <div class="dd-chart-rows">
+        ${data.map((d) => {
+          const total = cats.reduce((sum, c) => sum + d[c.key], 0);
+          return `
+          <div class="dd-chart-row-block">
+            <div class="dd-chart-row-header">
+              <span class="dd-chart-row-month">${d.label}</span>
+              <span class="dd-chart-row-total">${total}</span>
             </div>
-            <div class="dd-chart-label">${d.label}</div>
-          </div>`).join("")}
+            ${cats.map((c) => `
+              <div class="dd-chart-hrow">
+                <span class="dd-chart-dot" style="background:${CHART_COLORS[c.key]}"></span>
+                <div class="dd-chart-hbar-track">
+                  <div class="dd-chart-hbar" style="width:${pct(d[c.key])}%;background:${CHART_COLORS[c.key]}"></div>
+                </div>
+                <span class="dd-chart-hval">${d[c.key]}</span>
+              </div>`).join("")}
+          </div>`;
+        }).join("")}
       </div>
     </div>`;
 }
@@ -1247,7 +1317,7 @@ function renderNewCaseStepBody(step, d) {
   if (step === "pm") {
     return `
       <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">For ${escapeHtml(d.studentName)}, Class ${escapeHtml(d.studentClass)}</div>
-      <label class="dd-label">Who is attending?</label>
+      <label class="dd-label">Who is attending? <span style="color:#A3372B">*</span></label>
       <div class="dd-checkbox-group">
         ${ATTENDEE_OPTIONS.map((a) => `
           <label class="dd-checkbox-pill">
@@ -1274,13 +1344,13 @@ function renderNewCaseStepBody(step, d) {
 }
 function renderNewCaseNav(step, d) {
   const isLast = step === "submit";
-  const canAdvance = newCaseStepValid(step, d);
   return `
+    ${state.caseFormError ? `<div class="dd-error" style="margin-top:12px">${escapeHtml(state.caseFormError)}</div>` : ""}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
       ${step !== "discipline" ? `<button type="button" class="dd-case-back-btn" data-action="case-back">← Back</button>` : `<span></span>`}
       ${isLast
         ? `<button type="button" class="dd-btn-primary" style="width:auto;margin-top:0" id="case-submit-btn" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Submit"}</button>`
-        : `<button type="button" class="dd-btn-primary" style="width:auto;margin-top:0" data-action="case-next" ${canAdvance ? "" : "disabled"}>Continue →</button>`}
+        : `<button type="button" class="dd-btn-primary" style="width:auto;margin-top:0" data-action="case-next">Continue →</button>`}
     </div>`;
 }
 
@@ -1413,6 +1483,9 @@ function classLevel(cls) {
 }
 function filteredIncidents() {
   let list = state.incidents.filter((it) => (state.viewDeletedIncidents ? it.deleted : !it.deleted));
+  if (!state.viewDeletedIncidents && state.disciplineFilter && state.disciplineFilter !== "all") {
+    list = list.filter((it) => it.status === state.disciplineFilter);
+  }
   if (state.query.trim()) {
     const q = state.query.trim().toLowerCase();
     list = list.filter((it) => it.studentName.toLowerCase().includes(q));
@@ -1434,44 +1507,36 @@ function counts() {
 function renderLogSection() {
   const list = filteredIncidents();
   const c = counts();
-  if (state.selectedIncidentId && !list.some((it) => it.id === state.selectedIncidentId)) state.selectedIncidentId = list[0]?.id || null;
-  if (!state.selectedIncidentId && list.length) state.selectedIncidentId = list[0].id;
-  const selected = list.find((it) => it.id === state.selectedIncidentId);
   const sortBy = state.incidentSortBy || "date";
+  const filter = state.disciplineFilter || "all";
   return `
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
           <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="dd-pill ${state.viewDeletedIncidents ? "active" : ""}" id="btn-toggle-deleted-incidents">Deleted (${c.Deleted})</button>
-            <button class="dd-newbtn" id="btn-new">+ New entry</button>
-          </div>
+          <button class="dd-pill ${state.viewDeletedIncidents ? "active" : ""}" id="btn-toggle-deleted-incidents">Deleted (${c.Deleted})</button>
         </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-          <div style="flex:1;min-width:140px">
-            <label class="dd-label" style="margin-top:0">Sort by</label>
-            <select class="dd-input" id="incident-sort-by">
-              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-            </select>
-          </div>
-          <button class="dd-pill ${state.showAllIncidents ? "active" : ""}" id="btn-show-all-incidents">Show All</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
+          <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
+          <button class="dd-pill ${filter === "Resolved" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Resolved">Resolved (${c.Resolved})</button>
+        </div>
+        <div style="margin-bottom:14px;max-width:220px">
+          <label class="dd-label" style="margin-top:0">Sort by</label>
+          <select class="dd-input" id="incident-sort-by">
+            <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
+            <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
+            <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
+            <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
+          </select>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
             <input class="dd-input dd-search" id="search-input" placeholder="Search by student name…" value="${escapeHtml(state.query)}" />
           </div>
-          ${list.length === 0 ? `<div class="dd-empty">${state.incidents.length === 0 ? "No entries yet. Log the first discipline issue to start the record." : "No entries match this filter."}</div>` : state.showAllIncidents ? `
-          <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderIncidentDetail).join("")}</div>` : `
-          <label class="dd-label">Select an entry (${list.length})</label>
-          <select class="dd-input dd-entry-select" id="incident-select">
-            ${list.map((it) => `<option value="${it.id}" ${it.id === state.selectedIncidentId ? "selected" : ""}>${escapeHtml(it.studentName)} — ${formatDateShort(it.date)} — ${escapeHtml(truncateName(it.issue, 30))}</option>`).join("")}
-          </select>
-          ${selected ? renderIncidentDetail(selected) : ""}`}
+          ${list.length === 0 ? `<div class="dd-empty">${state.incidents.length === 0 ? "No entries yet. Log the first discipline issue to start the record." : "No entries match this filter."}</div>` : `
+          <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderIncidentDetail).join("")}</div>`}
         </div>
         ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save the last change. Check your connection and try again.</div>` : ""}
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
@@ -1483,6 +1548,7 @@ function renderLogSection() {
 
 function renderIncidentDetail(it) {
   const s = STATUS_STYLE[it.status];
+  const dotColor = it.status === "Resolved" ? "#3C6E47" : "#A3372B";
   const followUps = it.followUps || [];
   const history = it.history || [];
   const linkedSusp = (it.linkedSuspensionIds || []).map((id) => state.suspensions.find((x) => x.id === id)).filter(Boolean);
@@ -1494,7 +1560,7 @@ function renderIncidentDetail(it) {
           <div class="dd-card-student">${escapeHtml(it.studentName)}</div>
           <div class="dd-card-meta">${formatDate(it.date)}${it.studentClass ? ` · Class ${escapeHtml(it.studentClass)}` : ""} · logged by ${escapeHtml(it.loggedBy)}</div>
         </div>
-        <span class="dd-stamp-subtle" style="color:${s.ink}">${s.label}</span>
+        <span class="dd-status-dot" style="background:${dotColor}" title="${escapeHtml(s.label)}"></span>
       </div>
       ${linkedSusp.length || linkedPm.length ? `
       <div class="dd-related-box" style="margin-top:12px">
@@ -1642,9 +1708,6 @@ function suspCounts() {
 function renderSuspensionSection() {
   const list = filteredSuspensions();
   const c = suspCounts();
-  if (state.selectedSuspId && !list.some((s) => s.id === state.selectedSuspId)) state.selectedSuspId = list[0]?.id || null;
-  if (!state.selectedSuspId && list.length) state.selectedSuspId = list[0].id;
-  const selected = list.find((s) => s.id === state.selectedSuspId);
   return `
     <div class="dd-app">
       ${renderNav()}
@@ -1664,11 +1727,7 @@ function renderSuspensionSection() {
             <input class="dd-input dd-search" id="susp-search-input" placeholder="Search by student name…" value="${escapeHtml(state.suspQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.suspensions.length === 0 ? "No suspensions logged yet." : "No entries match this filter."}</div>` : `
-          <label class="dd-label">Select an entry (${list.length})</label>
-          <select class="dd-input dd-entry-select" id="susp-select">
-            ${list.map((s) => `<option value="${s.id}" ${s.id === state.selectedSuspId ? "selected" : ""}>${escapeHtml(s.studentName)} — ${formatDateShort(s.startDate)} — ${escapeHtml(truncateName(s.reason || "", 30))}</option>`).join("")}
-          </select>
-          ${selected ? renderSuspensionDetail(selected) : ""}`}
+          <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderSuspensionDetail).join("")}</div>`}
         </div>
         ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save the last change. Check your connection and try again.</div>` : ""}
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
@@ -1681,7 +1740,6 @@ function renderSuspensionSection() {
 function renderSuspensionDetail(s) {
   const statusStyle = s.deleted ? { ink: "#8A8571", label: "REMOVED" } : SUSP_STATUS_STYLE[suspensionStatus(s)];
   const entries = suspensionDayEntries(s).slice().sort((a, b) => a.date.localeCompare(b.date));
-  const typeSummary = suspensionTypeSummary(s);
   const history = s.history || [];
   const linkedIncidents = (s.linkedIncidentIds || []).map((id) => state.incidents.find((x) => x.id === id)).filter(Boolean);
   return `
@@ -1691,10 +1749,7 @@ function renderSuspensionDetail(s) {
           <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-meta">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""} · logged by ${escapeHtml(s.loggedBy)}</div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <span class="dd-stamp-subtle" style="color:${typeSummary === "Mixed" ? "#4C6B8A" : SUSP_TYPE_STYLE[typeSummary].ink}">${typeSummary === "Mixed" ? "MIXED" : SUSP_TYPE_STYLE[typeSummary].label}</span>
-          <span class="dd-stamp-subtle" style="color:${statusStyle.ink}">${statusStyle.label}</span>
-        </div>
+        <span class="dd-status-dot" style="background:${statusStyle.ink}" title="${escapeHtml(statusStyle.label)}"></span>
       </div>
       ${linkedIncidents.length ? `
       <div class="dd-related-box" style="margin-top:12px">
@@ -1873,9 +1928,6 @@ function pmCounts() {
 function renderParentMeetingSection() {
   const list = filteredParentMeetings();
   const c = pmCounts();
-  if (state.selectedPmId && !list.some((m) => m.id === state.selectedPmId)) state.selectedPmId = list[0]?.id || null;
-  if (!state.selectedPmId && list.length) state.selectedPmId = list[0].id;
-  const selected = list.find((m) => m.id === state.selectedPmId);
   return `
     <div class="dd-app">
       ${renderNav()}
@@ -1892,11 +1944,7 @@ function renderParentMeetingSection() {
             <input class="dd-input dd-search" id="pm-search-input" placeholder="Search by student name…" value="${escapeHtml(state.pmQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.parentMeetings.length === 0 ? "No parent meetings logged yet." : "No entries match this filter."}</div>` : `
-          <label class="dd-label">Select an entry (${list.length})</label>
-          <select class="dd-input dd-entry-select" id="pm-select">
-            ${list.map((m) => `<option value="${m.id}" ${m.id === state.selectedPmId ? "selected" : ""}>${escapeHtml(m.studentName)} — ${formatDateShort(m.date)} — ${escapeHtml(truncateName(m.reason || "", 30))}</option>`).join("")}
-          </select>
-          ${selected ? renderParentMeetingDetail(selected) : ""}`}
+          <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderParentMeetingDetail).join("")}</div>`}
         </div>
         ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save the last change. Check your connection and try again.</div>` : ""}
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
@@ -1955,7 +2003,7 @@ function renderPmForm(isEdit) {
         <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
-        <label class="dd-label">Who is attending?</label>
+        <label class="dd-label">Who is attending? <span style="color:#A3372B">*</span></label>
         <div class="dd-checkbox-group">
           ${ATTENDEE_OPTIONS.map((a) => `
             <label class="dd-checkbox-pill">
@@ -1963,6 +2011,7 @@ function renderPmForm(isEdit) {
               <span>${a}</span>
             </label>`).join("")}
         </div>
+        ${state.pmFormError ? `<div class="dd-error" style="margin-top:6px">${escapeHtml(state.pmFormError)}</div>` : ""}
         ${d.attendees.includes("Others") ? `
         <label class="dd-label">Specify "Others"</label>
         <input class="dd-input" id="pm-others-text" value="${escapeHtml(d.othersText)}" placeholder="e.g. Aunt" />` : ""}
@@ -1981,7 +2030,7 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.section = el.dataset.section; render(); }));
 
   document.querySelectorAll('[data-action="jump-to-incident"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.showAllIncidents = false; render(); }));
+    el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.disciplineFilter = "all"; state.viewDeletedIncidents = false; render(); }));
   document.querySelectorAll('[data-action="jump-to-suspension"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = "suspensions"; state.selectedSuspId = el.dataset.id; render(); }));
   document.querySelectorAll('[data-action="jump-to-pm"]').forEach((el) =>
@@ -2018,6 +2067,7 @@ function attachDashboardListeners() {
     state.showNewCaseFlow = true;
     state.newCaseStep = "discipline";
     state._newCaseDraft = freshNewCaseDraft();
+    state.caseFormError = "";
     render();
   });
 
@@ -2032,7 +2082,16 @@ function attachNewCaseListeners() {
   document.getElementById("case-modal-close").addEventListener("click", closeFlow);
   document.getElementById("case-modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "case-modal-backdrop") closeFlow(); });
 
-  const goNext = () => { state.newCaseStep = newCaseNextStep(state.newCaseStep, d); render(); };
+  const goNext = () => {
+    if (!newCaseStepValid(state.newCaseStep, d)) {
+      state.caseFormError = newCaseStepErrorMessage(state.newCaseStep, d);
+      render();
+      return;
+    }
+    state.caseFormError = "";
+    state.newCaseStep = newCaseNextStep(state.newCaseStep, d);
+    render();
+  };
   const goBack = () => { state.newCaseStep = newCasePrevStep(state.newCaseStep, d); render(); };
   document.querySelectorAll('[data-action="case-next"]').forEach((el) => el.addEventListener("click", goNext));
   document.querySelectorAll('[data-action="case-back"]').forEach((el) => el.addEventListener("click", goBack));
@@ -2079,6 +2138,7 @@ function attachNewCaseListeners() {
         const ids = d.pmDraft.attendees;
         if (cb.checked) { if (!ids.includes(cb.value)) ids.push(cb.value); }
         else { d.pmDraft.attendees = ids.filter((x) => x !== cb.value); }
+        if (d.pmDraft.attendees.length > 0) state.caseFormError = "";
         render();
       }));
     const othersEl = document.getElementById("case-pm-others-text");
@@ -2089,14 +2149,12 @@ function attachNewCaseListeners() {
 }
 
 function attachLogListeners() {
-  document.getElementById("btn-new").addEventListener("click", () => { state.showNewForm = true; state._newIncidentDraft = freshIncidentDraft(); render(); });
 
   document.getElementById("btn-toggle-deleted-incidents").addEventListener("click", () => {
-    state.viewDeletedIncidents = !state.viewDeletedIncidents; state.selectedIncidentId = null; render();
+    state.viewDeletedIncidents = !state.viewDeletedIncidents; render();
   });
-  document.getElementById("btn-show-all-incidents").addEventListener("click", () => {
-    state.showAllIncidents = !state.showAllIncidents; render();
-  });
+  document.querySelectorAll('[data-action="set-discipline-filter"]').forEach((el) =>
+    el.addEventListener("click", () => { state.disciplineFilter = el.dataset.filter; render(); }));
   const sortSel = document.getElementById("incident-sort-by");
   if (sortSel) sortSel.addEventListener("change", () => { state.incidentSortBy = sortSel.value; render(); });
 
@@ -2108,9 +2166,6 @@ function attachLogListeners() {
     const ns = document.getElementById("search-input");
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
   });
-
-  const sel = document.getElementById("incident-select");
-  if (sel) sel.addEventListener("change", () => { state.selectedIncidentId = sel.value; render(); });
 
   document.querySelectorAll('[data-action="set-status"]').forEach((el) =>
     el.addEventListener("click", () => updateStatus(el.dataset.id, el.dataset.status, el.dataset.current)));
@@ -2202,9 +2257,6 @@ function attachSuspListeners() {
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
   });
 
-  const sel = document.getElementById("susp-select");
-  if (sel) sel.addEventListener("change", () => { state.selectedSuspId = sel.value; render(); });
-
   document.querySelectorAll('[data-action="delete-suspension"]').forEach((el) =>
     el.addEventListener("click", () => deleteSuspension(el.dataset.id)));
   document.querySelectorAll('[data-action="restore-suspension"]').forEach((el) =>
@@ -2236,6 +2288,7 @@ function attachPmListeners() {
     state.showNewPmForm = true;
     state.editingPmId = null;
     state._pmDraft = freshPmDraft();
+    state.pmFormError = "";
     render();
   });
 
@@ -2247,9 +2300,6 @@ function attachPmListeners() {
     const ns = document.getElementById("pm-search-input");
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
   });
-
-  const sel = document.getElementById("pm-select");
-  if (sel) sel.addEventListener("change", () => { state.selectedPmId = sel.value; render(); });
 
   document.querySelectorAll('[data-action="delete-pm"]').forEach((el) =>
     el.addEventListener("click", () => deleteParentMeeting(el.dataset.id)));
@@ -2276,6 +2326,7 @@ function attachPmListeners() {
         const v = cb.value;
         if (cb.checked) { if (!state._pmDraft.attendees.includes(v)) state._pmDraft.attendees.push(v); }
         else { state._pmDraft.attendees = state._pmDraft.attendees.filter((a) => a !== v); }
+        if (state._pmDraft.attendees.length > 0) state.pmFormError = "";
         render();
       }));
     const othersEl = document.getElementById("pm-others-text");
