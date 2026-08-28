@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "2.10.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -363,6 +363,7 @@ const state = {
   editingPmId: null,
   _pmDraft: null,
   pmFormError: "",
+  suspFormError: "",
 
   showNewCaseFlow: false,
   newCaseStep: "discipline",
@@ -537,7 +538,7 @@ function freshNewCaseDraft() {
 function newCaseStepValid(step, d) {
   if (step === "discipline") return !!(d.studentName.trim() && d.studentClass && d.issue.trim() && d.actionTaken.trim());
   if (step === "ask-suspension") return d.wantsSuspension !== null;
-  if (step === "suspension") return !!(d.suspDraft.reason.trim() && d.suspDraft.totalDays && d.suspDraft.issDays + d.suspDraft.ossDays === d.suspDraft.totalDays);
+  if (step === "suspension") return !!(d.suspDraft.reason.trim() && d.suspDraft.totalDays && d.suspDraft.issDays + d.suspDraft.ossDays === d.suspDraft.totalDays && d.suspDraft.issDates.length === d.suspDraft.issDays);
   if (step === "ask-pm") return d.wantsPm !== null;
   if (step === "pm") return !!(d.pmDraft.attendees.length && d.pmDraft.reason.trim());
   return true;
@@ -548,7 +549,8 @@ function newCaseStepErrorMessage(step, d) {
   if (step === "suspension") {
     if (!d.suspDraft.reason.trim()) return "Enter a reason before continuing.";
     if (!d.suspDraft.totalDays) return "Choose the total number of days.";
-    return "In-school and out-of-school days must add up to the total.";
+    if (d.suspDraft.issDays + d.suspDraft.ossDays !== d.suspDraft.totalDays) return "In-school and out-of-school days must add up to the total.";
+    return `Book a location for all ${d.suspDraft.issDays} in-school day${d.suspDraft.issDays === 1 ? "" : "s"} before continuing (${d.suspDraft.issDates.length} booked so far).`;
   }
   if (step === "ask-pm") return "Choose Yes or No.";
   if (step === "pm") {
@@ -602,7 +604,7 @@ async function submitNewCase() {
     if (d.wantsSuspension) {
       const sd = d.suspDraft;
       const ossEntries = sd.ossDates.map((date) => ({ date, type: "OSS" }));
-      const issEntries = sd.issDates.map((date) => ({ date, type: "ISS", venue: sd.issDifferentVenues ? (sd.issVenues[date] || "") : sd.issVenue }));
+      const issEntries = sd.issDates.map((date) => ({ date, type: "ISS", venue: sd.issVenues[date] || "" }));
       const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
       const suspRef = await addDoc(collection(db, "suspensions"), {
         studentName: d.studentName.trim(), studentClass: d.studentClass, reason: sd.reason.trim(), startDate: sd.startDate,
@@ -842,17 +844,40 @@ function freshSuspDraft() {
   return {
     studentName: "", studentClass: "", reason: "", startDate: todayISO(),
     totalDays: null, issDays: 0, ossDays: 0,
-    ossDates: [], issDates: [],
-    issVenue: "", issDifferentVenues: false, issVenues: {},
+    ossDates: [], issDates: [], issVenues: {},
   };
 }
+// OSS dates auto-fill from the start date (no location concept, so no need
+// for manual booking). ISS dates/locations are chosen entirely through the
+// availability calendar — this only resets them when the count changes.
 function regenerateSuspDates(d) {
-  const total = (d.ossDays || 0) + (d.issDays || 0);
-  if (!total) { d.ossDates = []; d.issDates = []; return d; }
-  const chain = schoolDayChain(d.startDate || todayISO(), total);
-  d.issDates = chain.slice(0, d.issDays || 0);
-  d.ossDates = chain.slice(d.issDays || 0);
+  d.ossDates = d.ossDays > 0 ? schoolDayChain(d.startDate || todayISO(), d.ossDays) : [];
+  if (d.issDates.length > d.issDays) d.issDates = d.issDates.slice(0, d.issDays);
   return d;
+}
+// The next N school days from the suspension's start date, used as the
+// availability calendar's booking window.
+function availabilityWindow(startDate, days = 14) {
+  return schoolDayChain(startDate || todayISO(), days);
+}
+// Who (if anyone) already occupies each location on a given date, excluding
+// the suspension currently being edited (so it doesn't block itself).
+const LOCATION_CAPACITY = { "General Office": 1, "MPR 1": 1 };
+function locationOccupancyForDate(dateISO, excludeSuspensionId) {
+  const occupants = {};
+  LOCATION_OPTIONS.forEach((loc) => { occupants[loc] = []; });
+  state.suspensions.forEach((s) => {
+    if (s.deleted || s.id === excludeSuspensionId) return;
+    suspensionDayEntries(s).forEach((e) => {
+      if (e.type === "ISS" && e.date === dateISO && occupants[e.venue] !== undefined) {
+        occupants[e.venue].push(s.studentName);
+      }
+    });
+  });
+  return LOCATION_OPTIONS.map((loc) => {
+    const capacity = LOCATION_CAPACITY[loc] || 1;
+    return { location: loc, occupants: occupants[loc], capacity, remaining: capacity - occupants[loc].length };
+  });
 }
 
 async function submitNewSuspension(e) {
@@ -862,11 +887,21 @@ async function submitNewSuspension(e) {
   const studentName = f.studentName.value.trim();
   const studentClass = f.studentClass.value;
   const reason = f.reason.value.trim();
-  if (!studentName || !studentClass || !reason || !d.totalDays) return;
+  if (!studentName || !studentClass || !reason || !d.totalDays) {
+    state.suspFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if (d.issDates.length !== d.issDays) {
+    state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.length} booked so far).`;
+    render();
+    return;
+  }
+  state.suspFormError = "";
   const ossEntries = d.ossDates.map((date) => ({ date, type: "OSS" }));
   const issEntries = d.issDates.map((date) => ({
     date, type: "ISS",
-    venue: d.issDifferentVenues ? (d.issVenues[date] || "") : d.issVenue,
+    venue: d.issVenues[date] || "",
   }));
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
   state.saving = true;
@@ -919,15 +954,13 @@ function openEditSuspension(id) {
   const issDates = issEntries.map((x) => x.date);
   const issVenues = {};
   issEntries.forEach((x) => { issVenues[x.date] = x.venue || ""; });
-  const uniqueVenues = [...new Set(Object.values(issVenues))];
   state._suspDraft = {
     studentName: s.studentName, studentClass: s.studentClass, reason: s.reason || "",
     startDate: s.startDate || (entries[0] && entries[0].date) || todayISO(),
     totalDays: s.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
-    ossDates, issDates,
-    issVenue: uniqueVenues.length <= 1 ? (uniqueVenues[0] || "") : "",
-    issDifferentVenues: uniqueVenues.length > 1, issVenues,
+    ossDates, issDates, issVenues,
   };
+  state.suspFormError = "";
   render();
 }
 async function submitEditSuspension(e) {
@@ -940,11 +973,21 @@ async function submitEditSuspension(e) {
   const studentName = f.studentName.value.trim();
   const studentClass = f.studentClass.value;
   const reason = f.reason.value.trim();
-  if (!studentName || !studentClass || !reason || !d.totalDays) return;
+  if (!studentName || !studentClass || !reason || !d.totalDays) {
+    state.suspFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if (d.issDates.length !== d.issDays) {
+    state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.length} booked so far).`;
+    render();
+    return;
+  }
+  state.suspFormError = "";
   const ossEntries = d.ossDates.map((date) => ({ date, type: "OSS" }));
   const issEntries = d.issDates.map((date) => ({
     date, type: "ISS",
-    venue: d.issDifferentVenues ? (d.issVenues[date] || "") : d.issVenue,
+    venue: d.issVenues[date] || "",
   }));
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
   const updated = { studentName, studentClass, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days };
@@ -1302,7 +1345,7 @@ function renderNewCaseStepBody(step, d) {
   if (step === "suspension") {
     return `
       <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">For ${escapeHtml(d.studentName)}, Class ${escapeHtml(d.studentClass)}</div>
-      ${renderSuspFieldsBody(d.suspDraft, "case-susp")}
+      ${renderSuspFieldsBody(d.suspDraft, "case-susp", null)}
       ${renderNewCaseNav("suspension", d)}`;
   }
   if (step === "ask-pm") {
@@ -1776,10 +1819,10 @@ function renderSuspensionDetail(s) {
     </div>`;
 }
 
-function renderSuspFieldsBody(d, idPrefix) {
+function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
   const totalOptions = Array.from({ length: 14 }, (_, i) => i + 1);
   const dayCountOptions = (max) => Array.from({ length: max + 1 }, (_, i) => i);
-  const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays) && (d.issDates.length === d.issDays);
+  const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
   return `
         <label class="dd-label">Reason <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="reason" rows="2" required>${escapeHtml(d.reason)}</textarea>
@@ -1808,45 +1851,55 @@ function renderSuspFieldsBody(d, idPrefix) {
           </div>
         </div>` : ""}
 
-        ${showDatePickers && d.totalDays > 0 ? (() => {
-          const combined = [
-            ...d.ossDates.map((dt, i) => ({ date: dt, type: "OSS", idx: i })),
-            ...d.issDates.map((dt, i) => ({ date: dt, type: "ISS", idx: i })),
-          ].sort((a, b) => a.date.localeCompare(b.date));
-          return `
-        <label class="dd-label" style="margin-top:12px">Day-by-day schedule (sorted by date)</label>
-        <div id="${idPrefix}-combined-date-rows">
-          ${combined.map((row) => `
+        ${showDatePickers && d.ossDays > 0 ? `
+        <label class="dd-label" style="margin-top:12px">Out-of-school dates</label>
+        <div id="${idPrefix}-oss-date-rows">
+          ${d.ossDates.map((dt, i) => `
             <div class="dd-venue-row">
-              <span class="dd-venue-date">${formatDate(row.date)}</span>
-              <span class="dd-stamp-subtle" style="color:${SUSP_TYPE_STYLE[row.type].ink};flex-shrink:0">${SUSP_TYPE_STYLE[row.type].label}</span>
+              <span class="dd-venue-date">${formatDate(dt)}</span>
               <div class="dd-date-icon-btn" title="Change this day's date">
-                <input type="date" class="${idPrefix}-${row.type === "OSS" ? "oss" : "iss"}-date-input" data-idx="${row.idx}" value="${row.date}" />
+                <input type="date" class="${idPrefix}-oss-date-input" data-idx="${i}" value="${dt}" />
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
               </div>
-              ${row.type === "ISS" && d.issDifferentVenues ? `
-                <select class="dd-input ${idPrefix}-iss-venue-select" data-date="${row.date}" style="flex:1;min-width:100px">
-                  <option value="">Select location…</option>
-                  ${LOCATION_OPTIONS.map((loc) => `<option value="${loc}" ${d.issVenues[row.date] === loc ? "selected" : ""}>${loc}</option>`).join("")}
-                </select>` : ""}
             </div>`).join("")}
-        </div>` ; })() : ""}
+        </div>` : ""}
 
         ${showDatePickers && d.issDays > 0 ? `
-        <label class="dd-label" style="margin-top:10px">In-school location</label>
-        <select class="dd-input" name="issVenue" style="${d.issDifferentVenues ? "display:none" : ""}">
-          <option value="">Select location…</option>
-          ${LOCATION_OPTIONS.map((loc) => `<option value="${loc}" ${d.issVenue === loc ? "selected" : ""}>${loc}</option>`).join("")}
-        </select>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:${d.issDifferentVenues ? "0" : "8px"};cursor:pointer">
-          <input type="checkbox" id="${idPrefix}-diff-venues" ${d.issDifferentVenues ? "checked" : ""} />
-          <span class="dd-mono-muted" style="font-size:12px">Different location each day</span>
-        </label>` : ""}`;
+        <label class="dd-label" style="margin-top:12px">In-school days booked: ${d.issDates.length} of ${d.issDays}</label>
+        ${d.issDates.length ? `
+        <div style="margin-bottom:8px">
+          ${d.issDates.slice().sort().map((dt) => `
+            <div class="dd-venue-row">
+              <span class="dd-venue-date">${formatDate(dt)}</span>
+              <span class="dd-sans" style="font-size:13px;flex:1">${escapeHtml(d.issVenues[dt] || "")}</span>
+              <button type="button" class="dd-followup-icon-btn" data-action="${idPrefix}-unbook-iss" data-date="${dt}" title="Remove this booking">✕</button>
+            </div>`).join("")}
+        </div>` : ""}
+        <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin:10px 0 6px">Tap a day and location to book it</div>
+        <div class="dd-avail-list">
+          ${availabilityWindow(d.startDate).map((dt) => {
+            const alreadyBooked = d.issDates.includes(dt);
+            const occ = locationOccupancyForDate(dt, excludeSuspensionId);
+            return `
+            <div class="dd-avail-row">
+              <div class="dd-avail-date">${formatDate(dt)}</div>
+              <div class="dd-avail-chips">
+                ${occ.map((o) => {
+                  const isThisBooking = d.issVenues[dt] === o.location && alreadyBooked;
+                  const full = o.remaining <= 0 && !isThisBooking;
+                  const disableNew = alreadyBooked && !isThisBooking; // this day already booked to a different location by this suspension
+                  return `<button type="button" class="dd-avail-chip ${isThisBooking ? "dd-avail-chip-selected" : full ? "dd-avail-chip-full" : "dd-avail-chip-free"}"
+                    data-action="${idPrefix}-book-iss" data-date="${dt}" data-location="${o.location}" ${disableNew && !isThisBooking ? "disabled" : ""}>
+                    ${o.location}${isThisBooking ? " ✓" : full ? ` — full (${escapeHtml(o.occupants.join(", "))})` : " — free"}
+                  </button>`;
+                }).join("")}
+              </div>
+            </div>`;
+          }).join("")}
+        </div>
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">A location marked "full" can still be booked if needed — it's a warning, not a hard block.</div>` : ""}`;
 }
 function attachSuspFieldListeners(form, idPrefix, d, onChange) {
-  const venueEl = form.elements["issVenue"];
-  if (venueEl) venueEl.addEventListener("change", () => { d.issVenue = venueEl.value; });
-
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
   if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateSuspDates(d); onChange(); });
 
@@ -1876,17 +1929,34 @@ function attachSuspFieldListeners(form, idPrefix, d, onChange) {
 
   form.querySelectorAll(`.${idPrefix}-oss-date-input`).forEach((el) =>
     el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; onChange(); }));
-  form.querySelectorAll(`.${idPrefix}-iss-date-input`).forEach((el) =>
-    el.addEventListener("change", () => { d.issDates[parseInt(el.dataset.idx, 10)] = el.value; onChange(); }));
-  form.querySelectorAll(`.${idPrefix}-iss-venue-select`).forEach((el) =>
-    el.addEventListener("change", () => { d.issVenues[el.dataset.date] = el.value; }));
 
-  const diffEl = document.getElementById(`${idPrefix}-diff-venues`);
-  if (diffEl) diffEl.addEventListener("change", () => {
-    d.issDifferentVenues = diffEl.checked;
-    if (diffEl.checked) d.issDates.forEach((dt) => { if (!d.issVenues[dt]) d.issVenues[dt] = d.issVenue; });
-    onChange();
-  });
+  // Availability calendar: tap a location on a day to book it (replacing
+  // any existing booking for that day), or tap the ✕ to remove one.
+  form.querySelectorAll(`[data-action="${idPrefix}-book-iss"]`).forEach((el) =>
+    el.addEventListener("click", () => {
+      const date = el.dataset.date;
+      const location = el.dataset.location;
+      const alreadyThisBooking = d.issVenues[date] === location && d.issDates.includes(date);
+      if (alreadyThisBooking) {
+        d.issDates = d.issDates.filter((dt) => dt !== date);
+        delete d.issVenues[date];
+      } else if (!d.issDates.includes(date) && d.issDates.length >= d.issDays) {
+        // all slots already filled — ignore until one is freed up
+      } else {
+        if (!d.issDates.includes(date)) d.issDates.push(date);
+        d.issVenues[date] = location;
+      }
+      if (idPrefix === "susp") state.suspFormError = "";
+      if (idPrefix === "case-susp") state.caseFormError = "";
+      onChange();
+    }));
+  form.querySelectorAll(`[data-action="${idPrefix}-unbook-iss"]`).forEach((el) =>
+    el.addEventListener("click", () => {
+      const date = el.dataset.date;
+      d.issDates = d.issDates.filter((dt) => dt !== date);
+      delete d.issVenues[date];
+      onChange();
+    }));
 }
 function renderSuspForm(isEdit) {
   const d = state._suspDraft;
@@ -1901,7 +1971,8 @@ function renderSuspForm(isEdit) {
         <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
-        ${renderSuspFieldsBody(d, "susp")}
+        ${renderSuspFieldsBody(d, "susp", state.editingSuspensionId)}
+        ${state.suspFormError ? `<div class="dd-error">${escapeHtml(state.suspFormError)}</div>` : ""}
         <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save suspension"}</button>
       </form>
@@ -2242,6 +2313,7 @@ function attachSuspListeners() {
     state.showNewSuspForm = true;
     state.editingSuspensionId = null;
     state._suspDraft = freshSuspDraft();
+    state.suspFormError = "";
     render();
   });
 

@@ -232,31 +232,29 @@ year's list or the dataset stops updating:
    → edit the `publicHolidays` array
 2. Or paste me the new list and I'll help build the updated document
 
-## Suspension workflow (v2.0 — unified, single entry)
+## Suspension workflow (v2.10 — unified entry, availability-aware booking)
 
-Logging a suspension now works as one flow instead of separate ISS/OSS
+Logging a suspension works as one flow instead of separate ISS/OSS
 records:
 1. Student name, class (dropdown), and reason (required)
 2. Pick the **total days** (1-14)
 3. Pick how many are **in-school** vs **out-of-school** — these two
    dropdowns are linked, so setting one recalculates the other to always
-   sum to the total (e.g. set in-school to 4 out of 5 total, out-of-school
-   becomes 1 automatically)
-4. The app then shows a date picker for each out-of-school day and each
-   in-school day separately, defaulting to the next available school day
-   for each — every date has its own small calendar icon to override it
-5. For in-school days, a **location** dropdown (General Office / MPR 1)
-   applies to all of them by default; tick **"Different location each
-   day"** to set a location per day instead
+   sum to the total
+4. Out-of-school dates default automatically to the next available school
+   days (no location concept, so nothing to book) — each has a small
+   calendar icon to override the date if needed
+5. In-school days are booked through a 14-school-day **availability
+   calendar**: each day shows General Office and MPR 1 (capacity 1 each)
+   as tappable chips — green "free," red "full" with who's occupying it.
+   Tap a chip to book that day + location; tap again to un-book. A full
+   location can still be booked — it's a warning, not a hard block, for
+   genuine emergencies. All in-school days must be booked before saving.
 
 The whole thing saves as **one log entry**, regardless of how the ISS/OSS
 days are split or interleaved — this replaces the earlier "linked
 suspension" feature (two records tied together), which is no longer
 needed now that a single record can natively hold a mix of both types.
-
-This is also the same feature that gives you weekend/holiday-aware
-scheduling and per-day location overrides — see "Weekend-aware scheduling"
-below for how the default dates are calculated.
 
 ## Class dropdown
 

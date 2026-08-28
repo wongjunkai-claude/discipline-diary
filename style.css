@@ -187,6 +187,22 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 }
 .dd-related-link:hover { color: #1B2A41; }
 
+.dd-avail-list { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px; background: #fff; }
+.dd-avail-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px dashed #E4E1D4; }
+.dd-avail-row:last-child { border-bottom: none; padding-bottom: 0; }
+.dd-avail-date { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #1B2A41; font-weight: 600; width: 76px; flex-shrink: 0; }
+.dd-avail-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.dd-avail-chip {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid transparent; text-align: left; line-height: 1.3;
+}
+.dd-avail-chip-free { background: #EAF3EC; color: #3C6E47; border-color: #C3DCC9; }
+.dd-avail-chip-free:hover { background: #DCEBE0; }
+.dd-avail-chip-full { background: #FBEAE7; color: #A3372B; border-color: #EFC7C0; }
+.dd-avail-chip-full:hover { background: #F6DAD4; }
+.dd-avail-chip-selected { background: #1B2A41; color: #fff; border-color: #1B2A41; font-weight: 600; }
+.dd-avail-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .dd-case-prompt { font-family: 'Zilla Slab', serif; font-size: 17px; color: #1B2A41; font-weight: 600; margin: 8px 0 14px; }
 .dd-case-yesno { display: flex; gap: 10px; }
 .dd-case-yesno .dd-stamp { font-size: 13px; padding: 8px 20px; transform: rotate(0deg); }
