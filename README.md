@@ -271,6 +271,41 @@ who's attending (multiple people allowed — Father, Mother, Grandfather,
 Grandmother, Guardian, or Others with a free-text field), date, and reason.
 Same editing, audit trail, and remove/restore pattern as the other two logs.
 
+## Standardized log headers
+
+All three logs (and the Dashboard) now share one layout:
+- **Help (?) and the backup/download icon** both live in the navy header
+  now, top-right, Help to the left of Download — no longer a separate
+  Help button inside each page.
+- **"Deleted" is a small recycling-bin icon**, not a text pill, sharing the
+  same row as the filter pills (right-aligned) instead of a row of its own.
+- **Filter pills, Sort by, then search, then the list** — same order on
+  every log.
+
+**Suspension Log filters**: Show All / This Week / Upcoming / Completed.
+"This Week" is new — it means the suspension has at least one day falling
+in the current Monday-Sunday week, regardless of when it started or ends
+(distinct from the status dot on each card, which is based on today
+specifically). **Parent Meeting Log** now uses the identical four filters
+and gained the same colored status dot (red = this week, yellow-orange =
+upcoming, green = completed), for full consistency with the other two
+logs — it previously had no status concept at all.
+
+The "+ New suspension" / "+ New meeting" buttons stay on their own line at
+the top of their respective logs (unlike the Discipline Log, which has no
+creation button of its own anymore), since they're still the only way to
+log a suspension or meeting that isn't tied to a brand-new discipline
+entry.
+
+## Collapsible entry cards
+
+Every entry across all three logs is collapsed by default, showing only
+name, date, class, logged by, and the issue/reason — plus the status dot.
+Tap the ▼ arrow on the right to expand the full detail (follow-ups, audit
+trail, day-by-day schedule, edit/remove buttons); it becomes a ▲ while
+open, and tapping it again collapses back. Jumping to a record via a
+"related records" link automatically expands it.
+
 ## Dropdown-based entry lists
 
 All three logs went back to always showing every entry as a full stacked

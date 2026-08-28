@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.10.0";
+const APP_VERSION = "2.12.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -341,13 +341,15 @@ const state = {
   showNewForm: false,
   editingIncidentId: null,
   historyOpen: {},
+  entryExpanded: {},
   followDraft: {},
   editingFollowUpId: null,
   followEditDraft: {},
 
   suspensions: [],
   suspLoaded: false,
-  suspTab: "All",
+  suspTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed' | 'Deleted'
+  suspSortBy: "date",
   suspQuery: "",
   selectedSuspId: null,
   showNewSuspForm: false,
@@ -356,7 +358,8 @@ const state = {
 
   parentMeetings: [],
   pmLoaded: false,
-  pmTab: "All",
+  pmTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed' | 'Deleted'
+  pmSortBy: "date",
   pmQuery: "",
   selectedPmId: null,
   showNewPmForm: false,
@@ -1157,9 +1160,12 @@ function renderNav() {
   ];
   return `
     <div class="dd-header" style="position:relative">
-      <button class="dd-circle-btn dd-header-backup" id="btn-backup" title="Download a full backup as a file">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg>
-      </button>
+      <div class="dd-header-topright">
+        <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
+        <button class="dd-circle-btn" id="btn-backup" title="Download a full backup as a file">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg>
+        </button>
+      </div>
       <div class="dd-header-inner">
         <div>
           <div class="dd-header-title">Discipline Diary</div>
@@ -1426,9 +1432,8 @@ function renderDashboardSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
           <button class="dd-newbtn" id="btn-new-case">+ New Entry</button>
-          <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
         </div>
         <div class="dd-grid2" style="margin-bottom:16px">
           <div class="dd-panel" style="text-align:center">
@@ -1556,14 +1561,13 @@ function renderLogSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
-          <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
-          <button class="dd-pill ${state.viewDeletedIncidents ? "active" : ""}" id="btn-toggle-deleted-incidents">Deleted (${c.Deleted})</button>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-          <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
-          <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
-          <button class="dd-pill ${filter === "Resolved" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Resolved">Resolved (${c.Resolved})</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">
+            <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
+            <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
+            <button class="dd-pill ${filter === "Resolved" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Resolved">Resolved (${c.Resolved})</button>
+          </div>
+          ${recycleBinButton("btn-toggle-deleted-incidents", state.viewDeletedIncidents, c.Deleted)}
         </div>
         <div style="margin-bottom:14px;max-width:220px">
           <label class="dd-label" style="margin-top:0">Sort by</label>
@@ -1596,15 +1600,22 @@ function renderIncidentDetail(it) {
   const history = it.history || [];
   const linkedSusp = (it.linkedSuspensionIds || []).map((id) => state.suspensions.find((x) => x.id === id)).filter(Boolean);
   const linkedPm = (it.linkedPmIds || []).map((id) => state.parentMeetings.find((x) => x.id === id)).filter(Boolean);
+  const expanded = !!state.entryExpanded[it.id];
   return `
     <div class="dd-detail-card">
       <div class="dd-detail-head">
-        <div>
+        <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(it.studentName)}</div>
-          <div class="dd-card-meta">${formatDate(it.date)}${it.studentClass ? ` · Class ${escapeHtml(it.studentClass)}` : ""} · logged by ${escapeHtml(it.loggedBy)}</div>
+          <div class="dd-card-meta">${formatDate(it.date)}${it.studentClass ? ` · Class ${escapeHtml(it.studentClass)}` : ""}</div>
+          <div class="dd-card-meta">logged by ${escapeHtml(it.loggedBy)}</div>
+          <div class="dd-card-summary-issue">${escapeHtml(it.issue)}</div>
         </div>
-        <span class="dd-status-dot" style="background:${dotColor}" title="${escapeHtml(s.label)}"></span>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
+          <span class="dd-status-dot" style="background:${dotColor}" title="${escapeHtml(s.label)}"></span>
+          <button class="dd-expand-toggle" data-action="toggle-entry-expanded" data-id="${it.id}" title="${expanded ? "Collapse" : "Expand"}">${expanded ? "▲" : "▼"}</button>
+        </div>
       </div>
+      ${expanded ? `
       ${linkedSusp.length || linkedPm.length ? `
       <div class="dd-related-box" style="margin-top:12px">
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:6px">Related records</div>
@@ -1656,10 +1667,15 @@ function renderIncidentDetail(it) {
              <button class="dd-add-btn" data-action="restore-incident" data-id="${it.id}">Restore entry</button>`
           : `<button class="dd-add-btn" data-action="edit-incident" data-id="${it.id}">Edit entry</button>
              <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>`}
-      </div>
+      </div>` : ""}
     </div>`;
 }
 
+function recycleBinButton(id, active, count) {
+  return `<button class="dd-circle-btn ${active ? "dd-recycle-active" : ""}" id="${id}" title="Deleted (${count})">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
+  </button>`;
+}
 function classOptionsHtml(selected) {
   return `<option value="">Select class…</option>` + CLASS_OPTIONS.map((c) => `<option value="${c}" ${c === selected ? "selected" : ""}>${c}</option>`).join("");
 }
@@ -1728,42 +1744,75 @@ function renderEditIncidentForm() {
 }
 
 // ---------- Suspension Log ----------
+function currentWeekBounds() {
+  const today = todayISO();
+  const dow = weekdayOf(today);
+  const diffToMonday = dow === 0 ? 6 : dow - 1;
+  const monday = addDays(today, -diffToMonday);
+  const sunday = addDays(monday, 6);
+  return { monday, sunday };
+}
+// Week-relative categorization for filter pills — distinct from
+// suspensionStatus() (today-based, drives the status dot). A suspension
+// spanning several days can overlap "this week" even if it started earlier
+// or ends later.
+function suspensionWeekCategory(s) {
+  const { monday, sunday } = currentWeekBounds();
+  const { first, last } = suspensionDateRange(s);
+  if (last < monday) return "Completed";
+  if (first > sunday) return "Upcoming";
+  return "This Week";
+}
 function filteredSuspensions() {
-  let list = state.suspensions.map((s) => ({ ...s, _status: suspensionStatus(s) }));
+  let list = state.suspensions.map((s) => ({ ...s, _week: suspensionWeekCategory(s) }));
   if (state.suspTab === "Deleted") list = list.filter((s) => s.deleted);
   else {
     list = list.filter((s) => !s.deleted);
-    if (state.suspTab !== "All") list = list.filter((s) => s._status === state.suspTab);
+    if (state.suspTab !== "All") list = list.filter((s) => s._week === state.suspTab);
   }
   if (state.suspQuery.trim()) {
     const q = state.suspQuery.trim().toLowerCase();
     list = list.filter((s) => s.studentName.toLowerCase().includes(q));
   }
-  const order = { Active: 0, Upcoming: 1, Completed: 2 };
-  return list.sort((a, b) => (order[a._status] ?? 3) - (order[b._status] ?? 3) || (b.startDate || "").localeCompare(a.startDate || ""));
+  const sortBy = state.suspSortBy || "date";
+  const sorted = [...list];
+  if (sortBy === "name") sorted.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  else if (sortBy === "class") sorted.sort((a, b) => (a.studentClass || "").localeCompare(b.studentClass || ""));
+  else if (sortBy === "level") sorted.sort((a, b) => classLevel(a.studentClass) - classLevel(b.studentClass) || (a.studentClass || "").localeCompare(b.studentClass || ""));
+  else sorted.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  return sorted;
 }
 function suspCounts() {
-  const c = { Upcoming: 0, Active: 0, Completed: 0, Deleted: 0 };
-  state.suspensions.forEach((s) => { if (s.deleted) { c.Deleted++; return; } c[suspensionStatus(s)]++; });
+  const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
+  state.suspensions.forEach((s) => { if (s.deleted) { c.Deleted++; return; } c[suspensionWeekCategory(s)]++; });
   return c;
 }
 
 function renderSuspensionSection() {
   const list = filteredSuspensions();
   const c = suspCounts();
+  const sortBy = state.suspSortBy || "date";
   return `
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
-          <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="dd-pill ${state.suspTab === "Deleted" ? "active" : ""}" data-action="set-susp-tab" data-tab="Deleted">Deleted (${c.Deleted})</button>
-            <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
-          </div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+          <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
         </div>
-        <div class="dd-tabs">
-          ${["All", "Active", "Upcoming", "Completed"].map((t) => `<button class="dd-tab ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` <span class="count">(${c[t]})</span>` : ""}</button>`).join("")}
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">
+            ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
+          </div>
+          ${recycleBinButton("btn-toggle-deleted-susp", state.suspTab === "Deleted", c.Deleted)}
+        </div>
+        <div style="margin-bottom:14px;max-width:220px">
+          <label class="dd-label" style="margin-top:0">Sort by</label>
+          <select class="dd-input" id="susp-sort-by">
+            <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
+            <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
+            <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
+            <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
+          </select>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -1785,15 +1834,22 @@ function renderSuspensionDetail(s) {
   const entries = suspensionDayEntries(s).slice().sort((a, b) => a.date.localeCompare(b.date));
   const history = s.history || [];
   const linkedIncidents = (s.linkedIncidentIds || []).map((id) => state.incidents.find((x) => x.id === id)).filter(Boolean);
+  const expanded = !!state.entryExpanded[s.id];
   return `
     <div class="dd-detail-card">
       <div class="dd-detail-head">
-        <div>
+        <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
-          <div class="dd-card-meta">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""} · logged by ${escapeHtml(s.loggedBy)}</div>
+          <div class="dd-card-meta">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""}</div>
+          <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
+          <div class="dd-card-summary-issue">${escapeHtml(s.reason || "")}</div>
         </div>
-        <span class="dd-status-dot" style="background:${statusStyle.ink}" title="${escapeHtml(statusStyle.label)}"></span>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
+          <span class="dd-status-dot" style="background:${statusStyle.ink}" title="${escapeHtml(statusStyle.label)}"></span>
+          <button class="dd-expand-toggle" data-action="toggle-entry-expanded" data-id="${s.id}" title="${expanded ? "Collapse" : "Expand"}">${expanded ? "▲" : "▼"}</button>
+        </div>
       </div>
+      ${expanded ? `
       ${linkedIncidents.length ? `
       <div class="dd-related-box" style="margin-top:12px">
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:6px">Related discipline entries</div>
@@ -1815,7 +1871,7 @@ function renderSuspensionDetail(s) {
              <button class="dd-add-btn" data-action="restore-suspension" data-id="${s.id}">Restore</button>`
           : `<button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
              <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>`}
-      </div>
+      </div>` : ""}
     </div>`;
 }
 
@@ -1980,35 +2036,63 @@ function renderSuspForm(isEdit) {
 }
 
 // ---------- Parent Meeting ----------
+function parentMeetingWeekCategory(m) {
+  const { monday, sunday } = currentWeekBounds();
+  if (!m.date) return "This Week";
+  if (m.date < monday) return "Completed";
+  if (m.date > sunday) return "Upcoming";
+  return "This Week";
+}
 function filteredParentMeetings() {
-  let list = state.parentMeetings;
+  let list = state.parentMeetings.map((m) => ({ ...m, _week: parentMeetingWeekCategory(m) }));
   if (state.pmTab === "Deleted") list = list.filter((m) => m.deleted);
-  else list = list.filter((m) => !m.deleted);
+  else {
+    list = list.filter((m) => !m.deleted);
+    if (state.pmTab !== "All") list = list.filter((m) => m._week === state.pmTab);
+  }
   if (state.pmQuery.trim()) {
     const q = state.pmQuery.trim().toLowerCase();
     list = list.filter((m) => m.studentName.toLowerCase().includes(q));
   }
-  return [...list].sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  const sortBy = state.pmSortBy || "date";
+  const sorted = [...list];
+  if (sortBy === "name") sorted.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  else if (sortBy === "class") sorted.sort((a, b) => (a.studentClass || "").localeCompare(b.studentClass || ""));
+  else if (sortBy === "level") sorted.sort((a, b) => classLevel(a.studentClass) - classLevel(b.studentClass) || (a.studentClass || "").localeCompare(b.studentClass || ""));
+  else sorted.sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  return sorted;
 }
 function pmCounts() {
-  let deleted = 0, active = 0;
-  state.parentMeetings.forEach((m) => { if (m.deleted) deleted++; else active++; });
-  return { active, deleted };
+  const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
+  state.parentMeetings.forEach((m) => { if (m.deleted) { c.Deleted++; return; } c[parentMeetingWeekCategory(m)]++; });
+  return c;
 }
 
 function renderParentMeetingSection() {
   const list = filteredParentMeetings();
   const c = pmCounts();
+  const sortBy = state.pmSortBy || "date";
   return `
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">
-          <button class="dd-circle-btn" id="btn-help" title="How to use this app">?</button>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="dd-pill ${state.pmTab === "Deleted" ? "active" : ""}" data-action="set-pm-tab" data-tab="Deleted">Deleted (${c.deleted})</button>
-            <button class="dd-newbtn" id="btn-new-pm">+ New meeting</button>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+          <button class="dd-newbtn" id="btn-new-pm">+ New meeting</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">
+            ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
           </div>
+          ${recycleBinButton("btn-toggle-deleted-pm", state.pmTab === "Deleted", c.Deleted)}
+        </div>
+        <div style="margin-bottom:14px;max-width:220px">
+          <label class="dd-label" style="margin-top:0">Sort by</label>
+          <select class="dd-input" id="pm-sort-by">
+            <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
+            <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
+            <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
+            <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
+          </select>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -2032,14 +2116,25 @@ function attendeeSummary(m) {
 function renderParentMeetingDetail(m) {
   const history = m.history || [];
   const linkedIncidents = (m.linkedIncidentIds || []).map((id) => state.incidents.find((x) => x.id === id)).filter(Boolean);
+  const expanded = !!state.entryExpanded[m.id];
+  const weekCat = parentMeetingWeekCategory(m);
+  const dotColor = m.deleted ? "#8A8571" : weekCat === "Completed" ? "#3C6E47" : weekCat === "Upcoming" ? "#D98F2B" : "#A3372B";
+  const dotLabel = m.deleted ? "Removed" : weekCat;
   return `
     <div class="dd-detail-card">
       <div class="dd-detail-head">
-        <div>
+        <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(m.studentName)}</div>
-          <div class="dd-card-meta">${formatDate(m.date)}${m.studentClass ? ` · Class ${escapeHtml(m.studentClass)}` : ""} · logged by ${escapeHtml(m.loggedBy)}</div>
+          <div class="dd-card-meta">${formatDate(m.date)}${m.studentClass ? ` · Class ${escapeHtml(m.studentClass)}` : ""}</div>
+          <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
+          <div class="dd-card-summary-issue">${escapeHtml(m.reason || "")}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
+          <span class="dd-status-dot" style="background:${dotColor}" title="${escapeHtml(dotLabel)}"></span>
+          <button class="dd-expand-toggle" data-action="toggle-entry-expanded" data-id="${m.id}" title="${expanded ? "Collapse" : "Expand"}">${expanded ? "▲" : "▼"}</button>
         </div>
       </div>
+      ${expanded ? `
       ${linkedIncidents.length ? `
       <div class="dd-related-box" style="margin-top:12px">
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:6px">Related discipline entries</div>
@@ -2057,7 +2152,7 @@ function renderParentMeetingDetail(m) {
              <button class="dd-add-btn" data-action="restore-pm" data-id="${m.id}">Restore</button>`
           : `<button class="dd-add-btn" data-action="edit-pm" data-id="${m.id}">Edit entry</button>
              <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Remove</button>`}
-      </div>
+      </div>` : ""}
     </div>`;
 }
 
@@ -2101,11 +2196,13 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.section = el.dataset.section; render(); }));
 
   document.querySelectorAll('[data-action="jump-to-incident"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.disciplineFilter = "all"; state.viewDeletedIncidents = false; render(); }));
+    el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.disciplineFilter = "all"; state.viewDeletedIncidents = false; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="jump-to-suspension"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "suspensions"; state.selectedSuspId = el.dataset.id; render(); }));
+    el.addEventListener("click", () => { state.section = "suspensions"; state.selectedSuspId = el.dataset.id; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="jump-to-pm"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "parentMeetings"; state.selectedPmId = el.dataset.id; render(); }));
+    el.addEventListener("click", () => { state.section = "parentMeetings"; state.selectedPmId = el.dataset.id; state.entryExpanded[el.dataset.id] = true; render(); }));
+  document.querySelectorAll('[data-action="toggle-entry-expanded"]').forEach((el) =>
+    el.addEventListener("click", () => { state.entryExpanded[el.dataset.id] = !state.entryExpanded[el.dataset.id]; render(); }));
 
   document.getElementById("btn-backup").addEventListener("click", downloadBackupFile);
 
@@ -2318,7 +2415,11 @@ function attachSuspListeners() {
   });
 
   document.querySelectorAll('[data-action="set-susp-tab"]').forEach((el) =>
-    el.addEventListener("click", () => { state.suspTab = el.dataset.tab; state.selectedSuspId = null; render(); }));
+    el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
+  const deletedBtn = document.getElementById("btn-toggle-deleted-susp");
+  if (deletedBtn) deletedBtn.addEventListener("click", () => { state.suspTab = state.suspTab === "Deleted" ? "All" : "Deleted"; render(); });
+  const suspSortSel = document.getElementById("susp-sort-by");
+  if (suspSortSel) suspSortSel.addEventListener("change", () => { state.suspSortBy = suspSortSel.value; render(); });
 
   const search = document.getElementById("susp-search-input");
   if (search) search.addEventListener("input", () => {
@@ -2372,6 +2473,13 @@ function attachPmListeners() {
     const ns = document.getElementById("pm-search-input");
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
   });
+
+  document.querySelectorAll('[data-action="set-pm-tab"]').forEach((el) =>
+    el.addEventListener("click", () => { state.pmTab = el.dataset.tab; render(); }));
+  const pmDeletedBtn = document.getElementById("btn-toggle-deleted-pm");
+  if (pmDeletedBtn) pmDeletedBtn.addEventListener("click", () => { state.pmTab = state.pmTab === "Deleted" ? "All" : "Deleted"; render(); });
+  const pmSortSel = document.getElementById("pm-sort-by");
+  if (pmSortSel) pmSortSel.addEventListener("change", () => { state.pmSortBy = pmSortSel.value; render(); });
 
   document.querySelectorAll('[data-action="delete-pm"]').forEach((el) =>
     el.addEventListener("click", () => deleteParentMeeting(el.dataset.id)));
