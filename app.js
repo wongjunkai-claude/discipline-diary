@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.14.1";
+const APP_VERSION = "2.14.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2034,7 +2034,23 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
         <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">A location marked "full" can still be booked if needed — it's a warning, not a hard block.</div>`;
         })() : ""}`;
 }
-function attachSuspFieldListeners(form, idPrefix, d, onChange) {
+// Re-renders while preserving the open modal's scroll position — a plain
+// render() resets scroll to the top, which is jarring on a long form when
+// all you did was tap one checkbox or button partway down.
+function renderKeepingModalScroll() {
+  const modal = document.querySelector(".dd-modal");
+  const scrollTop = modal ? modal.scrollTop : null;
+  render();
+  if (scrollTop !== null) {
+    const newModal = document.querySelector(".dd-modal");
+    if (newModal) newModal.scrollTop = scrollTop;
+  }
+}
+// Every click here triggers a full re-render, which normally resets scroll
+// to the top of the modal — very disruptive on a long form. This preserves
+// the open modal's scroll position across the re-render.
+function attachSuspFieldListeners(form, idPrefix, d, rawOnChange) {
+  const onChange = renderKeepingModalScroll;
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
   if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateSuspDates(d); onChange(); });
 
@@ -2453,7 +2469,7 @@ function attachLogListeners() {
     document.getElementById("modal-close").addEventListener("click", () => { state.showNewForm = false; state._newIncidentDraft = null; render(); });
     document.getElementById("modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "modal-backdrop") { state.showNewForm = false; state._newIncidentDraft = null; render(); } });
     document.querySelectorAll('[data-action="pick-new-status"]').forEach((el) =>
-      el.addEventListener("click", () => { state._newIncidentDraft.status = el.dataset.status; render(); }));
+      el.addEventListener("click", () => { state._newIncidentDraft.status = el.dataset.status; renderKeepingModalScroll(); }));
 
     // Student name re-renders on every keystroke (to refresh related-record
     // matches below it), so every other field needs to live in the draft too
@@ -2590,7 +2606,7 @@ function attachPmFormModalListeners() {
         if (cb.checked) { if (!state._pmDraft.attendees.includes(v)) state._pmDraft.attendees.push(v); }
         else { state._pmDraft.attendees = state._pmDraft.attendees.filter((a) => a !== v); }
         if (state._pmDraft.attendees.length > 0) state.pmFormError = "";
-        render();
+        renderKeepingModalScroll();
       }));
     const othersEl = document.getElementById("pm-others-text");
     if (othersEl) othersEl.addEventListener("input", () => { state._pmDraft.othersText = othersEl.value; });
