@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.12.0";
+const APP_VERSION = "2.13.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1432,8 +1432,10 @@ function renderDashboardSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-          <button class="dd-newbtn" id="btn-new-case">+ New Entry</button>
+        <div class="dd-new-entry-row">
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case">+ New Entry</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only">+ New Suspension Only</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only">+ New Meeting Only</button>
         </div>
         <div class="dd-grid2" style="margin-bottom:16px">
           <div class="dd-panel" style="text-align:center">
@@ -1475,6 +1477,8 @@ function renderDashboardSection() {
         </div>
       </div>
       ${state.showNewCaseFlow ? renderNewCaseModal() : ""}
+      ${state.showNewSuspForm ? renderSuspForm(false) : ""}
+      ${state.showNewPmForm ? renderPmForm(false) : ""}
     </div>`;
 }
 
@@ -1561,22 +1565,22 @@ function renderLogSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">
-            <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
-            <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
-            <button class="dd-pill ${filter === "Resolved" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Resolved">Resolved (${c.Resolved})</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
+          <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
+          <button class="dd-pill ${filter === "Resolved" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Resolved">Resolved (${c.Resolved})</button>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px">
+          <div style="max-width:220px;flex:1">
+            <label class="dd-label" style="margin-top:0">Sort by</label>
+            <select class="dd-input" id="incident-sort-by">
+              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
+              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
+              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
+              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
+            </select>
           </div>
           ${recycleBinButton("btn-toggle-deleted-incidents", state.viewDeletedIncidents, c.Deleted)}
-        </div>
-        <div style="margin-bottom:14px;max-width:220px">
-          <label class="dd-label" style="margin-top:0">Sort by</label>
-          <select class="dd-input" id="incident-sort-by">
-            <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-            <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-            <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-            <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-          </select>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -1673,7 +1677,16 @@ function renderIncidentDetail(it) {
 
 function recycleBinButton(id, active, count) {
   return `<button class="dd-circle-btn ${active ? "dd-recycle-active" : ""}" id="${id}" title="Deleted (${count})">
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path><path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 7.5h15l-1.4 13.2a1 1 0 0 1-1 .9H6.9a1 1 0 0 1-1-.9L4.5 7.5z"></path>
+      <path d="M9 7.5V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2.5"></path>
+      <path d="M11.45 12.26L9.92 14.90"></path>
+      <path d="M9.92 14.90l1.2.3M9.92 14.90l.3-1.2"></path>
+      <path d="M10.34 16.10L13.39 16.10"></path>
+      <path d="M13.39 16.10l-.9.85M13.39 16.10l-1.15-.5"></path>
+      <path d="M14.22 15.14L12.69 12.50"></path>
+      <path d="M12.69 12.50l1.25-.15M12.69 12.50l-.6 1.1"></path>
+    </svg>
   </button>`;
 }
 function classOptionsHtml(selected) {
@@ -1796,23 +1809,20 @@ function renderSuspensionSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-          <button class="dd-newbtn" id="btn-new-susp">+ New suspension</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">
-            ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px">
+          <div style="max-width:220px;flex:1">
+            <label class="dd-label" style="margin-top:0">Sort by</label>
+            <select class="dd-input" id="susp-sort-by">
+              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
+              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
+              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
+              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
+            </select>
           </div>
           ${recycleBinButton("btn-toggle-deleted-susp", state.suspTab === "Deleted", c.Deleted)}
-        </div>
-        <div style="margin-bottom:14px;max-width:220px">
-          <label class="dd-label" style="margin-top:0">Sort by</label>
-          <select class="dd-input" id="susp-sort-by">
-            <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-            <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-            <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-            <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-          </select>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -2076,23 +2086,20 @@ function renderParentMeetingSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-          <button class="dd-newbtn" id="btn-new-pm">+ New meeting</button>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1">
-            ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px">
+          <div style="max-width:220px;flex:1">
+            <label class="dd-label" style="margin-top:0">Sort by</label>
+            <select class="dd-input" id="pm-sort-by">
+              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
+              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
+              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
+              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
+            </select>
           </div>
           ${recycleBinButton("btn-toggle-deleted-pm", state.pmTab === "Deleted", c.Deleted)}
-        </div>
-        <div style="margin-bottom:14px;max-width:220px">
-          <label class="dd-label" style="margin-top:0">Sort by</label>
-          <select class="dd-input" id="pm-sort-by">
-            <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-            <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-            <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-            <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-          </select>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -2239,7 +2246,26 @@ function attachDashboardListeners() {
     render();
   });
 
+  const newSuspOnlyBtn = document.getElementById("btn-new-susp-only");
+  if (newSuspOnlyBtn) newSuspOnlyBtn.addEventListener("click", () => {
+    state.showNewSuspForm = true;
+    state.editingSuspensionId = null;
+    state._suspDraft = freshSuspDraft();
+    state.suspFormError = "";
+    render();
+  });
+  const newPmOnlyBtn = document.getElementById("btn-new-pm-only");
+  if (newPmOnlyBtn) newPmOnlyBtn.addEventListener("click", () => {
+    state.showNewPmForm = true;
+    state.editingPmId = null;
+    state._pmDraft = freshPmDraft();
+    state.pmFormError = "";
+    render();
+  });
+
   if (state.showNewCaseFlow) attachNewCaseListeners();
+  attachSuspFormModalListeners();
+  attachPmFormModalListeners();
 }
 
 function attachNewCaseListeners() {
@@ -2406,14 +2432,6 @@ function attachLogListeners() {
 }
 
 function attachSuspListeners() {
-  document.getElementById("btn-new-susp").addEventListener("click", () => {
-    state.showNewSuspForm = true;
-    state.editingSuspensionId = null;
-    state._suspDraft = freshSuspDraft();
-    state.suspFormError = "";
-    render();
-  });
-
   document.querySelectorAll('[data-action="set-susp-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
   const deletedBtn = document.getElementById("btn-toggle-deleted-susp");
@@ -2439,6 +2457,12 @@ function attachSuspListeners() {
   document.querySelectorAll('[data-action="toggle-susp-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
 
+  attachSuspFormModalListeners();
+}
+
+// Shared between the Suspension Log page (editing) and the Dashboard's
+// "+ New Suspension Only" button (creating standalone, no discipline entry).
+function attachSuspFormModalListeners() {
   if (state.showNewSuspForm || state.editingSuspensionId) {
     const form = document.getElementById("susp-form");
     form.addEventListener("submit", state.editingSuspensionId ? submitEditSuspension : submitNewSuspension);
@@ -2457,14 +2481,6 @@ function attachSuspListeners() {
 }
 
 function attachPmListeners() {
-  document.getElementById("btn-new-pm").addEventListener("click", () => {
-    state.showNewPmForm = true;
-    state.editingPmId = null;
-    state._pmDraft = freshPmDraft();
-    state.pmFormError = "";
-    render();
-  });
-
   const search = document.getElementById("pm-search-input");
   if (search) search.addEventListener("input", () => {
     state.pmQuery = search.value;
@@ -2490,6 +2506,12 @@ function attachPmListeners() {
   document.querySelectorAll('[data-action="toggle-pm-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
 
+  attachPmFormModalListeners();
+}
+
+// Shared between the Parent Meeting Log page (editing) and the Dashboard's
+// "+ New Meeting Only" button (creating standalone, no discipline entry).
+function attachPmFormModalListeners() {
   if (state.showNewPmForm || state.editingPmId) {
     const form = document.getElementById("pm-form");
     form.addEventListener("submit", state.editingPmId ? submitEditParentMeeting : submitNewParentMeeting);

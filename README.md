@@ -273,29 +273,30 @@ Same editing, audit trail, and remove/restore pattern as the other two logs.
 
 ## Standardized log headers
 
-All three logs (and the Dashboard) now share one layout:
-- **Help (?) and the backup/download icon** both live in the navy header
-  now, top-right, Help to the left of Download — no longer a separate
-  Help button inside each page.
-- **"Deleted" is a small recycling-bin icon**, not a text pill, sharing the
-  same row as the filter pills (right-aligned) instead of a row of its own.
-- **Filter pills, Sort by, then search, then the list** — same order on
-  every log.
+All three logs (and the Dashboard) share one layout:
+- **Help (?) and the backup/download icon** both live in the navy header,
+  top-right, Help to the left of Download.
+- **Nav pills** (Discipline Log / Suspension Log / Parent Meeting) all fit
+  on one line next to the home icon.
+- **Filter pills** sit on their own row.
+- **Sort by and the recycling-bin "Deleted" icon share the row below the
+  pills** — Sort by on the left, the bin on the far right.
+- Then search, then the list.
 
 **Suspension Log filters**: Show All / This Week / Upcoming / Completed.
-"This Week" is new — it means the suspension has at least one day falling
-in the current Monday-Sunday week, regardless of when it started or ends
+"This Week" means the suspension has at least one day falling in the
+current Monday-Sunday week, regardless of when it started or ends
 (distinct from the status dot on each card, which is based on today
-specifically). **Parent Meeting Log** now uses the identical four filters
-and gained the same colored status dot (red = this week, yellow-orange =
-upcoming, green = completed), for full consistency with the other two
-logs — it previously had no status concept at all.
+specifically). **Parent Meeting Log** uses the identical four filters and
+the same colored status dot (red = this week, yellow-orange = upcoming,
+green = completed) — it previously had no status concept at all.
 
-The "+ New suspension" / "+ New meeting" buttons stay on their own line at
-the top of their respective logs (unlike the Discipline Log, which has no
-creation button of its own anymore), since they're still the only way to
-log a suspension or meeting that isn't tied to a brand-new discipline
-entry.
+**Creating a suspension or meeting on its own** (not tied to a new
+discipline entry) now happens from the **Dashboard**, not from the log
+pages themselves — three compact buttons sit in one row there: "+ New
+Entry" (the guided wizard), "+ New Suspension Only", and "+ New Meeting
+Only". The Discipline Log, Suspension Log, and Parent Meeting Log pages no
+longer have their own creation buttons at all.
 
 ## Collapsible entry cards
 
