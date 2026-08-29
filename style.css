@@ -201,7 +201,7 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 }
 .dd-related-link:hover { color: #1B2A41; }
 
-.dd-avail-list { display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto; border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px; background: #fff; }
+.dd-avail-list { display: flex; flex-direction: column; gap: 10px; max-height: 262px; overflow-y: auto; border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px; background: #fff; }
 .dd-avail-row { display: flex; align-items: flex-start; gap: 8px; padding-bottom: 10px; border-bottom: 1px dashed #E4E1D4; }
 .dd-avail-row:last-child { border-bottom: none; padding-bottom: 0; }
 .dd-avail-date { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #1B2A41; font-weight: 600; width: 80px; flex-shrink: 0; line-height: 1.4; white-space: nowrap; }

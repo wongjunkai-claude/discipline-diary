@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.14.2";
+const APP_VERSION = "2.14.4";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -376,6 +376,7 @@ const state = {
   caseFormError: "",
 
   saveError: false,
+  saveErrorDetail: "",
   saving: false,
 };
 
@@ -592,6 +593,7 @@ async function submitNewCase() {
     state.newCaseStep = "pm"; state.caseFormError = newCaseStepErrorMessage("pm", d); render(); return;
   }
   state.caseFormError = "";
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -658,6 +660,7 @@ async function submitNewCase() {
     state.selectedIncidentId = incidentRef.id;
   } catch (err) {
     state.saveError = true;
+    state.saveErrorDetail = err?.message || String(err);
   } finally {
     state.saving = false;
     render();
@@ -674,6 +677,7 @@ async function submitNewIncident(e) {
   const actionTaken = f.actionTaken.value.trim();
   const status = d.status || "Open";
   if (!studentName || !studentClass || !issue || !actionTaken) return;
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -832,6 +836,7 @@ async function submitEditIncident(e) {
   ]);
   if (changes.length === 0) { state.editingIncidentId = null; render(); return; }
   const now = Date.now();
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -930,6 +935,7 @@ async function submitNewSuspension(e) {
     venue: d.issVenues[date] || "",
   }));
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -945,7 +951,7 @@ async function submitNewSuspension(e) {
     state._suspDraft = null;
     state.selectedSuspId = docRef.id;
     syncSuspensionToSheet({ id: docRef.id, studentName, studentClass, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days, loggedBy: teacherName(), deleted: false });
-  } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
 }
 async function deleteSuspension(id) {
   if (!askDeletePassword()) return;
@@ -1026,6 +1032,7 @@ async function submitEditSuspension(e) {
   if (oldDaysKey !== newDaysKey) changes.push("Day-by-day schedule updated");
   if (changes.length === 0) { state.editingSuspensionId = null; state._suspDraft = null; render(); return; }
   const now = Date.now();
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -1062,6 +1069,7 @@ async function submitNewParentMeeting(e) {
     return;
   }
   state.pmFormError = "";
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -1076,7 +1084,7 @@ async function submitNewParentMeeting(e) {
     state._pmDraft = null;
     state.selectedPmId = docRef.id;
     syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, loggedBy: teacherName(), deleted: false });
-  } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
 }
 function openEditParentMeeting(id) {
   const m = state.parentMeetings.find((i) => i.id === id);
@@ -1110,6 +1118,7 @@ async function submitEditParentMeeting(e) {
   if (JSON.stringify((m.attendees || []).slice().sort()) !== JSON.stringify(updated.attendees.slice().sort())) changes.push("Attendees updated");
   if (changes.length === 0) { state.editingPmId = null; state._pmDraft = null; render(); return; }
   const now = Date.now();
+  state.saveError = false;
   state.saving = true;
   render();
   try {
@@ -1539,6 +1548,7 @@ function renderDashboardSection() {
           <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:8px">Parent meetings</div>
           <div class="dd-mono-muted" style="font-size:12px">${activePm.length} logged in total</div>
         </div>
+        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
       </div>
       ${state.showNewCaseFlow ? renderNewCaseModal() : ""}
       ${state.showNewSuspForm ? renderSuspForm(false) : ""}
@@ -1653,7 +1663,7 @@ function renderLogSection() {
           ${list.length === 0 ? `<div class="dd-empty">${state.incidents.length === 0 ? "No entries yet. Log the first discipline issue to start the record." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderIncidentDetail).join("")}</div>`}
         </div>
-        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save the last change. Check your connection and try again.</div>` : ""}
+        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
       </div>
       ${state.showNewForm ? renderNewForm() : ""}
@@ -1895,7 +1905,7 @@ function renderSuspensionSection() {
           ${list.length === 0 ? `<div class="dd-empty">${state.suspensions.length === 0 ? "No suspensions logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderSuspensionDetail).join("")}</div>`}
         </div>
-        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save the last change. Check your connection and try again.</div>` : ""}
+        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
       </div>
       ${state.showNewSuspForm ? renderSuspForm(false) : ""}
@@ -2180,7 +2190,7 @@ function renderParentMeetingSection() {
           ${list.length === 0 ? `<div class="dd-empty">${state.parentMeetings.length === 0 ? "No parent meetings logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderParentMeetingDetail).join("")}</div>`}
         </div>
-        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save the last change. Check your connection and try again.</div>` : ""}
+        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
       </div>
       ${state.showNewPmForm ? renderPmForm(false) : ""}
