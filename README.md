@@ -104,15 +104,18 @@ active counts, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
-**Monthly trend chart** — 11 months, shown as horizontal bar rows (one row
-per month, stacked vertically) rather than side-by-side vertical bars —
-this fits all 11 clearly on a phone screen with no scrolling or cramped
-bars. A scale row at the top and faint gridlines behind every bar (at
-0/25/50/75/100% of a rounded "nice" maximum, e.g. 5/10/20/50) make bars
-comparable at a glance, not just by their number label. Checkboxes toggle
-Discipline / Suspension / Parent Meeting in or out of the rows. Discipline
-counts by incident date, Suspension by start date, Parent Meeting by
-meeting date; deleted entries are excluded.
+**Monthly trend chart** — shown as horizontal bar rows (one row per month,
+stacked vertically) rather than side-by-side vertical bars, so any number
+of months stays readable on a phone screen with no cramped bars. **From**
+and **To** month dropdowns control exactly which months are shown (default
+is a 3-month window ending on the current month) — pick a narrower range
+to keep the list short, or a wider one to see further back. A scale row at
+the top and faint gridlines behind every bar (at 0/25/50/75/100% of a
+rounded "nice" maximum, e.g. 5/10/20/50) make bars comparable at a glance,
+not just by their number label. Checkboxes toggle Discipline / Suspension
+/ Parent Meeting in or out of the rows. Discipline counts by incident
+date, Suspension by start date, Parent Meeting by meeting date; deleted
+entries are excluded.
 
 **Status indicators are now traffic-light dots, not text pills** — a
 colored circle instead of a labeled badge, with the actual status as a
@@ -232,7 +235,7 @@ year's list or the dataset stops updating:
    → edit the `publicHolidays` array
 2. Or paste me the new list and I'll help build the updated document
 
-## Suspension workflow (v2.10 — unified entry, availability-aware booking)
+## Suspension workflow (v2.14 — unified entry, auto-derived in-school dates)
 
 Logging a suspension works as one flow instead of separate ISS/OSS
 records:
@@ -241,15 +244,24 @@ records:
 3. Pick how many are **in-school** vs **out-of-school** — these two
    dropdowns are linked, so setting one recalculates the other to always
    sum to the total
-4. Out-of-school dates default automatically to the next available school
-   days (no location concept, so nothing to book) — each has a small
-   calendar icon to override the date if needed
-5. In-school days are booked through a 14-school-day **availability
-   calendar**: each day shows General Office and MPR 1 (capacity 1 each)
-   as tappable chips — green "free," red "full" with who's occupying it.
-   Tap a chip to book that day + location; tap again to un-book. A full
-   location can still be booked — it's a warning, not a hard block, for
-   genuine emergencies. All in-school days must be booked before saving.
+4. **Out-of-school dates are the ones you choose** — they default to the
+   earliest available school days from the start date, each with a small
+   calendar icon to override to a specific date.
+5. **In-school dates are derived automatically**, not separately chosen:
+   whichever of the suspension's total school days aren't used for
+   out-of-school become the in-school days. Example: a 4-day suspension
+   starting 24 Aug, with out-of-school moved to 25 and 27 Aug, leaves 24
+   and 26 Aug as the in-school days — computed automatically the moment
+   the out-of-school dates are set or changed.
+6. Each in-school day still needs a **location** booked through the
+   availability list below it — every day shows "Pending Location" until
+   you tap **GO** or **MPR 1** (GO capacity 1, MPR 1 capacity 4) to assign
+   it. Chips show the count (e.g. `GO (0/1)`), turn green when free, and
+   show the occupying student's name (first 20 characters) once booked —
+   whether by this suspension or another one already on file. A full
+   location can still be tapped — it's a warning, not a hard block, for
+   genuine emergencies. All in-school days need a location booked before
+   saving.
 
 The whole thing saves as **one log entry**, regardless of how the ISS/OSS
 days are split or interleaved — this replaces the earlier "linked

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.13.0";
+const APP_VERSION = "2.14.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -330,6 +330,8 @@ const state = {
   holidays: null,
   section: "dashboard",
   showHelp: false,
+  chartFromMonth: lastNMonthKeys(3)[0],
+  chartToMonth: lastNMonthKeys(1)[0],
 
   incidents: [],
   dataLoaded: false,
@@ -541,7 +543,7 @@ function freshNewCaseDraft() {
 function newCaseStepValid(step, d) {
   if (step === "discipline") return !!(d.studentName.trim() && d.studentClass && d.issue.trim() && d.actionTaken.trim());
   if (step === "ask-suspension") return d.wantsSuspension !== null;
-  if (step === "suspension") return !!(d.suspDraft.reason.trim() && d.suspDraft.totalDays && d.suspDraft.issDays + d.suspDraft.ossDays === d.suspDraft.totalDays && d.suspDraft.issDates.length === d.suspDraft.issDays);
+  if (step === "suspension") return !!(d.suspDraft.reason.trim() && d.suspDraft.totalDays && d.suspDraft.issDays + d.suspDraft.ossDays === d.suspDraft.totalDays && d.suspDraft.issDates.every((dt) => d.suspDraft.issVenues[dt]));
   if (step === "ask-pm") return d.wantsPm !== null;
   if (step === "pm") return !!(d.pmDraft.attendees.length && d.pmDraft.reason.trim());
   return true;
@@ -553,7 +555,7 @@ function newCaseStepErrorMessage(step, d) {
     if (!d.suspDraft.reason.trim()) return "Enter a reason before continuing.";
     if (!d.suspDraft.totalDays) return "Choose the total number of days.";
     if (d.suspDraft.issDays + d.suspDraft.ossDays !== d.suspDraft.totalDays) return "In-school and out-of-school days must add up to the total.";
-    return `Book a location for all ${d.suspDraft.issDays} in-school day${d.suspDraft.issDays === 1 ? "" : "s"} before continuing (${d.suspDraft.issDates.length} booked so far).`;
+    return `Book a location for all ${d.suspDraft.issDays} in-school day${d.suspDraft.issDays === 1 ? "" : "s"} before continuing (${d.suspDraft.issDates.filter((dt) => d.suspDraft.issVenues[dt]).length} booked so far).`;
   }
   if (step === "ask-pm") return "Choose Yes or No.";
   if (step === "pm") {
@@ -853,19 +855,40 @@ function freshSuspDraft() {
 // OSS dates auto-fill from the start date (no location concept, so no need
 // for manual booking). ISS dates/locations are chosen entirely through the
 // availability calendar — this only resets them when the count changes.
+// OSS dates are chosen (default to the earliest school days from the start
+// date, each individually overridable). ISS dates are then *derived*
+// automatically: whichever of the suspension's total school days aren't
+// used for OSS. Only the ISS *location* needs manual booking below.
 function regenerateSuspDates(d) {
-  d.ossDates = d.ossDays > 0 ? schoolDayChain(d.startDate || todayISO(), d.ossDays) : [];
-  if (d.issDates.length > d.issDays) d.issDates = d.issDates.slice(0, d.issDays);
+  const total = d.totalDays || 0;
+  if (!total) { d.ossDates = []; d.issDates = []; d.issVenues = {}; return d; }
+  const startDate = d.startDate || todayISO();
+  const defaultOss = schoolDayChain(startDate, d.ossDays || 0);
+  if (!Array.isArray(d.ossDates)) d.ossDates = [];
+  if (d.ossDates.length > d.ossDays) d.ossDates = d.ossDates.slice(0, d.ossDays);
+  else if (d.ossDates.length < d.ossDays) {
+    for (let i = d.ossDates.length; i < d.ossDays; i++) d.ossDates.push(defaultOss[i]);
+  }
+  let pool = schoolDayChain(startDate, total);
+  const ossSet = new Set(d.ossDates);
+  let remaining = pool.filter((dt) => !ossSet.has(dt));
+  while (remaining.length < d.issDays) {
+    const next = nextSchoolDay(pool[pool.length - 1]);
+    pool.push(next);
+    if (!ossSet.has(next)) remaining.push(next);
+  }
+  d.issDates = remaining.slice(0, d.issDays);
+  const keptVenues = {};
+  d.issDates.forEach((dt) => { if (d.issVenues && d.issVenues[dt]) keptVenues[dt] = d.issVenues[dt]; });
+  d.issVenues = keptVenues;
   return d;
-}
-// The next N school days from the suspension's start date, used as the
-// availability calendar's booking window.
-function availabilityWindow(startDate, days = 14) {
-  return schoolDayChain(startDate || todayISO(), days);
 }
 // Who (if anyone) already occupies each location on a given date, excluding
 // the suspension currently being edited (so it doesn't block itself).
-const LOCATION_CAPACITY = { "General Office": 1, "MPR 1": 1 };
+const LOCATION_CAPACITY = { "General Office": 1, "MPR 1": 4 };
+function locationAbbrev(loc) { return loc === "General Office" ? "GO" : loc; }
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function weekdayName(iso) { return WEEKDAY_NAMES[weekdayOf(iso)]; }
 function locationOccupancyForDate(dateISO, excludeSuspensionId) {
   const occupants = {};
   LOCATION_OPTIONS.forEach((loc) => { occupants[loc] = []; });
@@ -895,8 +918,8 @@ async function submitNewSuspension(e) {
     render();
     return;
   }
-  if (d.issDates.length !== d.issDays) {
-    state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.length} booked so far).`;
+  if (!d.issDates.every((dt) => d.issVenues[dt])) {
+    state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.filter((dt) => d.issVenues[dt]).length} booked so far).`;
     render();
     return;
   }
@@ -981,8 +1004,8 @@ async function submitEditSuspension(e) {
     render();
     return;
   }
-  if (d.issDates.length !== d.issDays) {
-    state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.length} booked so far).`;
+  if (!d.issDates.every((dt) => d.issVenues[dt])) {
+    state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.filter((dt) => d.issVenues[dt]).length} booked so far).`;
     render();
     return;
   }
@@ -1166,7 +1189,7 @@ function renderNav() {
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg>
         </button>
       </div>
-      <div class="dd-header-inner">
+      <div class="dd-header-inner dd-header-title-row">
         <div>
           <div class="dd-header-title">Discipline Diary</div>
           <div class="dd-header-sub">Signed in as ${escapeHtml(teacherName())} · v${APP_VERSION}</div>
@@ -1232,8 +1255,34 @@ function lastNMonthKeys(n = 11) {
   }
   return out;
 }
+// All month keys (YYYY-MM) from `fromKey` to `toKey` inclusive.
+function monthKeysInRange(fromKey, toKey) {
+  const [fy, fm] = fromKey.split("-").map(Number);
+  const [ty, tm] = toKey.split("-").map(Number);
+  const out = [];
+  let y = fy, m = fm;
+  // Safety cap so a reversed or huge range can't runaway-loop.
+  let guard = 0;
+  while ((y < ty || (y === ty && m <= tm)) && guard < 240) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++; if (m > 12) { m = 1; y++; }
+    guard++;
+  }
+  return out.length ? out : [fromKey];
+}
+// Options for the From/To month dropdowns — 24 months back to 12 months
+// ahead of today, a generous span without being unbounded.
+function chartMonthOptionKeys() {
+  const out = [];
+  const now = new Date();
+  for (let i = -24; i <= 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
 function computeMonthlyTrend() {
-  const keys = lastNMonthKeys(11);
+  const keys = monthKeysInRange(state.chartFromMonth, state.chartToMonth);
   const counts = {};
   keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
@@ -1268,9 +1317,24 @@ function renderMonthlyChart() {
   const axisMax = niceAxisMax(rawMax);
   const pct = (v) => Math.max(v > 0 ? 3 : 0, Math.round((v / axisMax) * 100));
   const ticks = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map((n) => Math.round(n));
+  const monthOptions = chartMonthOptionKeys();
   return `
     <div class="dd-panel" style="margin-top:16px">
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Monthly trend</div>
+      <div class="dd-grid2" style="margin-bottom:12px">
+        <div>
+          <label class="dd-label" style="margin-top:0">From</label>
+          <select class="dd-input" id="chart-from-month">
+            ${monthOptions.map((k) => `<option value="${k}" ${state.chartFromMonth === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="dd-label" style="margin-top:0">To</label>
+          <select class="dd-input" id="chart-to-month">
+            ${monthOptions.map((k) => `<option value="${k}" ${state.chartToMonth === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
       <div class="dd-chart-toggles">
         <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-discipline" ${incl.discipline ? "checked" : ""} /><span style="color:${CHART_COLORS.discipline}">■ Discipline</span></label>
         <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-suspension" ${incl.suspension ? "checked" : ""} /><span style="color:${CHART_COLORS.suspension}">■ Suspension</span></label>
@@ -1433,9 +1497,9 @@ function renderDashboardSection() {
       ${renderNav()}
       <div class="dd-main">
         <div class="dd-new-entry-row">
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case">+ New Entry</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only">+ New Suspension Only</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only">+ New Meeting Only</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:0.68">+ New Entry</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1.32">+ New Suspension Only</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1.1">+ New Meeting Only</button>
         </div>
         <div class="dd-grid2" style="margin-bottom:16px">
           <div class="dd-panel" style="text-align:center">
@@ -1930,40 +1994,45 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
             </div>`).join("")}
         </div>` : ""}
 
-        ${showDatePickers && d.issDays > 0 ? `
-        <label class="dd-label" style="margin-top:12px">In-school days booked: ${d.issDates.length} of ${d.issDays}</label>
-        ${d.issDates.length ? `
+        ${showDatePickers && d.issDays > 0 ? (() => {
+          const bookedCount = d.issDates.filter((dt) => d.issVenues[dt]).length;
+          return `
+        <label class="dd-label" style="margin-top:12px">In-school days booked: ${bookedCount} of ${d.issDays}</label>
         <div style="margin-bottom:8px">
           ${d.issDates.slice().sort().map((dt) => `
             <div class="dd-venue-row">
               <span class="dd-venue-date">${formatDate(dt)}</span>
-              <span class="dd-sans" style="font-size:13px;flex:1">${escapeHtml(d.issVenues[dt] || "")}</span>
-              <button type="button" class="dd-followup-icon-btn" data-action="${idPrefix}-unbook-iss" data-date="${dt}" title="Remove this booking">✕</button>
+              <span class="dd-sans" style="font-size:13px;flex:1;${d.issVenues[dt] ? "" : "font-style:italic;color:#8A8571"}">${d.issVenues[dt] ? escapeHtml(d.issVenues[dt]) : "Pending Location"}</span>
+              ${d.issVenues[dt] ? `<button type="button" class="dd-followup-icon-btn" data-action="${idPrefix}-unbook-iss" data-date="${dt}" title="Remove this booking">✕</button>` : ""}
             </div>`).join("")}
-        </div>` : ""}
+        </div>
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin:10px 0 6px">Tap a day and location to book it</div>
         <div class="dd-avail-list">
-          ${availabilityWindow(d.startDate).map((dt) => {
-            const alreadyBooked = d.issDates.includes(dt);
+          ${d.issDates.slice().sort().map((dt) => {
             const occ = locationOccupancyForDate(dt, excludeSuspensionId);
             return `
             <div class="dd-avail-row">
-              <div class="dd-avail-date">${formatDate(dt)}</div>
+              <div class="dd-avail-date">${formatDate(dt)}<div class="dd-avail-weekday">${weekdayName(dt)}</div></div>
               <div class="dd-avail-chips">
                 ${occ.map((o) => {
-                  const isThisBooking = d.issVenues[dt] === o.location && alreadyBooked;
-                  const full = o.remaining <= 0 && !isThisBooking;
-                  const disableNew = alreadyBooked && !isThisBooking; // this day already booked to a different location by this suspension
-                  return `<button type="button" class="dd-avail-chip ${isThisBooking ? "dd-avail-chip-selected" : full ? "dd-avail-chip-full" : "dd-avail-chip-free"}"
-                    data-action="${idPrefix}-book-iss" data-date="${dt}" data-location="${o.location}" ${disableNew && !isThisBooking ? "disabled" : ""}>
-                    ${o.location}${isThisBooking ? " ✓" : full ? ` — full (${escapeHtml(o.occupants.join(", "))})` : " — free"}
+                  const isThisBooking = d.issVenues[dt] === o.location;
+                  let occupants = o.occupants.slice();
+                  if (isThisBooking) occupants = [...occupants, d.studentName || "This student"];
+                  const full = occupants.length >= o.capacity && !isThisBooking;
+                  const cls = isThisBooking ? "dd-avail-chip-selected" : full ? "dd-avail-chip-full" : "dd-avail-chip-free";
+                  const namesLine = occupants.length ? occupants.map((n) => truncateName(n, 20)).join(", ") : "";
+                  return `<button type="button" class="dd-avail-chip ${cls}"
+                    data-action="${idPrefix}-book-iss" data-date="${dt}" data-location="${o.location}">
+                    <div class="dd-avail-chip-label">${locationAbbrev(o.location)} (${occupants.length}/${o.capacity})${isThisBooking ? " ✓" : ""}</div>
+                    ${namesLine ? `<div class="dd-avail-chip-names">${escapeHtml(namesLine)}</div>` : ""}
                   </button>`;
                 }).join("")}
               </div>
             </div>`;
           }).join("")}
         </div>
-        <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">A location marked "full" can still be booked if needed — it's a warning, not a hard block.</div>` : ""}`;
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">A location marked "full" can still be booked if needed — it's a warning, not a hard block.</div>`;
+        })() : ""}`;
 }
 function attachSuspFieldListeners(form, idPrefix, d, onChange) {
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
@@ -1994,35 +2063,22 @@ function attachSuspFieldListeners(form, idPrefix, d, onChange) {
   });
 
   form.querySelectorAll(`.${idPrefix}-oss-date-input`).forEach((el) =>
-    el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; onChange(); }));
+    el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; regenerateSuspDates(d); onChange(); }));
 
-  // Availability calendar: tap a location on a day to book it (replacing
-  // any existing booking for that day), or tap the ✕ to remove one.
+  // Availability: tap a location to book it for that (fixed) in-school day,
+  // tap the same location again to clear it back to "Pending Location".
   form.querySelectorAll(`[data-action="${idPrefix}-book-iss"]`).forEach((el) =>
     el.addEventListener("click", () => {
       const date = el.dataset.date;
       const location = el.dataset.location;
-      const alreadyThisBooking = d.issVenues[date] === location && d.issDates.includes(date);
-      if (alreadyThisBooking) {
-        d.issDates = d.issDates.filter((dt) => dt !== date);
-        delete d.issVenues[date];
-      } else if (!d.issDates.includes(date) && d.issDates.length >= d.issDays) {
-        // all slots already filled — ignore until one is freed up
-      } else {
-        if (!d.issDates.includes(date)) d.issDates.push(date);
-        d.issVenues[date] = location;
-      }
+      if (d.issVenues[date] === location) delete d.issVenues[date];
+      else d.issVenues[date] = location;
       if (idPrefix === "susp") state.suspFormError = "";
       if (idPrefix === "case-susp") state.caseFormError = "";
       onChange();
     }));
   form.querySelectorAll(`[data-action="${idPrefix}-unbook-iss"]`).forEach((el) =>
-    el.addEventListener("click", () => {
-      const date = el.dataset.date;
-      d.issDates = d.issDates.filter((dt) => dt !== date);
-      delete d.issVenues[date];
-      onChange();
-    }));
+    el.addEventListener("click", () => { delete d.issVenues[el.dataset.date]; onChange(); }));
 }
 function renderSuspForm(isEdit) {
   const d = state._suspDraft;
@@ -2236,6 +2292,11 @@ function attachDashboardListeners() {
   toggle("chart-toggle-discipline", "chartIncludeDiscipline");
   toggle("chart-toggle-suspension", "chartIncludeSuspension");
   toggle("chart-toggle-pm", "chartIncludeParentMeeting");
+
+  const fromSel = document.getElementById("chart-from-month");
+  if (fromSel) fromSel.addEventListener("change", () => { state.chartFromMonth = fromSel.value; render(); });
+  const toSel = document.getElementById("chart-to-month");
+  if (toSel) toSel.addEventListener("change", () => { state.chartToMonth = toSel.value; render(); });
 
   const newCaseBtn = document.getElementById("btn-new-case");
   if (newCaseBtn) newCaseBtn.addEventListener("click", () => {
