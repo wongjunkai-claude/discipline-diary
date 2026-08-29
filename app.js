@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.14.0";
+const APP_VERSION = "2.14.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2020,11 +2020,11 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
                   if (isThisBooking) occupants = [...occupants, d.studentName || "This student"];
                   const full = occupants.length >= o.capacity && !isThisBooking;
                   const cls = isThisBooking ? "dd-avail-chip-selected" : full ? "dd-avail-chip-full" : "dd-avail-chip-free";
-                  const namesLine = occupants.length ? occupants.map((n) => truncateName(n, 20)).join(", ") : "";
+                  const namesHtml = occupants.length ? `<div class="dd-avail-chip-names">${occupants.map((n) => `<div>${escapeHtml(truncateName(n, 20))}</div>`).join("")}</div>` : "";
                   return `<button type="button" class="dd-avail-chip ${cls}"
                     data-action="${idPrefix}-book-iss" data-date="${dt}" data-location="${o.location}">
                     <div class="dd-avail-chip-label">${locationAbbrev(o.location)} (${occupants.length}/${o.capacity})${isThisBooking ? " ✓" : ""}</div>
-                    ${namesLine ? `<div class="dd-avail-chip-names">${escapeHtml(namesLine)}</div>` : ""}
+                    ${namesHtml}
                   </button>`;
                 }).join("")}
               </div>
