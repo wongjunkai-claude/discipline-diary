@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.14.4";
+const APP_VERSION = "2.14.5";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1402,7 +1402,7 @@ function renderNewCaseStepBody(step, d) {
       <select class="dd-input" id="case-student-class" required>${classOptionsHtml(d.studentClass)}</select>
       <label class="dd-label">Date</label>
       <input class="dd-input" type="date" id="case-date" required value="${d.date}" />
-      <label class="dd-label">Issue</label>
+      <label class="dd-label">Issue <span style="color:#A3372B">*</span></label>
       <textarea class="dd-textarea dd-input" id="case-issue" rows="3" required placeholder="What happened?">${escapeHtml(d.issue)}</textarea>
       <label class="dd-label">Action taken <span style="color:#A3372B">*</span></label>
       <textarea class="dd-textarea dd-input" id="case-action-taken" rows="2" required placeholder="What was done in response?">${escapeHtml(d.actionTaken)}</textarea>
@@ -1462,6 +1462,7 @@ function renderNewCaseStepBody(step, d) {
       ${d.wantsSuspension ? `<li>Suspension — ${d.suspDraft.totalDays} day${d.suspDraft.totalDays > 1 ? "s" : ""} (${d.suspDraft.ossDays} out-of-school, ${d.suspDraft.issDays} in-school)</li>` : ""}
       ${d.wantsPm ? `<li>Parent Meeting — ${escapeHtml(formatAttendeesForSheet(d.pmDraft.attendees, d.pmDraft.othersText))}</li>` : ""}
     </ul>
+    ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
     ${renderNewCaseNav("submit", d)}`;
 }
 function renderNewCaseNav(step, d) {
@@ -1795,7 +1796,7 @@ function renderNewForm() {
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
         <label class="dd-label">Date</label>
         <input class="dd-input" type="date" name="date" required value="${d.date}" />
-        <label class="dd-label">Issue</label>
+        <label class="dd-label">Issue <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="issue" rows="3" required placeholder="What happened?">${escapeHtml(d.issue)}</textarea>
         <label class="dd-label">Action taken <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="actionTaken" rows="2" required placeholder="What was done in response?">${escapeHtml(d.actionTaken)}</textarea>
@@ -1820,7 +1821,7 @@ function renderEditIncidentForm() {
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(it.studentClass || "")}</select>
         <label class="dd-label">Date</label>
         <input class="dd-input" type="date" name="date" required value="${it.date}" />
-        <label class="dd-label">Issue</label>
+        <label class="dd-label">Issue <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="issue" rows="3" required>${escapeHtml(it.issue)}</textarea>
         <label class="dd-label">Action taken <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="actionTaken" rows="2" required>${escapeHtml(it.actionTaken || "")}</textarea>
@@ -2121,6 +2122,7 @@ function renderSuspForm(isEdit) {
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
         ${renderSuspFieldsBody(d, "susp", state.editingSuspensionId)}
         ${state.suspFormError ? `<div class="dd-error">${escapeHtml(state.suspFormError)}</div>` : ""}
+        ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save suspension"}</button>
       </form>
@@ -2274,6 +2276,7 @@ function renderPmForm(isEdit) {
         <input class="dd-input" type="date" name="date" required value="${d.date}" />
         <label class="dd-label">Reason for meeting <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="reason" rows="3" required>${escapeHtml(d.reason)}</textarea>
+        ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save meeting"}</button>
       </form>
     </div>`;
