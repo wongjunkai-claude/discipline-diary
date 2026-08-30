@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.14.5";
+const APP_VERSION = "2.15.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2625,5 +2625,79 @@ function attachPmFormModalListeners() {
     if (othersEl) othersEl.addEventListener("input", () => { state._pmDraft.othersText = othersEl.value; });
   }
 }
+
+// ---------- Pull-to-refresh ----------
+// Installed as a standalone PWA (added to Home Screen), the browser's own
+// pull-to-refresh gesture doesn't exist — that's a browser-chrome feature
+// tied to the address bar, which standalone mode hides. This adds a simple
+// custom one. Refreshing also clears the service worker's cache first, so
+// it reliably fetches the actual latest deployed version, rather than
+// re-showing whatever the cache already had (the same reason "clear site
+// data" has been the manual fix for stale versions up to now).
+function setupPullToRefresh() {
+  const indicator = document.createElement("div");
+  indicator.id = "pull-refresh-indicator";
+  indicator.innerHTML = `<span id="pull-refresh-text">↓ Pull to refresh</span>`;
+  document.body.appendChild(indicator);
+
+  const THRESHOLD = 70;
+  const MAX_PULL = 120;
+  let startY = null;
+  let pulling = false;
+
+  document.addEventListener("touchstart", (e) => {
+    if (window.scrollY <= 0) {
+      startY = e.touches[0].clientY;
+      pulling = true;
+      indicator.style.transition = "none";
+    } else {
+      startY = null;
+      pulling = false;
+    }
+  }, { passive: true });
+
+  document.addEventListener("touchmove", (e) => {
+    if (!pulling || startY === null) return;
+    const delta = e.touches[0].clientY - startY;
+    if (delta > 0 && window.scrollY <= 0) {
+      const pull = Math.min(delta, MAX_PULL);
+      indicator.style.transform = `translateY(${pull - 50}px)`;
+      indicator.style.opacity = Math.min(pull / THRESHOLD, 1);
+      document.getElementById("pull-refresh-text").textContent = pull > THRESHOLD ? "↑ Release to refresh" : "↓ Pull to refresh";
+    }
+  }, { passive: true });
+
+  document.addEventListener("touchend", () => {
+    if (!pulling || startY === null) return;
+    const match = /translateY\(([-\d.]+)px\)/.exec(indicator.style.transform || "");
+    const pull = match ? parseFloat(match[1]) + 50 : 0;
+    indicator.style.transition = "transform 0.2s ease, opacity 0.2s ease";
+    if (pull > THRESHOLD) {
+      document.getElementById("pull-refresh-text").textContent = "Refreshing…";
+      indicator.style.transform = "translateY(10px)";
+      indicator.style.opacity = 1;
+      forceRefreshApp();
+    } else {
+      indicator.style.transform = "translateY(-50px)";
+      indicator.style.opacity = 0;
+    }
+    startY = null;
+    pulling = false;
+  });
+}
+async function forceRefreshApp() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) await reg.unregister();
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (e) { /* ignore — reload regardless */ }
+  window.location.reload();
+}
+setupPullToRefresh();
 
 render();

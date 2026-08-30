@@ -383,6 +383,21 @@ boundary. Real security here would need Firestore rules keyed to something
 the client can't see or fake (e.g. real per-teacher accounts with roles),
 which is a bigger step up from this project's current design.
 
+## Pull-to-refresh
+
+Once added to the Home Screen, the app runs in "standalone" mode, which
+hides the browser's address bar — and with it, the browser's own
+pull-to-refresh gesture, since that's tied to the address bar rather than
+the page itself. This adds a custom one: pull down from the very top of
+any screen and release to refresh.
+
+It does more than a plain reload — it also unregisters the service worker
+and clears its cache first, so it reliably fetches whatever's actually
+live on GitHub Pages right now. This is the same fix that "clear site
+data" has been standing in for after every update; pulling to refresh
+should now do the same thing in one gesture, without digging through
+Settings.
+
 ## Data safety / backups
 
 Two layers of protection, on top of the delete-blocking rule above:
