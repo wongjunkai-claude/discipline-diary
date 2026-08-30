@@ -258,6 +258,21 @@ input[type="date"].dd-input, input[type="number"].dd-input {
   position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
   display: flex; align-items: center; justify-content: center;
   height: 44px; background: #1B2A41; color: #F2EFE6;
-  font-family: 'IBM Plex Mono', monospace; font-size: 12px;
   transform: translateY(-50px); opacity: 0; pointer-events: none;
 }
+@keyframes dd-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.dd-cal-counters { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.dd-cal-counter { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #1B2A41; }
+.dd-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 4px; }
+.dd-cal-weekdays div { text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8A8571; }
+.dd-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.dd-cal-cell {
+  aspect-ratio: 1; border: 1px solid #E4E1D4; border-radius: 3px; background: #fff;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2px; min-width: 0;
+}
+.dd-cal-cell-empty { border: none; background: transparent; }
+.dd-cal-today { border-color: #1B2A41; border-width: 2px; }
+.dd-cal-daynum { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #1B2A41; }
+.dd-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
+.dd-cal-dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }

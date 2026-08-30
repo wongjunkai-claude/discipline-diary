@@ -104,18 +104,32 @@ active counts, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
-**Monthly trend chart** — shown as horizontal bar rows (one row per month,
-stacked vertically) rather than side-by-side vertical bars, so any number
-of months stays readable on a phone screen with no cramped bars. **From**
-and **To** month dropdowns control exactly which months are shown (default
-is a 3-month window ending on the current month) — pick a narrower range
-to keep the list short, or a wider one to see further back. A scale row at
-the top and faint gridlines behind every bar (at 0/25/50/75/100% of a
-rounded "nice" maximum, e.g. 5/10/20/50) make bars comparable at a glance,
-not just by their number label. Checkboxes toggle Discipline / Suspension
-/ Parent Meeting in or out of the rows. Discipline counts by incident
-date, Suspension by start date, Parent Meeting by meeting date; deleted
-entries are excluded.
+**Trend view** — one dropdown picks how it displays: **This Month**,
+**3 Months**, **6 Months**, **9 Months**, **This Year**, or **Custom**.
+
+- **This Month** shows an actual calendar grid for the current month, with
+  a small colored dot per category on any day that had activity, plus a
+  count total for each category above it. A suspension shows on every day
+  it actually covers (not just its start date).
+- **3 / 6 / 9 Months / This Year** show the horizontal bar-row chart (one
+  row per month) with a total count for each category above the graph.
+  "3 Months" is the past 2 months plus the current one, "6 Months" the
+  past 5 plus current, "9 Months" the past 8 plus current, and "This Year"
+  is all 12 months of the current calendar year (Jan-Dec) regardless of
+  today's date.
+- **Custom** opens a small popup with From/To month pickers (spanning 24
+  months back to 12 months ahead) — pick any range and it shows the same
+  bar-row chart for exactly those months. Choosing Custom again later
+  reopens the popup pre-filled with whatever range was last picked.
+
+The bar-row views all share a scale row and faint gridlines behind every
+bar (at 0/25/50/75/100% of a rounded "nice" maximum) so bars are
+comparable at a glance. Checkboxes toggle Discipline / Suspension /
+Parent Meeting in or out of both the graph and its totals.
+
+Discipline counts by incident date, Suspension by start date (by actual
+day for the calendar view), Parent Meeting by meeting date; deleted
+entries are excluded throughout.
 
 **Status indicators are now traffic-light dots, not text pills** — a
 colored circle instead of a labeled badge, with the actual status as a

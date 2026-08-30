@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.15.0";
+const APP_VERSION = "2.17.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -330,8 +330,10 @@ const state = {
   holidays: null,
   section: "dashboard",
   showHelp: false,
-  chartFromMonth: lastNMonthKeys(3)[0],
-  chartToMonth: lastNMonthKeys(1)[0],
+  chartRangeMode: "thisMonth",
+  chartCustomFrom: lastNMonthKeys(3)[0],
+  chartCustomTo: lastNMonthKeys(1)[0],
+  showChartCustomModal: false,
 
   incidents: [],
   dataLoaded: false,
@@ -1265,13 +1267,40 @@ function lastNMonthKeys(n = 11) {
   return out;
 }
 // All month keys (YYYY-MM) from `fromKey` to `toKey` inclusive.
+// All days of a given YYYY-MM month, each with per-category counts.
+// Suspension counts by actual day (from suspensionDayEntries), not just
+// the start date, so a multi-day suspension shows on every day it covers.
+function computeDailyCountsForMonth(monthKeyStr) {
+  const [y, m] = monthKeyStr.split("-").map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const counts = {};
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
+    counts[iso] = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  }
+  state.incidents.forEach((i) => { if (i.deleted) return; if (counts[i.date]) counts[i.date].discipline++; });
+  state.suspensions.forEach((s) => {
+    if (s.deleted) return;
+    suspensionDayEntries(s).forEach((e) => { if (counts[e.date]) counts[e.date].suspension++; });
+  });
+  state.parentMeetings.forEach((m) => { if (m.deleted) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
+  return counts;
+}
+function currentMonthKeyStr() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+function currentYearMonthKeys() {
+  const y = new Date().getFullYear();
+  return Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, "0")}`);
+}
+// All month keys (YYYY-MM) from `fromKey` to `toKey` inclusive.
 function monthKeysInRange(fromKey, toKey) {
   const [fy, fm] = fromKey.split("-").map(Number);
   const [ty, tm] = toKey.split("-").map(Number);
   const out = [];
   let y = fy, m = fm;
-  // Safety cap so a reversed or huge range can't runaway-loop.
-  let guard = 0;
+  let guard = 0; // safety cap so a reversed range can't runaway-loop
   while ((y < ty || (y === ty && m <= tm)) && guard < 240) {
     out.push(`${y}-${String(m).padStart(2, "0")}`);
     m++; if (m > 12) { m = 1; y++; }
@@ -1279,8 +1308,8 @@ function monthKeysInRange(fromKey, toKey) {
   }
   return out.length ? out : [fromKey];
 }
-// Options for the From/To month dropdowns — 24 months back to 12 months
-// ahead of today, a generous span without being unbounded.
+// Options for the custom range's From/To dropdowns — 24 months back to 12
+// months ahead of today, a generous span without being unbounded.
 function chartMonthOptionKeys() {
   const out = [];
   const now = new Date();
@@ -1290,8 +1319,18 @@ function chartMonthOptionKeys() {
   }
   return out;
 }
+function chartRangeKeys() {
+  switch (state.chartRangeMode) {
+    case "3months": return lastNMonthKeys(3);
+    case "6months": return lastNMonthKeys(6);
+    case "9months": return lastNMonthKeys(9);
+    case "thisYear": return currentYearMonthKeys();
+    case "custom": return monthKeysInRange(state.chartCustomFrom, state.chartCustomTo);
+    default: return lastNMonthKeys(3);
+  }
+}
 function computeMonthlyTrend() {
-  const keys = monthKeysInRange(state.chartFromMonth, state.chartToMonth);
+  const keys = chartRangeKeys();
   const counts = {};
   keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
@@ -1311,13 +1350,90 @@ function niceAxisMax(v) {
   else niceResidual = 10;
   return niceResidual * magnitude;
 }
+const CHART_RANGE_OPTIONS = [
+  { key: "thisMonth", label: "This Month" },
+  { key: "3months", label: "3 Months" },
+  { key: "6months", label: "6 Months" },
+  { key: "9months", label: "9 Months" },
+  { key: "thisYear", label: "This Year" },
+  { key: "custom", label: "Custom…" },
+];
+function renderMonthCalendar(monthKeyStr) {
+  const [y, m] = monthKeyStr.split("-").map(Number);
+  const daily = computeDailyCountsForMonth(monthKeyStr);
+  const firstDow = weekdayOf(`${monthKeyStr}-01`);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  Object.values(daily).forEach((c) => { totals.discipline += c.discipline; totals.suspension += c.suspension; totals.parentMeeting += c.parentMeeting; });
+  const today = todayISO();
+
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
+    const c = daily[iso];
+    const dots = [];
+    if (c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
+    if (c.suspension > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspension} suspension"></span>`);
+    if (c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
+    cells.push(`<div class="dd-cal-cell ${iso === today ? "dd-cal-today" : ""}"><div class="dd-cal-daynum">${d}</div><div class="dd-cal-dots">${dots.join("")}</div></div>`);
+  }
+  return `
+    <div class="dd-cal-counters">
+      <div class="dd-cal-counter"><span style="color:${CHART_COLORS.discipline}">■</span> Discipline: ${totals.discipline}</div>
+      <div class="dd-cal-counter"><span style="color:${CHART_COLORS.suspension}">■</span> Suspension: ${totals.suspension}</div>
+      <div class="dd-cal-counter"><span style="color:${CHART_COLORS.parentMeeting}">■</span> Parent Meeting: ${totals.parentMeeting}</div>
+    </div>
+    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    <div class="dd-cal-grid">${cells.join("")}</div>`;
+}
+function renderChartCustomModal() {
+  const monthOptions = chartMonthOptionKeys();
+  return `
+    <div class="dd-modal-backdrop" id="chart-custom-modal-backdrop">
+      <div class="dd-modal" id="chart-custom-modal">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Custom range</div>
+          <button type="button" class="dd-modal-close" id="chart-custom-modal-close">✕</button>
+        </div>
+        <label class="dd-label" style="margin-top:0">From</label>
+        <select class="dd-input" id="chart-custom-from">
+          ${monthOptions.map((k) => `<option value="${k}" ${state.chartCustomFrom === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
+        </select>
+        <label class="dd-label">To</label>
+        <select class="dd-input" id="chart-custom-to">
+          ${monthOptions.map((k) => `<option value="${k}" ${state.chartCustomTo === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
+        </select>
+        <button class="dd-btn-primary" type="button" id="chart-custom-apply">Apply</button>
+      </div>
+    </div>`;
+}
 function renderMonthlyChart() {
-  const data = computeMonthlyTrend();
+  const rangeMode = state.chartRangeMode || "thisMonth";
   const incl = {
     discipline: state.chartIncludeDiscipline !== false,
     suspension: state.chartIncludeSuspension !== false,
     parentMeeting: state.chartIncludeParentMeeting !== false,
   };
+  const rangeSelectorHtml = `
+    <div style="margin-bottom:14px;max-width:220px">
+      <label class="dd-label" style="margin-top:0">View</label>
+      <select class="dd-input" id="chart-range-mode">
+        ${CHART_RANGE_OPTIONS.map((o) => `<option value="${o.key}" ${rangeMode === o.key ? "selected" : ""}>${o.label}</option>`).join("")}
+      </select>
+    </div>`;
+
+  if (rangeMode === "thisMonth") {
+    return `
+    <div class="dd-panel" style="margin-top:16px">
+      <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Trend</div>
+      ${rangeSelectorHtml}
+      ${renderMonthCalendar(currentMonthKeyStr())}
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
+  }
+
+  const data = computeMonthlyTrend();
   const cats = [];
   if (incl.discipline) cats.push({ key: "discipline", label: "Discipline" });
   if (incl.suspension) cats.push({ key: "suspension", label: "Suspension" });
@@ -1326,23 +1442,17 @@ function renderMonthlyChart() {
   const axisMax = niceAxisMax(rawMax);
   const pct = (v) => Math.max(v > 0 ? 3 : 0, Math.round((v / axisMax) * 100));
   const ticks = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map((n) => Math.round(n));
-  const monthOptions = chartMonthOptionKeys();
+  const rangeTotals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  data.forEach((d) => { rangeTotals.discipline += d.discipline; rangeTotals.suspension += d.suspension; rangeTotals.parentMeeting += d.parentMeeting; });
+
   return `
     <div class="dd-panel" style="margin-top:16px">
-      <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Monthly trend</div>
-      <div class="dd-grid2" style="margin-bottom:12px">
-        <div>
-          <label class="dd-label" style="margin-top:0">From</label>
-          <select class="dd-input" id="chart-from-month">
-            ${monthOptions.map((k) => `<option value="${k}" ${state.chartFromMonth === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
-          </select>
-        </div>
-        <div>
-          <label class="dd-label" style="margin-top:0">To</label>
-          <select class="dd-input" id="chart-to-month">
-            ${monthOptions.map((k) => `<option value="${k}" ${state.chartToMonth === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
-          </select>
-        </div>
+      <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Trend</div>
+      ${rangeSelectorHtml}
+      <div class="dd-cal-counters" style="margin-bottom:12px">
+        ${incl.discipline ? `<div class="dd-cal-counter"><span style="color:${CHART_COLORS.discipline}">■</span> Discipline: ${rangeTotals.discipline}</div>` : ""}
+        ${incl.suspension ? `<div class="dd-cal-counter"><span style="color:${CHART_COLORS.suspension}">■</span> Suspension: ${rangeTotals.suspension}</div>` : ""}
+        ${incl.parentMeeting ? `<div class="dd-cal-counter"><span style="color:${CHART_COLORS.parentMeeting}">■</span> Parent Meeting: ${rangeTotals.parentMeeting}</div>` : ""}
       </div>
       <div class="dd-chart-toggles">
         <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-discipline" ${incl.discipline ? "checked" : ""} /><span style="color:${CHART_COLORS.discipline}">■ Discipline</span></label>
@@ -1374,7 +1484,8 @@ function renderMonthlyChart() {
           </div>`;
         }).join("")}
       </div>
-    </div>`;
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
 }
 
 // ---------- New Case wizard rendering ----------
@@ -2322,10 +2433,27 @@ function attachDashboardListeners() {
   toggle("chart-toggle-suspension", "chartIncludeSuspension");
   toggle("chart-toggle-pm", "chartIncludeParentMeeting");
 
-  const fromSel = document.getElementById("chart-from-month");
-  if (fromSel) fromSel.addEventListener("change", () => { state.chartFromMonth = fromSel.value; render(); });
-  const toSel = document.getElementById("chart-to-month");
-  if (toSel) toSel.addEventListener("change", () => { state.chartToMonth = toSel.value; render(); });
+  const rangeSel = document.getElementById("chart-range-mode");
+  if (rangeSel) rangeSel.addEventListener("change", () => {
+    state.chartRangeMode = rangeSel.value;
+    if (rangeSel.value === "custom") state.showChartCustomModal = true;
+    render();
+  });
+
+  const closeCustomModal = () => { state.showChartCustomModal = false; render(); };
+  const customModalClose = document.getElementById("chart-custom-modal-close");
+  if (customModalClose) customModalClose.addEventListener("click", closeCustomModal);
+  const customModalBackdrop = document.getElementById("chart-custom-modal-backdrop");
+  if (customModalBackdrop) customModalBackdrop.addEventListener("click", (e) => { if (e.target.id === "chart-custom-modal-backdrop") closeCustomModal(); });
+  const customApplyBtn = document.getElementById("chart-custom-apply");
+  if (customApplyBtn) customApplyBtn.addEventListener("click", () => {
+    const fromSel = document.getElementById("chart-custom-from");
+    const toSel = document.getElementById("chart-custom-to");
+    if (fromSel) state.chartCustomFrom = fromSel.value;
+    if (toSel) state.chartCustomTo = toSel.value;
+    state.showChartCustomModal = false;
+    render();
+  });
 
   const newCaseBtn = document.getElementById("btn-new-case");
   if (newCaseBtn) newCaseBtn.addEventListener("click", () => {
@@ -2635,10 +2763,14 @@ function attachPmFormModalListeners() {
 // re-showing whatever the cache already had (the same reason "clear site
 // data" has been the manual fix for stale versions up to now).
 function setupPullToRefresh() {
+  const spokes = Array.from({ length: 8 }, (_, i) =>
+    `<line x1="12" y1="4" x2="12" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="${(1 - i * 0.11).toFixed(2)}" transform="rotate(${i * 45} 12 12)"></line>`
+  ).join("");
   const indicator = document.createElement("div");
   indicator.id = "pull-refresh-indicator";
-  indicator.innerHTML = `<span id="pull-refresh-text">↓ Pull to refresh</span>`;
+  indicator.innerHTML = `<svg id="pull-refresh-spinner" width="26" height="26" viewBox="0 0 24 24">${spokes}</svg>`;
   document.body.appendChild(indicator);
+  const spinner = indicator.querySelector("#pull-refresh-spinner");
 
   const THRESHOLD = 70;
   const MAX_PULL = 120;
@@ -2650,6 +2782,7 @@ function setupPullToRefresh() {
       startY = e.touches[0].clientY;
       pulling = true;
       indicator.style.transition = "none";
+      spinner.style.animation = "none";
     } else {
       startY = null;
       pulling = false;
@@ -2663,7 +2796,8 @@ function setupPullToRefresh() {
       const pull = Math.min(delta, MAX_PULL);
       indicator.style.transform = `translateY(${pull - 50}px)`;
       indicator.style.opacity = Math.min(pull / THRESHOLD, 1);
-      document.getElementById("pull-refresh-text").textContent = pull > THRESHOLD ? "↑ Release to refresh" : "↓ Pull to refresh";
+      // Spinner rotates along with the pull itself (like iOS) until released.
+      spinner.style.transform = `rotate(${(pull / THRESHOLD) * 360}deg)`;
     }
   }, { passive: true });
 
@@ -2673,9 +2807,10 @@ function setupPullToRefresh() {
     const pull = match ? parseFloat(match[1]) + 50 : 0;
     indicator.style.transition = "transform 0.2s ease, opacity 0.2s ease";
     if (pull > THRESHOLD) {
-      document.getElementById("pull-refresh-text").textContent = "Refreshing…";
       indicator.style.transform = "translateY(10px)";
       indicator.style.opacity = 1;
+      spinner.style.transform = "";
+      spinner.style.animation = "dd-spin 0.8s linear infinite";
       forceRefreshApp();
     } else {
       indicator.style.transform = "translateY(-50px)";
