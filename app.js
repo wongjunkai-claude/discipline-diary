@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.17.0";
+const APP_VERSION = "2.17.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2782,7 +2782,7 @@ function setupPullToRefresh() {
       startY = e.touches[0].clientY;
       pulling = true;
       indicator.style.transition = "none";
-      spinner.style.animation = "none";
+      spinner.style.animation = "dd-spin 0.8s linear infinite";
     } else {
       startY = null;
       pulling = false;
@@ -2796,8 +2796,6 @@ function setupPullToRefresh() {
       const pull = Math.min(delta, MAX_PULL);
       indicator.style.transform = `translateY(${pull - 50}px)`;
       indicator.style.opacity = Math.min(pull / THRESHOLD, 1);
-      // Spinner rotates along with the pull itself (like iOS) until released.
-      spinner.style.transform = `rotate(${(pull / THRESHOLD) * 360}deg)`;
     }
   }, { passive: true });
 
@@ -2809,12 +2807,11 @@ function setupPullToRefresh() {
     if (pull > THRESHOLD) {
       indicator.style.transform = "translateY(10px)";
       indicator.style.opacity = 1;
-      spinner.style.transform = "";
-      spinner.style.animation = "dd-spin 0.8s linear infinite";
       forceRefreshApp();
     } else {
       indicator.style.transform = "translateY(-50px)";
       indicator.style.opacity = 0;
+      spinner.style.animation = "none";
     }
     startY = null;
     pulling = false;

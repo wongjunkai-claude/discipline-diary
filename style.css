@@ -257,7 +257,7 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 #pull-refresh-indicator {
   position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
   display: flex; align-items: center; justify-content: center;
-  height: 44px; background: #1B2A41; color: #F2EFE6;
+  height: 44px; background: transparent; color: #1B2A41;
   transform: translateY(-50px); opacity: 0; pointer-events: none;
 }
 @keyframes dd-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
