@@ -105,21 +105,25 @@ today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
 **Trend view** — a row of tappable pills picks how it displays: **This
-Month**, **3 Months**, **6 Months**, **9 Months**, **This Year**, or
-**Custom** (no dropdown to open, just tap).
+Month**, **3M**, **6M**, **9M**, **This Year**, or **Custom** — all six fit
+on one line (no dropdown to open, just tap).
 
-Below the pills, checkboxes let you pick which of Discipline / Suspension
-/ Parent Meeting to include (all three by default) — this affects
+Below the pills, a **"Show…"** box holds three buttons — Discipline,
+Suspension, Parent Meeting — filled with that category's color when
+active, greyed out when off (all three on by default). This affects
 everything below it: the tally, the calendar dots, and the bar chart all
 update together. Then comes the **tally**: one column per selected
 category, each showing its label and a large total for exactly the period
 currently selected — deselect a category and its column disappears rather
 than showing a zero.
 
+Suspensions count **by entry** everywhere (a 5-day suspension counts as 1,
+not 5), consistent across the calendar view and every bar-graph range —
+attributed to its start date.
+
 - **This Month** shows an actual calendar grid for the current month below
   the tally, with a small colored dot per selected category on any day
-  that had activity. A suspension shows on every day it actually covers
-  (not just its start date).
+  that had activity — a suspension gets one dot, on its start date.
 - **3 / 6 / 9 Months / This Year** show the horizontal bar-row chart (one
   row per month) below the tally. "3 Months" is the past 2 months plus the
   current one, "6 Months" the past 5 plus current, "9 Months" the past 8

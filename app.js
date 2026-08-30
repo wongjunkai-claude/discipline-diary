@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.18.0";
+const APP_VERSION = "2.19.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1279,10 +1279,7 @@ function computeDailyCountsForMonth(monthKeyStr) {
     counts[iso] = { discipline: 0, suspension: 0, parentMeeting: 0 };
   }
   state.incidents.forEach((i) => { if (i.deleted) return; if (counts[i.date]) counts[i.date].discipline++; });
-  state.suspensions.forEach((s) => {
-    if (s.deleted) return;
-    suspensionDayEntries(s).forEach((e) => { if (counts[e.date]) counts[e.date].suspension++; });
-  });
+  state.suspensions.forEach((s) => { if (s.deleted) return; if (counts[s.startDate]) counts[s.startDate].suspension++; });
   state.parentMeetings.forEach((m) => { if (m.deleted) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
   return counts;
 }
@@ -1352,23 +1349,29 @@ function niceAxisMax(v) {
 }
 const CHART_RANGE_OPTIONS = [
   { key: "thisMonth", label: "This Month" },
-  { key: "3months", label: "3 Months" },
-  { key: "6months", label: "6 Months" },
-  { key: "9months", label: "9 Months" },
+  { key: "3months", label: "3M" },
+  { key: "6months", label: "6M" },
+  { key: "9months", label: "9M" },
   { key: "thisYear", label: "This Year" },
-  { key: "custom", label: "Custom…" },
+  { key: "custom", label: "Custom" },
 ];
 const CATEGORY_META = {
   discipline: { label: "Discipline", checkboxLabel: "Discipline" },
   suspension: { label: "Suspension", checkboxLabel: "Suspension" },
-  parentMeeting: { label: "Meeting", checkboxLabel: "Parent Meeting" },
+  parentMeeting: { label: "Parent Meeting", checkboxLabel: "Parent Meeting" },
 };
 function renderCategoryToggles(incl) {
+  const cats = [
+    { key: "discipline", label: "Discipline" },
+    { key: "suspension", label: "Suspension" },
+    { key: "parentMeeting", label: "Parent Meeting" },
+  ];
   return `
-    <div class="dd-chart-toggles">
-      <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-discipline" ${incl.discipline ? "checked" : ""} /><span style="color:${CHART_COLORS.discipline}">■ Discipline</span></label>
-      <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-suspension" ${incl.suspension ? "checked" : ""} /><span style="color:${CHART_COLORS.suspension}">■ Suspension</span></label>
-      <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-pm" ${incl.parentMeeting ? "checked" : ""} /><span style="color:${CHART_COLORS.parentMeeting}">■ Parent Meeting</span></label>
+    <div class="dd-show-box">
+      <div class="dd-show-header">Show…</div>
+      <div class="dd-show-buttons">
+        ${cats.map((c) => `<button type="button" class="dd-show-btn ${incl[c.key] ? "active" : ""}" data-action="toggle-chart-cat" data-cat="${c.key}" style="${incl[c.key] ? `background:${CHART_COLORS[c.key]};border-color:${CHART_COLORS[c.key]}` : ""}">${c.label}</button>`).join("")}
+      </div>
     </div>`;
 }
 function renderTallyGrid(cats, totals) {
@@ -2177,6 +2180,14 @@ function renderKeepingModalScroll() {
     if (newModal) newModal.scrollTop = scrollTop;
   }
 }
+// Same idea as renderKeepingModalScroll but for controls that live directly
+// on a scrollable page (no modal involved) — e.g. the Dashboard's trend
+// section, which sits well below the fold.
+function renderKeepingPageScroll() {
+  const scrollY = window.scrollY;
+  render();
+  window.scrollTo(0, scrollY);
+}
 // Every click here triggers a full re-render, which normally resets scroll
 // to the top of the modal — very disruptive on a long form. This preserves
 // the open modal's scroll position across the re-render.
@@ -2434,19 +2445,18 @@ function attachMainListeners() {
 }
 
 function attachDashboardListeners() {
-  const toggle = (id, key) => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener("change", () => { state[key] = el.checked; render(); });
-  };
-  toggle("chart-toggle-discipline", "chartIncludeDiscipline");
-  toggle("chart-toggle-suspension", "chartIncludeSuspension");
-  toggle("chart-toggle-pm", "chartIncludeParentMeeting");
+  document.querySelectorAll('[data-action="toggle-chart-cat"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const key = el.dataset.cat === "parentMeeting" ? "chartIncludeParentMeeting" : el.dataset.cat === "suspension" ? "chartIncludeSuspension" : "chartIncludeDiscipline";
+      state[key] = !(state[key] !== false);
+      renderKeepingPageScroll();
+    }));
 
   document.querySelectorAll('[data-action="set-chart-range"]').forEach((el) =>
     el.addEventListener("click", () => {
       state.chartRangeMode = el.dataset.range;
       if (el.dataset.range === "custom") state.showChartCustomModal = true;
-      render();
+      renderKeepingPageScroll();
     }));
 
   const closeCustomModal = () => { state.showChartCustomModal = false; render(); };

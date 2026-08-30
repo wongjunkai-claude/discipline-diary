@@ -262,16 +262,25 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 }
 @keyframes dd-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-.dd-range-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.dd-range-pills { display: flex; flex-wrap: nowrap; gap: 5px; margin-bottom: 12px; }
 .dd-range-pill {
-  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; padding: 8px 12px; border-radius: 999px;
-  border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 10.5px; font-weight: 600; padding: 7px 8px; border-radius: 999px;
+  border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer; white-space: nowrap; flex-shrink: 0;
 }
 .dd-range-pill.active { background: #B8863B; border-color: #B8863B; color: #fff; }
 
+.dd-show-box { border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px 12px; margin-bottom: 14px; background: #fff; }
+.dd-show-header { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #8A8571; margin-bottom: 8px; }
+.dd-show-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.dd-show-btn {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 999px;
+  border: 1px solid #C9C4B4; background: #EDEAE0; color: #A6A18E; cursor: pointer;
+}
+.dd-show-btn.active { color: #fff; }
+
 .dd-tally-grid { display: grid; gap: 8px; margin-bottom: 14px; }
-.dd-tally-col { text-align: center; background: #F2EFE6; border-radius: 3px; padding: 10px 4px; }
-.dd-tally-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.dd-tally-col { text-align: center; background: #F2EFE6; border-radius: 3px; padding: 10px 2px; min-width: 0; }
+.dd-tally-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dd-tally-number { font-family: 'Zilla Slab', serif; font-size: 26px; font-weight: 700; margin-top: 2px; }
 .dd-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 4px; }
 .dd-cal-weekdays div { text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8A8571; }
