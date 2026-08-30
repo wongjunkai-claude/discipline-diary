@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.17.1";
+const APP_VERSION = "2.18.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1358,7 +1358,31 @@ const CHART_RANGE_OPTIONS = [
   { key: "thisYear", label: "This Year" },
   { key: "custom", label: "Custom…" },
 ];
-function renderMonthCalendar(monthKeyStr) {
+const CATEGORY_META = {
+  discipline: { label: "Discipline", checkboxLabel: "Discipline" },
+  suspension: { label: "Suspension", checkboxLabel: "Suspension" },
+  parentMeeting: { label: "Meeting", checkboxLabel: "Parent Meeting" },
+};
+function renderCategoryToggles(incl) {
+  return `
+    <div class="dd-chart-toggles">
+      <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-discipline" ${incl.discipline ? "checked" : ""} /><span style="color:${CHART_COLORS.discipline}">■ Discipline</span></label>
+      <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-suspension" ${incl.suspension ? "checked" : ""} /><span style="color:${CHART_COLORS.suspension}">■ Suspension</span></label>
+      <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-pm" ${incl.parentMeeting ? "checked" : ""} /><span style="color:${CHART_COLORS.parentMeeting}">■ Parent Meeting</span></label>
+    </div>`;
+}
+function renderTallyGrid(cats, totals) {
+  if (!cats.length) return `<div class="dd-dash-empty">Nothing selected above.</div>`;
+  return `
+    <div class="dd-tally-grid" style="grid-template-columns:repeat(${cats.length}, 1fr)">
+      ${cats.map((c) => `
+        <div class="dd-tally-col">
+          <div class="dd-tally-label" style="color:${CHART_COLORS[c]}">${CATEGORY_META[c].label}</div>
+          <div class="dd-tally-number" style="color:${CHART_COLORS[c]}">${totals[c]}</div>
+        </div>`).join("")}
+    </div>`;
+}
+function renderMonthCalendar(monthKeyStr, incl) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const daily = computeDailyCountsForMonth(monthKeyStr);
   const firstDow = weekdayOf(`${monthKeyStr}-01`);
@@ -1366,6 +1390,7 @@ function renderMonthCalendar(monthKeyStr) {
   const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
   Object.values(daily).forEach((c) => { totals.discipline += c.discipline; totals.suspension += c.suspension; totals.parentMeeting += c.parentMeeting; });
   const today = todayISO();
+  const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
 
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
@@ -1373,18 +1398,14 @@ function renderMonthCalendar(monthKeyStr) {
     const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
     const c = daily[iso];
     const dots = [];
-    if (c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
-    if (c.suspension > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspension} suspension"></span>`);
-    if (c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
+    if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
+    if (incl.suspension && c.suspension > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspension} suspension"></span>`);
+    if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
     cells.push(`<div class="dd-cal-cell ${iso === today ? "dd-cal-today" : ""}"><div class="dd-cal-daynum">${d}</div><div class="dd-cal-dots">${dots.join("")}</div></div>`);
   }
   return `
-    <div class="dd-cal-counters">
-      <div class="dd-cal-counter"><span style="color:${CHART_COLORS.discipline}">■</span> Discipline: ${totals.discipline}</div>
-      <div class="dd-cal-counter"><span style="color:${CHART_COLORS.suspension}">■</span> Suspension: ${totals.suspension}</div>
-      <div class="dd-cal-counter"><span style="color:${CHART_COLORS.parentMeeting}">■</span> Parent Meeting: ${totals.parentMeeting}</div>
-    </div>
-    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    ${renderTallyGrid(cats, totals)}
+    <div class="dd-cal-weekdays" style="margin-top:14px"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
     <div class="dd-cal-grid">${cells.join("")}</div>`;
 }
 function renderChartCustomModal() {
@@ -1416,11 +1437,8 @@ function renderMonthlyChart() {
     parentMeeting: state.chartIncludeParentMeeting !== false,
   };
   const rangeSelectorHtml = `
-    <div style="margin-bottom:14px;max-width:220px">
-      <label class="dd-label" style="margin-top:0">View</label>
-      <select class="dd-input" id="chart-range-mode">
-        ${CHART_RANGE_OPTIONS.map((o) => `<option value="${o.key}" ${rangeMode === o.key ? "selected" : ""}>${o.label}</option>`).join("")}
-      </select>
+    <div class="dd-range-pills">
+      ${CHART_RANGE_OPTIONS.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
     </div>`;
 
   if (rangeMode === "thisMonth") {
@@ -1428,17 +1446,16 @@ function renderMonthlyChart() {
     <div class="dd-panel" style="margin-top:16px">
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Trend</div>
       ${rangeSelectorHtml}
-      ${renderMonthCalendar(currentMonthKeyStr())}
+      ${renderCategoryToggles(incl)}
+      ${renderMonthCalendar(currentMonthKeyStr(), incl)}
     </div>
     ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
   }
 
   const data = computeMonthlyTrend();
-  const cats = [];
-  if (incl.discipline) cats.push({ key: "discipline", label: "Discipline" });
-  if (incl.suspension) cats.push({ key: "suspension", label: "Suspension" });
-  if (incl.parentMeeting) cats.push({ key: "parentMeeting", label: "Parent Meeting" });
-  const rawMax = Math.max(1, ...data.flatMap((d) => cats.map((c) => d[c.key])));
+  const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
+  const catObjs = cats.map((key) => ({ key, label: CATEGORY_META[key].label }));
+  const rawMax = Math.max(1, ...data.flatMap((d) => catObjs.map((c) => d[c.key])));
   const axisMax = niceAxisMax(rawMax);
   const pct = (v) => Math.max(v > 0 ? 3 : 0, Math.round((v / axisMax) * 100));
   const ticks = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map((n) => Math.round(n));
@@ -1449,31 +1466,23 @@ function renderMonthlyChart() {
     <div class="dd-panel" style="margin-top:16px">
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Trend</div>
       ${rangeSelectorHtml}
-      <div class="dd-cal-counters" style="margin-bottom:12px">
-        ${incl.discipline ? `<div class="dd-cal-counter"><span style="color:${CHART_COLORS.discipline}">■</span> Discipline: ${rangeTotals.discipline}</div>` : ""}
-        ${incl.suspension ? `<div class="dd-cal-counter"><span style="color:${CHART_COLORS.suspension}">■</span> Suspension: ${rangeTotals.suspension}</div>` : ""}
-        ${incl.parentMeeting ? `<div class="dd-cal-counter"><span style="color:${CHART_COLORS.parentMeeting}">■</span> Parent Meeting: ${rangeTotals.parentMeeting}</div>` : ""}
-      </div>
-      <div class="dd-chart-toggles">
-        <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-discipline" ${incl.discipline ? "checked" : ""} /><span style="color:${CHART_COLORS.discipline}">■ Discipline</span></label>
-        <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-suspension" ${incl.suspension ? "checked" : ""} /><span style="color:${CHART_COLORS.suspension}">■ Suspension</span></label>
-        <label class="dd-checkbox-pill"><input type="checkbox" id="chart-toggle-pm" ${incl.parentMeeting ? "checked" : ""} /><span style="color:${CHART_COLORS.parentMeeting}">■ Parent Meeting</span></label>
-      </div>
-      <div class="dd-chart-hrow" style="margin-bottom:10px">
+      ${renderCategoryToggles(incl)}
+      ${renderTallyGrid(cats, rangeTotals)}
+      <div class="dd-chart-hrow" style="margin:14px 0 10px">
         <span class="dd-chart-dot" style="background:transparent"></span>
         <div class="dd-chart-axis-track">${ticks.map((t) => `<span>${t}</span>`).join("")}</div>
         <span class="dd-chart-hval"></span>
       </div>
       <div class="dd-chart-rows">
         ${data.map((d) => {
-          const total = cats.reduce((sum, c) => sum + d[c.key], 0);
+          const total = catObjs.reduce((sum, c) => sum + d[c.key], 0);
           return `
           <div class="dd-chart-row-block">
             <div class="dd-chart-row-header">
               <span class="dd-chart-row-month">${d.label}</span>
               <span class="dd-chart-row-total">${total}</span>
             </div>
-            ${cats.map((c) => `
+            ${catObjs.map((c) => `
               <div class="dd-chart-hrow">
                 <span class="dd-chart-dot" style="background:${CHART_COLORS[c.key]}"></span>
                 <div class="dd-chart-hbar-track">
@@ -2433,12 +2442,12 @@ function attachDashboardListeners() {
   toggle("chart-toggle-suspension", "chartIncludeSuspension");
   toggle("chart-toggle-pm", "chartIncludeParentMeeting");
 
-  const rangeSel = document.getElementById("chart-range-mode");
-  if (rangeSel) rangeSel.addEventListener("change", () => {
-    state.chartRangeMode = rangeSel.value;
-    if (rangeSel.value === "custom") state.showChartCustomModal = true;
-    render();
-  });
+  document.querySelectorAll('[data-action="set-chart-range"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.chartRangeMode = el.dataset.range;
+      if (el.dataset.range === "custom") state.showChartCustomModal = true;
+      render();
+    }));
 
   const closeCustomModal = () => { state.showChartCustomModal = false; render(); };
   const customModalClose = document.getElementById("chart-custom-modal-close");

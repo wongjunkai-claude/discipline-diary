@@ -104,28 +104,35 @@ active counts, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
-**Trend view** — one dropdown picks how it displays: **This Month**,
-**3 Months**, **6 Months**, **9 Months**, **This Year**, or **Custom**.
+**Trend view** — a row of tappable pills picks how it displays: **This
+Month**, **3 Months**, **6 Months**, **9 Months**, **This Year**, or
+**Custom** (no dropdown to open, just tap).
 
-- **This Month** shows an actual calendar grid for the current month, with
-  a small colored dot per category on any day that had activity, plus a
-  count total for each category above it. A suspension shows on every day
-  it actually covers (not just its start date).
+Below the pills, checkboxes let you pick which of Discipline / Suspension
+/ Parent Meeting to include (all three by default) — this affects
+everything below it: the tally, the calendar dots, and the bar chart all
+update together. Then comes the **tally**: one column per selected
+category, each showing its label and a large total for exactly the period
+currently selected — deselect a category and its column disappears rather
+than showing a zero.
+
+- **This Month** shows an actual calendar grid for the current month below
+  the tally, with a small colored dot per selected category on any day
+  that had activity. A suspension shows on every day it actually covers
+  (not just its start date).
 - **3 / 6 / 9 Months / This Year** show the horizontal bar-row chart (one
-  row per month) with a total count for each category above the graph.
-  "3 Months" is the past 2 months plus the current one, "6 Months" the
-  past 5 plus current, "9 Months" the past 8 plus current, and "This Year"
-  is all 12 months of the current calendar year (Jan-Dec) regardless of
-  today's date.
+  row per month) below the tally. "3 Months" is the past 2 months plus the
+  current one, "6 Months" the past 5 plus current, "9 Months" the past 8
+  plus current, and "This Year" is all 12 months of the current calendar
+  year (Jan-Dec) regardless of today's date.
 - **Custom** opens a small popup with From/To month pickers (spanning 24
   months back to 12 months ahead) — pick any range and it shows the same
   bar-row chart for exactly those months. Choosing Custom again later
   reopens the popup pre-filled with whatever range was last picked.
 
-The bar-row views all share a scale row and faint gridlines behind every
-bar (at 0/25/50/75/100% of a rounded "nice" maximum) so bars are
-comparable at a glance. Checkboxes toggle Discipline / Suspension /
-Parent Meeting in or out of both the graph and its totals.
+The bar-row views share a scale row and faint gridlines behind every bar
+(at 0/25/50/75/100% of a rounded "nice" maximum) so bars are comparable at
+a glance.
 
 Discipline counts by incident date, Suspension by start date (by actual
 day for the calendar view), Parent Meeting by meeting date; deleted
