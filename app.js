@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.19.0";
+const APP_VERSION = "2.20.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -331,6 +331,7 @@ const state = {
   section: "dashboard",
   showHelp: false,
   chartRangeMode: "thisMonth",
+  namedFilterMode: "both",
   chartCustomFrom: lastNMonthKeys(3)[0],
   chartCustomTo: lastNMonthKeys(1)[0],
   showChartCustomModal: false,
@@ -1270,18 +1271,34 @@ function lastNMonthKeys(n = 11) {
 // All days of a given YYYY-MM month, each with per-category counts.
 // Suspension counts by actual day (from suspensionDayEntries), not just
 // the start date, so a multi-day suspension shows on every day it covers.
+const OSS_DOT_COLOR = "#A3372B";
+// For the calendar's day-by-day dots — a multi-day suspension shows a dot
+// on every day it actually covers, split by ISS (gold, matches the
+// Suspension category color) vs OSS (red). This is purely visual; the
+// tally total below still counts each suspension once (see
+// suspensionEntryCountForMonth), consistent with the bar-graph views.
 function computeDailyCountsForMonth(monthKeyStr) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
   const counts = {};
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
-    counts[iso] = { discipline: 0, suspension: 0, parentMeeting: 0 };
+    counts[iso] = { discipline: 0, suspensionISS: 0, suspensionOSS: 0, parentMeeting: 0 };
   }
   state.incidents.forEach((i) => { if (i.deleted) return; if (counts[i.date]) counts[i.date].discipline++; });
-  state.suspensions.forEach((s) => { if (s.deleted) return; if (counts[s.startDate]) counts[s.startDate].suspension++; });
+  state.suspensions.forEach((s) => {
+    if (s.deleted) return;
+    suspensionDayEntries(s).forEach((e) => {
+      if (!counts[e.date]) return;
+      if (e.type === "OSS") counts[e.date].suspensionOSS++;
+      else counts[e.date].suspensionISS++;
+    });
+  });
   state.parentMeetings.forEach((m) => { if (m.deleted) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
   return counts;
+}
+function suspensionEntryCountForMonth(monthKeyStr) {
+  return state.suspensions.filter((s) => !s.deleted && monthKey(s.startDate) === monthKeyStr).length;
 }
 function currentMonthKeyStr() {
   const now = new Date();
@@ -1391,7 +1408,8 @@ function renderMonthCalendar(monthKeyStr, incl) {
   const firstDow = weekdayOf(`${monthKeyStr}-01`);
   const daysInMonth = new Date(y, m, 0).getDate();
   const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
-  Object.values(daily).forEach((c) => { totals.discipline += c.discipline; totals.suspension += c.suspension; totals.parentMeeting += c.parentMeeting; });
+  Object.values(daily).forEach((c) => { totals.discipline += c.discipline; totals.parentMeeting += c.parentMeeting; });
+  totals.suspension = suspensionEntryCountForMonth(monthKeyStr);
   const today = todayISO();
   const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
 
@@ -1402,14 +1420,21 @@ function renderMonthCalendar(monthKeyStr, incl) {
     const c = daily[iso];
     const dots = [];
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
-    if (incl.suspension && c.suspension > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspension} suspension"></span>`);
+    if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
+    if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot" style="background:${OSS_DOT_COLOR}" title="${c.suspensionOSS} out-of-school suspension"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
     cells.push(`<div class="dd-cal-cell ${iso === today ? "dd-cal-today" : ""}"><div class="dd-cal-daynum">${d}</div><div class="dd-cal-dots">${dots.join("")}</div></div>`);
   }
+  const legendItems = [];
+  if (incl.discipline) legendItems.push({ color: CHART_COLORS.discipline, label: "Discipline" });
+  if (incl.suspension) legendItems.push({ color: CHART_COLORS.suspension, label: "In-School Suspension" });
+  if (incl.suspension) legendItems.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension" });
+  if (incl.parentMeeting) legendItems.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meeting" });
   return `
     ${renderTallyGrid(cats, totals)}
     <div class="dd-cal-weekdays" style="margin-top:14px"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
-    <div class="dd-cal-grid">${cells.join("")}</div>`;
+    <div class="dd-cal-grid">${cells.join("")}</div>
+    ${legendItems.length ? `<div class="dd-cal-legend">${legendItems.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot" style="background:${li.color}"></span>${li.label}</div>`).join("")}</div>` : ""}`;
 }
 function renderChartCustomModal() {
   const monthOptions = chartMonthOptionKeys();
@@ -1620,9 +1645,13 @@ function renderDashboardSection() {
     namedCounts[s.studentName].suspension++;
     namedClass[s.studentName] = s.studentClass || namedClass[s.studentName];
   });
-  const trend = Object.entries(namedCounts)
-    .map(([name, c]) => ({ name, studentClass: namedClass[name] || "", ...c, total: c.discipline + c.suspension }))
-    .sort((a, b) => b.total - a.total)
+  const namedFilter = state.namedFilterMode || "both";
+  let trend = Object.entries(namedCounts)
+    .map(([name, c]) => ({ name, studentClass: namedClass[name] || "", ...c, total: c.discipline + c.suspension }));
+  if (namedFilter === "discipline") trend = trend.filter((t) => t.discipline > 0);
+  else if (namedFilter === "suspension") trend = trend.filter((t) => t.suspension > 0);
+  trend = trend
+    .sort((a, b) => b.total - a.total || b.suspension - a.suspension || b.discipline - a.discipline)
     .slice(0, 8);
 
   return `
@@ -1655,6 +1684,11 @@ function renderDashboardSection() {
 
         <div class="dd-panel" style="margin-top:16px">
           <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Most named students</div>
+          <div class="dd-range-pills">
+            <button type="button" class="dd-range-pill ${namedFilter === "both" ? "active" : ""}" data-action="set-named-filter" data-filter="both">Both</button>
+            <button type="button" class="dd-range-pill ${namedFilter === "discipline" ? "active" : ""}" data-action="set-named-filter" data-filter="discipline">Discipline Only</button>
+            <button type="button" class="dd-range-pill ${namedFilter === "suspension" ? "active" : ""}" data-action="set-named-filter" data-filter="suspension">Suspension Only</button>
+          </div>
           ${trend.length === 0 ? `<div class="dd-dash-empty">No entries logged yet.</div>` : `
           <div style="display:flex;flex-direction:column;gap:8px">
             ${trend.map((t) => `
@@ -2458,6 +2492,9 @@ function attachDashboardListeners() {
       if (el.dataset.range === "custom") state.showChartCustomModal = true;
       renderKeepingPageScroll();
     }));
+
+  document.querySelectorAll('[data-action="set-named-filter"]').forEach((el) =>
+    el.addEventListener("click", () => { state.namedFilterMode = el.dataset.filter; renderKeepingPageScroll(); }));
 
   const closeCustomModal = () => { state.showChartCustomModal = false; render(); };
   const customModalClose = document.getElementById("chart-custom-modal-close");

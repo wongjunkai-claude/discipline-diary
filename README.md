@@ -104,6 +104,12 @@ active counts, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
+**"Most named students"** has three pills — **Both**, **Discipline Only**,
+**Suspension Only** — filtering the list to students with at least one
+matching record. Sort order is total mentions first, then (as a tiebreak)
+whoever has more suspensions, then whoever has more discipline entries —
+suspensions are weighted as the more serious signal when totals tie.
+
 **Trend view** — a row of tappable pills picks how it displays: **This
 Month**, **3M**, **6M**, **9M**, **This Year**, or **Custom** — all six fit
 on one line (no dropdown to open, just tap).
@@ -117,13 +123,17 @@ category, each showing its label and a large total for exactly the period
 currently selected — deselect a category and its column disappears rather
 than showing a zero.
 
-Suspensions count **by entry** everywhere (a 5-day suspension counts as 1,
-not 5), consistent across the calendar view and every bar-graph range —
-attributed to its start date.
+The suspension **tally total counts by entry** (a 5-day suspension counts
+as 1, not 5), consistent with the bar-graph ranges — attributed to its
+start date. The **calendar's dots are different on purpose**: they show a
+dot on every day a suspension actually covers, split by type — gold for
+in-school, red for out-of-school — so a multi-day suspension is visible
+across its whole span even though it's still just "1" in the tally above.
+A legend below the calendar spells out what each dot color means,
+matching whichever categories are currently selected.
 
 - **This Month** shows an actual calendar grid for the current month below
-  the tally, with a small colored dot per selected category on any day
-  that had activity — a suspension gets one dot, on its start date.
+  the tally, with a colored dot for each category active that day.
 - **3 / 6 / 9 Months / This Year** show the horizontal bar-row chart (one
   row per month) below the tally. "3 Months" is the past 2 months plus the
   current one, "6 Months" the past 5 plus current, "9 Months" the past 8
