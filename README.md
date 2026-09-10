@@ -289,13 +289,17 @@ records:
    sum to the total
 4. **Out-of-school dates are the ones you choose** — they default to the
    earliest available school days from the start date, each with a small
-   calendar icon to override to a specific date.
-5. **In-school dates are derived automatically**, not separately chosen:
-   whichever of the suspension's total school days aren't used for
-   out-of-school become the in-school days. Example: a 4-day suspension
-   starting 24 Aug, with out-of-school moved to 25 and 27 Aug, leaves 24
-   and 26 Aug as the in-school days — computed automatically the moment
-   the out-of-school dates are set or changed.
+   calendar icon (to its left) to override to a specific date.
+5. **In-school dates are derived automatically** by default, not
+   separately chosen: whichever of the suspension's total school days
+   aren't used for out-of-school become the in-school days. Example: a
+   4-day suspension starting 24 Aug, with out-of-school moved to 25 and 27
+   Aug, leaves 24 and 26 Aug as the in-school days — computed
+   automatically the moment the out-of-school dates are set or changed.
+   Each in-school day also has its own calendar icon if you need to move
+   it to a specific date instead — once moved, that day stays put even if
+   you later change the out-of-school dates or day counts (every other,
+   still-automatic in-school day keeps adjusting as usual).
 6. Each in-school day still needs a **location** booked through the
    availability list below it — every day shows "Pending Location" until
    you tap **GO** or **MPR 1** (GO capacity 1, MPR 1 capacity 4) to assign

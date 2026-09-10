@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.23.2";
+const APP_VERSION = "2.24.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -859,19 +859,19 @@ function freshSuspDraft() {
   return {
     studentName: "", studentClass: "", reason: "", startDate: todayISO(),
     totalDays: null, issDays: 0, ossDays: 0,
-    ossDates: [], issDates: [], issVenues: {},
+    ossDates: [], issDates: [], issOverridden: [], issVenues: {},
   };
 }
-// OSS dates auto-fill from the start date (no location concept, so no need
-// for manual booking). ISS dates/locations are chosen entirely through the
-// availability calendar — this only resets them when the count changes.
 // OSS dates are chosen (default to the earliest school days from the start
-// date, each individually overridable). ISS dates are then *derived*
-// automatically: whichever of the suspension's total school days aren't
-// used for OSS. Only the ISS *location* needs manual booking below.
+// date, each individually overridable via a calendar icon). ISS dates are
+// *auto-derived* by default — whichever of the suspension's total school
+// days aren't used for OSS — but any individual ISS day can also be
+// manually overridden via its own calendar icon (tracked in
+// d.issOverridden by slot index); an overridden slot keeps its date across
+// further recalculation, while every other slot keeps auto-deriving.
 function regenerateSuspDates(d) {
   const total = d.totalDays || 0;
-  if (!total) { d.ossDates = []; d.issDates = []; d.issVenues = {}; return d; }
+  if (!total) { d.ossDates = []; d.issDates = []; d.issOverridden = []; d.issVenues = {}; return d; }
   const startDate = d.startDate || todayISO();
   const defaultOss = schoolDayChain(startDate, d.ossDays || 0);
   if (!Array.isArray(d.ossDates)) d.ossDates = [];
@@ -879,15 +879,39 @@ function regenerateSuspDates(d) {
   else if (d.ossDates.length < d.ossDays) {
     for (let i = d.ossDates.length; i < d.ossDays; i++) d.ossDates.push(defaultOss[i]);
   }
-  let pool = schoolDayChain(startDate, total);
+
+  if (!Array.isArray(d.issDates)) d.issDates = [];
+  if (!Array.isArray(d.issOverridden)) d.issOverridden = [];
+  if (d.issDates.length > d.issDays) { d.issDates = d.issDates.slice(0, d.issDays); d.issOverridden = d.issOverridden.slice(0, d.issDays); }
+
   const ossSet = new Set(d.ossDates);
-  let remaining = pool.filter((dt) => !ossSet.has(dt));
-  while (remaining.length < d.issDays) {
+  const keptOverrides = new Set();
+  for (let i = 0; i < d.issDays; i++) {
+    if (d.issOverridden[i] && d.issDates[i]) keptOverrides.add(d.issDates[i]);
+  }
+  let pool = schoolDayChain(startDate, total);
+  let remaining = pool.filter((dt) => !ossSet.has(dt) && !keptOverrides.has(dt));
+  const neededAuto = d.issDays - keptOverrides.size;
+  while (remaining.length < neededAuto) {
     const next = nextSchoolDay(pool[pool.length - 1]);
     pool.push(next);
-    if (!ossSet.has(next)) remaining.push(next);
+    if (!ossSet.has(next) && !keptOverrides.has(next)) remaining.push(next);
   }
-  d.issDates = remaining.slice(0, d.issDays);
+  let autoIdx = 0;
+  const newIssDates = [];
+  const newOverridden = [];
+  for (let i = 0; i < d.issDays; i++) {
+    if (d.issOverridden[i] && d.issDates[i]) {
+      newIssDates.push(d.issDates[i]);
+      newOverridden.push(true);
+    } else {
+      newIssDates.push(remaining[autoIdx]);
+      newOverridden.push(false);
+      autoIdx++;
+    }
+  }
+  d.issDates = newIssDates;
+  d.issOverridden = newOverridden;
   const keptVenues = {};
   d.issDates.forEach((dt) => { if (d.issVenues && d.issVenues[dt]) keptVenues[dt] = d.issVenues[dt]; });
   d.issVenues = keptVenues;
@@ -995,7 +1019,7 @@ function openEditSuspension(id) {
     studentName: s.studentName, studentClass: s.studentClass, reason: s.reason || "",
     startDate: s.startDate || (entries[0] && entries[0].date) || todayISO(),
     totalDays: s.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
-    ossDates, issDates, issVenues,
+    ossDates, issDates, issOverridden: issDates.map(() => false), issVenues,
   };
   state.suspFormError = "";
   render();
@@ -2288,21 +2312,26 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
         <div id="${idPrefix}-oss-date-rows">
           ${d.ossDates.map((dt, i) => `
             <div class="dd-venue-row">
-              <span class="dd-venue-date">${formatDate(dt)}</span>
               <div class="dd-date-icon-btn" title="Change this day's date">
                 <input type="date" class="${idPrefix}-oss-date-input" data-idx="${i}" value="${dt}" />
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
               </div>
+              <span class="dd-venue-date">${formatDate(dt)}</span>
             </div>`).join("")}
         </div>` : ""}
 
         ${showDatePickers && d.issDays > 0 ? (() => {
           const bookedCount = d.issDates.filter((dt) => d.issVenues[dt]).length;
+          const issRows = d.issDates.map((dt, i) => ({ dt, i })).sort((a, b) => a.dt.localeCompare(b.dt));
           return `
         <label class="dd-label" style="margin-top:12px">In-school days booked: ${bookedCount} of ${d.issDays}</label>
-        <div style="margin-bottom:8px">
-          ${d.issDates.slice().sort().map((dt) => `
+        <div id="${idPrefix}-iss-date-rows" style="margin-bottom:8px">
+          ${issRows.map(({ dt, i }) => `
             <div class="dd-venue-row">
+              <div class="dd-date-icon-btn" title="Change this day's date">
+                <input type="date" class="${idPrefix}-iss-date-input" data-idx="${i}" value="${dt}" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+              </div>
               <span class="dd-venue-date">${formatDate(dt)}</span>
               <span class="dd-sans" style="font-size:13px;flex:1;${d.issVenues[dt] ? "" : "font-style:italic;color:#8A8571"}">${d.issVenues[dt] ? escapeHtml(d.issVenues[dt]) : "Pending Location"}</span>
               ${d.issVenues[dt] ? `<button type="button" class="dd-followup-icon-btn" data-action="${idPrefix}-unbook-iss" data-date="${dt}" title="Remove this booking">✕</button>` : ""}
@@ -2390,6 +2419,16 @@ function attachSuspFieldListeners(form, idPrefix, d, rawOnChange) {
 
   form.querySelectorAll(`.${idPrefix}-oss-date-input`).forEach((el) =>
     el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; regenerateSuspDates(d); onChange(); }));
+
+  form.querySelectorAll(`.${idPrefix}-iss-date-input`).forEach((el) =>
+    el.addEventListener("change", () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (!Array.isArray(d.issOverridden)) d.issOverridden = [];
+      d.issDates[idx] = el.value;
+      d.issOverridden[idx] = true;
+      regenerateSuspDates(d);
+      onChange();
+    }));
 
   // Availability: tap a location to book it for that (fixed) in-school day,
   // tap the same location again to clear it back to "Pending Location".
