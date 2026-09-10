@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.23.0";
+const APP_VERSION = "2.23.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1454,6 +1454,8 @@ function renderDayDetail(dateISO, incl) {
   if (incl.parentMeeting) {
     state.parentMeetings.forEach((m) => { if (!m.deleted && m.date === dateISO) items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass }); });
   }
+  const typeOrder = { discipline: 0, iss: 1, oss: 2, parentMeeting: 3 };
+  items.sort((a, b) => (typeOrder[a.type] - typeOrder[b.type]) || (classLevel(a.cls) - classLevel(b.cls)));
   const typeColor = { discipline: CHART_COLORS.discipline, iss: CHART_COLORS.suspension, oss: OSS_DOT_COLOR, parentMeeting: CHART_COLORS.parentMeeting };
   return `
     <div class="dd-day-detail">
@@ -1810,12 +1812,6 @@ function renderDashboardSection() {
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:0.68">+ New Entry</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1.32">+ New Suspension Only</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1.1">+ New Meeting Only</button>
-        </div>
-
-        <div style="margin-bottom:16px">
-          ${renderDashboardBox("ISS", "In-School Suspension", "#B8863B")}
-          <div style="height:12px"></div>
-          ${renderDashboardBox("OSS", "Out of School Suspension", "#A3372B")}
         </div>
 
         ${renderMonthlyChart()}

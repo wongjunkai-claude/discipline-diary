@@ -99,10 +99,10 @@ from this README, which is aimed at whoever maintains the app.
 ## Dashboard (Home)
 
 The home icon in the nav is the first stop — trends of who's been named
-most often across both discipline and suspension records, the trend
-section below, and the In-School / Out-of-School Suspension "who's in
-today and over the next 2 days" tracker (moved here from the Suspension Log
-page, since it's more of an at-a-glance overview than a log-browsing task).
+most often across both discipline and suspension records, and the trend
+section below (which includes a **Today** view covering the same
+"who's in today" info the old ISS/OSS tracker boxes used to show, now
+folded into the trend section instead of living separately).
 
 **"Most named students"** has three pills — **Both**, **Discipline Only**,
 **Suspension Only** — filtering the list to students with at least one
