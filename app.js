@@ -4,7 +4,7 @@ import {
   getAuth, onAuthStateChanged, signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, arrayUnion, setDoc, getDoc,
+  getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, arrayUnion, setDoc, getDoc, deleteDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.20.0";
+const APP_VERSION = "2.23.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -332,6 +332,8 @@ const state = {
   showHelp: false,
   chartRangeMode: "thisMonth",
   namedFilterMode: "both",
+  calendarViewMonth: null, // set on first render to the current month
+  selectedCalendarDay: null,
   chartCustomFrom: lastNMonthKeys(3)[0],
   chartCustomTo: lastNMonthKeys(1)[0],
   showChartCustomModal: false,
@@ -1159,10 +1161,36 @@ async function restoreParentMeeting(id) {
 }
 
 // ==================== RENDER ====================
+const DELETED_RETENTION_DAYS = 30;
+let purgeAttempted = false;
+// Deleted entries are kept for 30 days (recoverable via the Deleted pill),
+// then permanently erased — not just hidden, actually removed from
+// Firestore. This only runs client-side (there's no server for this app to
+// run a scheduled job on), so it's best-effort: it happens the next time
+// someone has the app open after an entry's 30-day mark passes, not at a
+// guaranteed exact moment.
+async function purgeOldDeletedEntries() {
+  if (purgeAttempted) return;
+  purgeAttempted = true;
+  const cutoff = Date.now() - DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const buckets = [
+    { name: "incidents", items: state.incidents },
+    { name: "suspensions", items: state.suspensions },
+    { name: "parentMeetings", items: state.parentMeetings },
+  ];
+  for (const { name, items } of buckets) {
+    for (const item of items) {
+      if (item.deleted && item.deletedAt && item.deletedAt < cutoff) {
+        try { await deleteDoc(doc(db, name, item.id)); } catch (e) { /* non-fatal, try again next session */ }
+      }
+    }
+  }
+}
 function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
   if (!state.dataLoaded || !state.suspLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
+  purgeOldDeletedEntries();
   root.innerHTML = renderMain();
   attachMainListeners();
 }
@@ -1300,6 +1328,11 @@ function computeDailyCountsForMonth(monthKeyStr) {
 function suspensionEntryCountForMonth(monthKeyStr) {
   return state.suspensions.filter((s) => !s.deleted && monthKey(s.startDate) === monthKeyStr).length;
 }
+function shiftMonthKey(monthKeyStr, delta) {
+  const [y, m] = monthKeyStr.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 function currentMonthKeyStr() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -1365,7 +1398,9 @@ function niceAxisMax(v) {
   return niceResidual * magnitude;
 }
 const CHART_RANGE_OPTIONS = [
-  { key: "thisMonth", label: "This Month" },
+  { key: "today", label: "Today" },
+  { key: "thisWeek", label: "This Week" },
+  { key: "thisMonth", label: "1M" },
   { key: "3months", label: "3M" },
   { key: "6months", label: "6M" },
   { key: "9months", label: "9M" },
@@ -1402,6 +1437,102 @@ function renderTallyGrid(cats, totals) {
         </div>`).join("")}
     </div>`;
 }
+function renderDayDetail(dateISO, incl) {
+  if (!dateISO) return "";
+  const items = [];
+  if (incl.discipline) {
+    state.incidents.forEach((i) => { if (!i.deleted && i.date === dateISO) items.push({ type: "discipline", name: i.studentName, cls: i.studentClass }); });
+  }
+  if (incl.suspension) {
+    state.suspensions.forEach((s) => {
+      if (s.deleted) return;
+      suspensionDayEntries(s).forEach((e) => {
+        if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "oss" : "iss", name: s.studentName, cls: s.studentClass, location: e.venue });
+      });
+    });
+  }
+  if (incl.parentMeeting) {
+    state.parentMeetings.forEach((m) => { if (!m.deleted && m.date === dateISO) items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass }); });
+  }
+  const typeColor = { discipline: CHART_COLORS.discipline, iss: CHART_COLORS.suspension, oss: OSS_DOT_COLOR, parentMeeting: CHART_COLORS.parentMeeting };
+  return `
+    <div class="dd-day-detail">
+      <div class="dd-day-detail-title">${formatDate(dateISO)}</div>
+      ${items.length === 0 ? `<div class="dd-mono-muted" style="font-size:12px;font-style:italic">Nothing logged this day.</div>` : items.map((it) => `
+        <div class="dd-day-detail-row">
+          <span class="dd-cal-dot" style="background:${typeColor[it.type]}"></span>
+          <span class="dd-day-detail-name">${escapeHtml(it.name)}</span>
+          <span class="dd-day-detail-class">${escapeHtml(it.cls || "")}</span>
+          ${it.location ? `<span class="dd-day-detail-location">${escapeHtml(it.location)}</span>` : ""}
+        </div>`).join("")}
+    </div>`;
+}
+// Per-day breakdown, split ISS/OSS like the month calendar — used for
+// Today, and for each day-cell in the This Week view.
+function computeCountsForDate(dateISO) {
+  const c = { discipline: 0, suspensionISS: 0, suspensionOSS: 0, parentMeeting: 0 };
+  state.incidents.forEach((i) => { if (!i.deleted && i.date === dateISO) c.discipline++; });
+  state.suspensions.forEach((s) => {
+    if (s.deleted) return;
+    suspensionDayEntries(s).forEach((e) => { if (e.date === dateISO) { if (e.type === "OSS") c.suspensionOSS++; else c.suspensionISS++; } });
+  });
+  state.parentMeetings.forEach((m) => { if (!m.deleted && m.date === dateISO) c.parentMeeting++; });
+  return c;
+}
+function suspensionEntryCountForRange(fromISO, toISO) {
+  return state.suspensions.filter((s) => !s.deleted && s.startDate >= fromISO && s.startDate <= toISO).length;
+}
+function renderCalLegend(incl) {
+  const legendLeft = [];
+  const legendRight = [];
+  if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Discipline" });
+  if (incl.parentMeeting) legendLeft.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meeting" });
+  if (incl.suspension) legendRight.push({ color: CHART_COLORS.suspension, label: "In-School Suspension" });
+  if (incl.suspension) legendRight.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension" });
+  const col = (items) => items.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot" style="background:${li.color}"></span>${li.label}</div>`).join("");
+  if (!legendLeft.length && !legendRight.length) return "";
+  return `<div class="dd-cal-legend dd-cal-legend-2col"><div class="dd-cal-legend-col">${col(legendLeft)}</div><div class="dd-cal-legend-col">${col(legendRight)}</div></div>`;
+}
+function renderTodayView(incl) {
+  const today = todayISO();
+  const c = computeCountsForDate(today);
+  const totals = { discipline: c.discipline, suspension: c.suspensionISS + c.suspensionOSS, parentMeeting: c.parentMeeting };
+  const cats = ["discipline", "suspension", "parentMeeting"].filter((x) => incl[x]);
+  return `
+    ${renderTallyGrid(cats, totals)}
+    ${renderDayDetail(today, incl)}
+    ${renderCalLegend(incl)}`;
+}
+function renderWeekCalendar(incl) {
+  const { monday, sunday } = currentWeekBounds();
+  const days = [];
+  let cur = monday;
+  for (let i = 0; i < 7; i++) { days.push(cur); cur = addDays(cur, 1); }
+  const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  days.forEach((d) => { const c = computeCountsForDate(d); totals.discipline += c.discipline; totals.parentMeeting += c.parentMeeting; });
+  totals.suspension = suspensionEntryCountForRange(monday, sunday);
+  const cats = ["discipline", "suspension", "parentMeeting"].filter((x) => incl[x]);
+  const today = todayISO();
+  const cells = days.map((d) => {
+    const c = computeCountsForDate(d);
+    const dots = [];
+    if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}"></span>`);
+    if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}"></span>`);
+    if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot" style="background:${OSS_DOT_COLOR}"></span>`);
+    if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}"></span>`);
+    const isSelected = state.selectedCalendarDay === d;
+    return `<button type="button" class="dd-week-cell ${d === today ? "dd-cal-today" : ""} ${isSelected ? "dd-cal-selected" : ""}" data-action="select-cal-day" data-date="${d}">
+      <div class="dd-cal-weekday-label">${weekdayName(d).slice(0, 3)}</div>
+      <div class="dd-cal-daynum">${parseInt(d.split("-")[2], 10)}</div>
+      <div class="dd-cal-dots">${dots.join("")}</div>
+    </button>`;
+  });
+  return `
+    ${renderTallyGrid(cats, totals)}
+    <div class="dd-week-grid">${cells.join("")}</div>
+    ${renderDayDetail(state.selectedCalendarDay, incl)}
+    ${renderCalLegend(incl)}`;
+}
 function renderMonthCalendar(monthKeyStr, incl) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const daily = computeDailyCountsForMonth(monthKeyStr);
@@ -1423,18 +1554,20 @@ function renderMonthCalendar(monthKeyStr, incl) {
     if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
     if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot" style="background:${OSS_DOT_COLOR}" title="${c.suspensionOSS} out-of-school suspension"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
-    cells.push(`<div class="dd-cal-cell ${iso === today ? "dd-cal-today" : ""}"><div class="dd-cal-daynum">${d}</div><div class="dd-cal-dots">${dots.join("")}</div></div>`);
+    const isSelected = state.selectedCalendarDay === iso;
+    cells.push(`<button type="button" class="dd-cal-cell ${iso === today ? "dd-cal-today" : ""} ${isSelected ? "dd-cal-selected" : ""}" data-action="select-cal-day" data-date="${iso}"><div class="dd-cal-daynum">${d}</div><div class="dd-cal-dots">${dots.join("")}</div></button>`);
   }
-  const legendItems = [];
-  if (incl.discipline) legendItems.push({ color: CHART_COLORS.discipline, label: "Discipline" });
-  if (incl.suspension) legendItems.push({ color: CHART_COLORS.suspension, label: "In-School Suspension" });
-  if (incl.suspension) legendItems.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension" });
-  if (incl.parentMeeting) legendItems.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meeting" });
   return `
     ${renderTallyGrid(cats, totals)}
-    <div class="dd-cal-weekdays" style="margin-top:14px"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    <div class="dd-cal-nav">
+      <button type="button" class="dd-cal-nav-btn" data-action="cal-prev-month">‹</button>
+      <div class="dd-cal-nav-label">${monthLabelFromKey(monthKeyStr)}</div>
+      <button type="button" class="dd-cal-nav-btn" data-action="cal-next-month">›</button>
+    </div>
+    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
     <div class="dd-cal-grid">${cells.join("")}</div>
-    ${legendItems.length ? `<div class="dd-cal-legend">${legendItems.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot" style="background:${li.color}"></span>${li.label}</div>`).join("")}</div>` : ""}`;
+    ${renderDayDetail(state.selectedCalendarDay, incl)}
+    ${renderCalLegend(incl)}`;
 }
 function renderChartCustomModal() {
   const monthOptions = chartMonthOptionKeys();
@@ -1469,13 +1602,32 @@ function renderMonthlyChart() {
       ${CHART_RANGE_OPTIONS.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
     </div>`;
 
+  if (rangeMode === "today") {
+    return `
+    <div class="dd-panel" style="margin-top:16px">
+      ${rangeSelectorHtml}
+      ${renderCategoryToggles(incl)}
+      ${renderTodayView(incl)}
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
+  }
+
+  if (rangeMode === "thisWeek") {
+    return `
+    <div class="dd-panel" style="margin-top:16px">
+      ${rangeSelectorHtml}
+      ${renderCategoryToggles(incl)}
+      ${renderWeekCalendar(incl)}
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
+  }
+
   if (rangeMode === "thisMonth") {
     return `
     <div class="dd-panel" style="margin-top:16px">
-      <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Trend</div>
       ${rangeSelectorHtml}
       ${renderCategoryToggles(incl)}
-      ${renderMonthCalendar(currentMonthKeyStr(), incl)}
+      ${renderMonthCalendar(state.calendarViewMonth || currentMonthKeyStr(), incl)}
     </div>
     ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
   }
@@ -1492,7 +1644,6 @@ function renderMonthlyChart() {
 
   return `
     <div class="dd-panel" style="margin-top:16px">
-      <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Trend</div>
       ${rangeSelectorHtml}
       ${renderCategoryToggles(incl)}
       ${renderTallyGrid(cats, rangeTotals)}
@@ -1630,9 +1781,6 @@ function renderDashboardSection() {
   const activeSusp = state.suspensions.filter((s) => !s.deleted);
   const activePm = state.parentMeetings.filter((m) => !m.deleted);
 
-  const dCounts = { Open: 0, Monitoring: 0, Resolved: 0 };
-  activeIncidents.forEach((i) => { if (dCounts[i.status] !== undefined) dCounts[i.status]++; });
-
   const namedCounts = {};
   const namedClass = {};
   activeIncidents.forEach((i) => {
@@ -1662,16 +1810,6 @@ function renderDashboardSection() {
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:0.68">+ New Entry</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1.32">+ New Suspension Only</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1.1">+ New Meeting Only</button>
-        </div>
-        <div class="dd-grid2" style="margin-bottom:16px">
-          <div class="dd-panel" style="text-align:center">
-            <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase">Open discipline entries</div>
-            <div class="dd-serif" style="font-size:30px;font-weight:700;color:#A3372B">${dCounts.Open}</div>
-          </div>
-          <div class="dd-panel" style="text-align:center">
-            <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase">Active suspensions</div>
-            <div class="dd-serif" style="font-size:30px;font-weight:700;color:#B8863B">${activeSusp.filter((s) => suspensionStatus(s) === "Active").length}</div>
-          </div>
         </div>
 
         <div style="margin-bottom:16px">
@@ -1812,7 +1950,7 @@ function renderLogSection() {
               <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
             </select>
           </div>
-          ${recycleBinButton("btn-toggle-deleted-incidents", state.viewDeletedIncidents, c.Deleted)}
+          <div style="margin-left:auto">${recycleBinButton("btn-toggle-deleted-incidents", state.viewDeletedIncidents, c.Deleted)}</div>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -2054,7 +2192,7 @@ function renderSuspensionSection() {
               <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
             </select>
           </div>
-          ${recycleBinButton("btn-toggle-deleted-susp", state.suspTab === "Deleted", c.Deleted)}
+          <div style="margin-left:auto">${recycleBinButton("btn-toggle-deleted-susp", state.suspTab === "Deleted", c.Deleted)}</div>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -2348,7 +2486,7 @@ function renderParentMeetingSection() {
               <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
             </select>
           </div>
-          ${recycleBinButton("btn-toggle-deleted-pm", state.pmTab === "Deleted", c.Deleted)}
+          <div style="margin-left:auto">${recycleBinButton("btn-toggle-deleted-pm", state.pmTab === "Deleted", c.Deleted)}</div>
         </div>
         <div class="dd-panel">
           <div class="dd-search-wrap">
@@ -2490,6 +2628,26 @@ function attachDashboardListeners() {
     el.addEventListener("click", () => {
       state.chartRangeMode = el.dataset.range;
       if (el.dataset.range === "custom") state.showChartCustomModal = true;
+      if (el.dataset.range === "thisMonth") state.calendarViewMonth = currentMonthKeyStr();
+      state.selectedCalendarDay = null;
+      renderKeepingPageScroll();
+    }));
+
+  document.querySelectorAll('[data-action="cal-prev-month"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.calendarViewMonth = shiftMonthKey(state.calendarViewMonth || currentMonthKeyStr(), -1);
+      state.selectedCalendarDay = null;
+      renderKeepingPageScroll();
+    }));
+  document.querySelectorAll('[data-action="cal-next-month"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.calendarViewMonth = shiftMonthKey(state.calendarViewMonth || currentMonthKeyStr(), 1);
+      state.selectedCalendarDay = null;
+      renderKeepingPageScroll();
+    }));
+  document.querySelectorAll('[data-action="select-cal-day"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.selectedCalendarDay = state.selectedCalendarDay === el.dataset.date ? null : el.dataset.date;
       renderKeepingPageScroll();
     }));
 

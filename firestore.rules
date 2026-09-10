@@ -1,23 +1,25 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Discipline log entries — signed-in users only, deletes blocked entirely
-    // so the audit trail can never be erased from the client.
+    // Discipline log entries — signed-in users only. Deletes are only
+    // allowed on entries already soft-deleted (deleted: true) — the app
+    // uses this to permanently purge entries 30 days after removal, but an
+    // active record can never be erased this way even by a buggy client.
     match /incidents/{incidentId} {
       allow read, create, update: if request.auth != null;
-      allow delete: if false;
+      allow delete: if request.auth != null && resource.data.deleted == true;
     }
 
     // ISS / OSS suspension records — same protection.
     match /suspensions/{suspensionId} {
       allow read, create, update: if request.auth != null;
-      allow delete: if false;
+      allow delete: if request.auth != null && resource.data.deleted == true;
     }
 
     // Parent meeting logs — same protection.
     match /parentMeetings/{meetingId} {
       allow read, create, update: if request.auth != null;
-      allow delete: if false;
+      allow delete: if request.auth != null && resource.data.deleted == true;
     }
 
     // Rolling backup snapshot ("backups/latest"). Signed-in users can read it

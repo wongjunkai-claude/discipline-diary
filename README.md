@@ -99,8 +99,8 @@ from this README, which is aimed at whoever maintains the app.
 ## Dashboard (Home)
 
 The home icon in the nav is the first stop — trends of who's been named
-most often across both discipline and suspension records, current open/
-active counts, and the In-School / Out-of-School Suspension "who's in
+most often across both discipline and suspension records, the trend
+section below, and the In-School / Out-of-School Suspension "who's in
 today and over the next 2 days" tracker (moved here from the Suspension Log
 page, since it's more of an at-a-glance overview than a log-browsing task).
 
@@ -110,9 +110,9 @@ matching record. Sort order is total mentions first, then (as a tiebreak)
 whoever has more suspensions, then whoever has more discipline entries —
 suspensions are weighted as the more serious signal when totals tie.
 
-**Trend view** — a row of tappable pills picks how it displays: **This
-Month**, **3M**, **6M**, **9M**, **This Year**, or **Custom** — all six fit
-on one line (no dropdown to open, just tap).
+A row of tappable pills picks how the section below displays: **Today**,
+**This Week**, **1M**, **3M**, **6M**, **9M**, **This Year**, or **Custom**
+(wraps to two rows on a phone screen — no dropdown to open, just tap).
 
 Below the pills, a **"Show…"** box holds three buttons — Discipline,
 Suspension, Parent Meeting — filled with that category's color when
@@ -124,19 +124,27 @@ currently selected — deselect a category and its column disappears rather
 than showing a zero.
 
 The suspension **tally total counts by entry** (a 5-day suspension counts
-as 1, not 5), consistent with the bar-graph ranges — attributed to its
-start date. The **calendar's dots are different on purpose**: they show a
-dot on every day a suspension actually covers, split by type — gold for
+as 1, not 5), consistent across every range — attributed to its start
+date. Calendar **dots are different on purpose**: they show a dot on
+every day a suspension actually covers, split by type — gold for
 in-school, red for out-of-school — so a multi-day suspension is visible
 across its whole span even though it's still just "1" in the tally above.
-A legend below the calendar spells out what each dot color means,
+A two-column legend spells out what each dot color means (Discipline and
+Parent Meeting on the left, the two suspension types on the right),
 matching whichever categories are currently selected.
 
-- **This Month** shows an actual calendar grid for the current month below
-  the tally, with a colored dot for each category active that day.
-- **3 / 6 / 9 Months / This Year** show the horizontal bar-row chart (one
-  row per month) below the tally. "3 Months" is the past 2 months plus the
-  current one, "6 Months" the past 5 plus current, "9 Months" the past 8
+- **Today** shows the tally for just today, then a detail list below it —
+  name, class, and (for suspensions) location — of everything happening
+  today, with no calendar grid needed.
+- **This Week** shows a 7-day calendar strip (Monday-Sunday of the current
+  week). Tap any day to see its details in the same list format as Today,
+  right below the strip.
+- **1M** shows a full month calendar grid. **‹ ›** arrows above it move to
+  the previous/next month — it isn't locked to the current month. Tap any
+  day to see its details the same way; tap the same day again to close it.
+- **3M / 6M / 9M / This Year** show the horizontal bar-row chart (one
+  row per month) below the tally. "3M" is the past 2 months plus the
+  current one, "6M" the past 5 plus current, "9M" the past 8
   plus current, and "This Year" is all 12 months of the current calendar
   year (Jan-Dec) regardless of today's date.
 - **Custom** opens a small popup with From/To month pickers (spanning 24
@@ -396,12 +404,25 @@ stays visible under "Show audit trail."
 
 ## Removing entries
 
-There's no true delete — matching the "nothing can be erased" promise above.
-Instead, clicking **"Remove entry"** (inside an expanded discipline entry) or
-**"Remove"** (on a suspension) asks for a password before hiding it from the
-normal views. The record itself stays in Firestore untouched, just tagged as
-removed, and shows up under the **"Deleted"** tab where it can be restored
-any time with no password needed.
+Clicking **"Remove entry"** (inside an expanded discipline entry) or
+**"Remove"** (on a suspension or meeting) asks for a password before hiding
+it from the normal views. The record stays in Firestore, tagged as removed,
+and shows up under the **"Deleted"** view (the recycling-bin icon) where it
+can be restored any time with no password needed — **for 30 days**.
+
+**After 30 days in the Deleted view, an entry is permanently erased** — not
+just hidden, actually deleted from Firestore, with no way to recover it.
+This check runs client-side the next time anyone has the app open (there's
+no server here to run it on a schedule), so it's best-effort: an entry
+might sit for a little longer than exactly 30 days if nobody opens the app
+around that date, but it will never be purged early. Firestore rules only
+allow deleting a record that's already marked as removed, so even a bug in
+this logic can't erase an active entry.
+
+If you'd rather entries were kept forever until manually restored (the
+original behavior), change `DELETED_RETENTION_DAYS` near the top of
+`app.js` to a very large number, or ask me to remove the auto-purge
+entirely and restore the old delete-blocking Firestore rule.
 
 The password is set in `app.js`:
 ```
@@ -435,7 +456,7 @@ Settings.
 
 ## Data safety / backups
 
-Two layers of protection, on top of the delete-blocking rule above:
+Two layers of protection, on top of the 30-day recovery window above:
 
 1. **Automatic rolling snapshot.** Every time data changes, the full current
    dataset (all incidents + all suspensions) is mirrored into a single
