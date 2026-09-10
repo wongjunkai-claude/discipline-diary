@@ -336,6 +336,26 @@ input[type="date"].dd-input, input[type="number"].dd-input {
 .dd-mini-bar-empty { background: transparent; }
 .dd-mini-weekend { background: #E4E1D4; }
 .dd-mini-holiday { background: #F5E3A1; }
+.dd-mini-pubholiday { background: #F2B8B0; }
+.dd-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 .dd-mini-today .dd-mini-daynum { font-weight: 700; text-decoration: underline; }
 .dd-mini-selected { background: #1B2A41 !important; }
 .dd-mini-selected .dd-mini-daynum { color: #fff; }
+
+.dd-level-counters { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
+.dd-level-btn {
+  flex: 1; min-width: 44px; border: 1px solid #C9C4B4; border-radius: 4px; background: #fff; cursor: pointer;
+  padding: 6px 2px; text-align: center; font-family: inherit;
+}
+.dd-level-btn.active { background: #1B2A41; border-color: #1B2A41; }
+.dd-level-num { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #1B2A41; }
+.dd-level-btn.active .dd-level-num { color: #F2EFE6; }
+.dd-level-count { font-family: 'Zilla Slab', serif; font-size: 16px; font-weight: 700; color: #1B2A41; }
+.dd-level-btn.active .dd-level-count { color: #fff; }
+.dd-level-breakdown { border: 1px solid #C9C4B4; border-radius: 4px; margin-bottom: 14px; overflow: hidden; }
+.dd-level-row { display: flex; border-bottom: 1px solid #E4E1D4; }
+.dd-level-row:last-child { border-bottom: none; }
+.dd-level-row-header { background: #F2EFE6; }
+.dd-level-row-header .dd-level-cell-term, .dd-level-row-header .dd-level-cell-class { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; color: #8A8571; font-weight: 600; }
+.dd-level-cell-class { width: 64px; flex-shrink: 0; padding: 7px 8px; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #1B2A41; }
+.dd-level-cell-term { flex: 1; padding: 7px 4px; text-align: center; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: #1B2A41; }

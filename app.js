@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.25.0";
+const APP_VERSION = "2.26.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -213,6 +213,12 @@ function computeMoeCalendar(year) {
   else if (ndDow === 6) nationalDayInLieu = addDays(nationalDay, 2);
 
   return {
+    terms: [
+      { label: "Term 1", start: w1, end: term1End },
+      { label: "Term 2", start: term2Start, end: term2End },
+      { label: "Term 3", start: term3Start, end: term3End },
+      { label: "Term 4", start: term4Start, end: term4End },
+    ],
     ranges: [
       { start: marchStart, end: marchEnd, label: "March holiday" },
       { start: juneStart, end: juneEnd, label: "June holiday" },
@@ -333,6 +339,9 @@ const state = {
   chartRangeMode: "thisMonth",
   namedFilterMode: "both",
   calendarViewMonth: null, // set on first render to the current month
+  dayViewDate: null, // set on first render to today
+  weekViewMonday: null, // set on first render to this week's Monday
+  yearViewYear: null, // set on first render to the current year
   selectedCalendarDay: null,
   chartCustomFrom: lastNMonthKeys(3)[0],
   chartCustomTo: lastNMonthKeys(1)[0],
@@ -1390,11 +1399,18 @@ function chartMonthOptionKeys() {
   }
   return out;
 }
+function monthKeysForTerm(termIndex) {
+  const year = new Date().getFullYear();
+  const moe = computeMoeCalendar(year);
+  const term = moe.terms[termIndex];
+  return monthKeysInRange(monthKey(term.start), monthKey(term.end));
+}
 function chartRangeKeys() {
   switch (state.chartRangeMode) {
-    case "3months": return lastNMonthKeys(3);
-    case "6months": return lastNMonthKeys(6);
-    case "9months": return lastNMonthKeys(9);
+    case "term1": return monthKeysForTerm(0);
+    case "term2": return monthKeysForTerm(1);
+    case "term3": return monthKeysForTerm(2);
+    case "term4": return monthKeysForTerm(3);
     case "thisYear": return currentYearMonthKeys();
     case "custom": return monthKeysInRange(state.chartCustomFrom, state.chartCustomTo);
     default: return lastNMonthKeys(3);
@@ -1428,9 +1444,10 @@ const CHART_RANGE_OPTIONS_PRIMARY = [
   { key: "thisYear", label: "Year" },
 ];
 const CHART_RANGE_OPTIONS_SECONDARY = [
-  { key: "3months", label: "3 Months" },
-  { key: "6months", label: "6 Months" },
-  { key: "9months", label: "9 Months" },
+  { key: "term1", label: "Term 1" },
+  { key: "term2", label: "Term 2" },
+  { key: "term3", label: "Term 3" },
+  { key: "term4", label: "Term 4" },
   { key: "custom", label: "Custom" },
 ];
 const CHART_RANGE_OPTIONS = [...CHART_RANGE_OPTIONS_PRIMARY, ...CHART_RANGE_OPTIONS_SECONDARY];
@@ -1452,6 +1469,48 @@ function renderCategoryToggles(incl) {
         ${cats.map((c) => `<button type="button" class="dd-show-btn ${incl[c.key] ? "active" : ""}" data-action="toggle-chart-cat" data-cat="${c.key}" style="${incl[c.key] ? `background:${CHART_COLORS[c.key]};border-color:${CHART_COLORS[c.key]}` : ""}">${c.label}</button>`).join("")}
       </div>
     </div>`;
+}
+// Shared across Discipline/Suspension/Parent Meeting logs: a row of 6
+// level counters (P1-P6), one of which can be expanded into a table of
+// that level's classes vs the current year's four school terms. Only one
+// level stays expanded at a time (per page — each page tracks its own).
+function renderLevelBreakdown(pageKey, items, dateField) {
+  const year = new Date().getFullYear();
+  const moe = computeMoeCalendar(year);
+  const today = todayISO();
+  const active = items.filter((it) => !it.deleted);
+  const levelCounts = [1, 2, 3, 4, 5, 6].map((lvl) => ({
+    level: lvl,
+    count: active.filter((it) => classLevel(it.studentClass) === lvl).length,
+  }));
+  const expandedLevel = state[`${pageKey}ExpandedLevel`] || null;
+  const countersHtml = `
+    <div class="dd-level-counters">
+      ${levelCounts.map((lc) => `
+        <button type="button" class="dd-level-btn ${expandedLevel === lc.level ? "active" : ""}" data-action="toggle-level" data-page="${pageKey}" data-level="${lc.level}">
+          <div class="dd-level-num">P${lc.level}</div>
+          <div class="dd-level-count">${lc.count}</div>
+        </button>`).join("")}
+    </div>`;
+  if (!expandedLevel) return countersHtml;
+  const classes = CLASS_OPTIONS.filter((c) => classLevel(c) === expandedLevel);
+  const breakdownHtml = `
+    <div class="dd-level-breakdown">
+      <div class="dd-level-row dd-level-row-header">
+        <div class="dd-level-cell-class">Class</div>
+        ${moe.terms.map((t) => `<div class="dd-level-cell-term">${t.label}</div>`).join("")}
+      </div>
+      ${classes.map((cls) => `
+        <div class="dd-level-row">
+          <div class="dd-level-cell-class">${cls}</div>
+          ${moe.terms.map((t) => {
+            if (t.start > today) return `<div class="dd-level-cell-term"></div>`;
+            const n = active.filter((it) => it.studentClass === cls && it[dateField] >= t.start && it[dateField] <= t.end).length;
+            return `<div class="dd-level-cell-term">${n}</div>`;
+          }).join("")}
+        </div>`).join("")}
+    </div>`;
+  return countersHtml + breakdownHtml;
 }
 function renderTallyGrid(cats, totals) {
   if (!cats.length) return `<div class="dd-dash-empty">Nothing selected above.</div>`;
@@ -1523,17 +1582,23 @@ function renderCalLegend(incl) {
   return `<div class="dd-cal-legend dd-cal-legend-2col"><div class="dd-cal-legend-col">${col(legendLeft)}</div><div class="dd-cal-legend-col">${col(legendRight)}</div></div>`;
 }
 function renderTodayView(incl) {
-  const today = todayISO();
-  const c = computeCountsForDate(today);
+  const viewDate = state.dayViewDate || todayISO();
+  const c = computeCountsForDate(viewDate);
   const totals = { discipline: c.discipline, suspension: c.suspensionISS + c.suspensionOSS, parentMeeting: c.parentMeeting };
   const cats = ["discipline", "suspension", "parentMeeting"].filter((x) => incl[x]);
   return `
     ${renderTallyGrid(cats, totals)}
-    ${renderDayDetail(today, incl)}
+    <div class="dd-cal-nav">
+      <button type="button" class="dd-cal-nav-btn" data-action="nav-prev-day">‹</button>
+      <div class="dd-cal-nav-label">${formatDate(viewDate)}${viewDate === todayISO() ? " (Today)" : ""}</div>
+      <button type="button" class="dd-cal-nav-btn" data-action="nav-next-day">›</button>
+    </div>
+    ${renderDayDetail(viewDate, incl)}
     ${renderCalLegend(incl)}`;
 }
 function renderWeekCalendar(incl) {
-  const { monday, sunday } = currentWeekBounds();
+  const monday = state.weekViewMonday || currentWeekBounds().monday;
+  const sunday = addDays(monday, 6);
   const days = [];
   let cur = monday;
   for (let i = 0; i < 7; i++) { days.push(cur); cur = addDays(cur, 1); }
@@ -1558,9 +1623,18 @@ function renderWeekCalendar(incl) {
   });
   return `
     ${renderTallyGrid(cats, totals)}
+    <div class="dd-cal-nav">
+      <button type="button" class="dd-cal-nav-btn" data-action="nav-prev-week">‹</button>
+      <div class="dd-cal-nav-label">${formatDate(monday)} – ${formatDate(sunday)}</div>
+      <button type="button" class="dd-cal-nav-btn" data-action="nav-next-week">›</button>
+    </div>
     <div class="dd-week-grid">${cells.join("")}</div>
     ${renderDayDetail(state.selectedCalendarDay, incl)}
     ${renderCalLegend(incl)}`;
+}
+function isPublicHoliday(iso) {
+  const h = state.holidays;
+  return !!(h && h.publicHolidays && h.publicHolidays.includes(iso));
 }
 function isHolidayNotWeekend(iso) { return isNonSchoolDay(iso) && !isWeekend(iso); }
 function renderMiniMonth(monthKeyStr, incl) {
@@ -1574,17 +1648,20 @@ function renderMiniMonth(monthKeyStr, incl) {
     const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
     const c = computeCountsForDate(iso);
     const segs = [];
-    if (incl.discipline && c.discipline > 0) segs.push({ n: c.discipline, color: CHART_COLORS.discipline });
-    if (incl.suspension && c.suspensionISS > 0) segs.push({ n: c.suspensionISS, color: CHART_COLORS.suspension });
-    if (incl.suspension && c.suspensionOSS > 0) segs.push({ n: c.suspensionOSS, color: OSS_DOT_COLOR });
-    if (incl.parentMeeting && c.parentMeeting > 0) segs.push({ n: c.parentMeeting, color: CHART_COLORS.parentMeeting });
-    const totalN = segs.reduce((s, x) => s + x.n, 0);
-    const barHtml = totalN > 0
-      ? `<div class="dd-mini-bar">${segs.map((s) => `<span style="flex:${s.n};background:${s.color}"></span>`).join("")}</div>`
+    if (incl.discipline && c.discipline > 0) segs.push(CHART_COLORS.discipline);
+    if (incl.suspension && c.suspensionISS > 0) segs.push(CHART_COLORS.suspension);
+    if (incl.suspension && c.suspensionOSS > 0) segs.push(OSS_DOT_COLOR);
+    if (incl.parentMeeting && c.parentMeeting > 0) segs.push(CHART_COLORS.parentMeeting);
+    // Segments are just split evenly by which categories occurred that
+    // day, not weighted by how many of each — a day with 3 discipline
+    // entries and 1 suspension still splits into two equal halves.
+    const barHtml = segs.length > 0
+      ? `<div class="dd-mini-bar">${segs.map((color) => `<span style="flex:1;background:${color}"></span>`).join("")}</div>`
       : `<div class="dd-mini-bar dd-mini-bar-empty"></div>`;
     const isWknd = isWeekend(iso);
-    const isHol = isHolidayNotWeekend(iso);
-    const cellClass = isHol ? "dd-mini-holiday" : isWknd ? "dd-mini-weekend" : "";
+    const isPubHol = isPublicHoliday(iso);
+    const isOtherHol = !isPubHol && isHolidayNotWeekend(iso);
+    const cellClass = isPubHol ? "dd-mini-pubholiday" : isOtherHol ? "dd-mini-holiday" : isWknd ? "dd-mini-weekend" : "";
     const isSelected = state.selectedCalendarDay === iso;
     cells.push(`<button type="button" class="dd-mini-cell ${cellClass} ${iso === today ? "dd-mini-today" : ""} ${isSelected ? "dd-mini-selected" : ""}" data-action="select-cal-day" data-date="${iso}">
       <span class="dd-mini-daynum">${d}</span>${barHtml}
@@ -1598,7 +1675,7 @@ function renderMiniMonth(monthKeyStr, incl) {
     </div>`;
 }
 function renderYearCalendar(incl) {
-  const year = new Date().getFullYear();
+  const year = state.yearViewYear || new Date().getFullYear();
   const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
   const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
   totals.discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
@@ -1607,10 +1684,19 @@ function renderYearCalendar(incl) {
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
   return `
     ${renderTallyGrid(cats, totals)}
+    <div class="dd-cal-nav">
+      <button type="button" class="dd-cal-nav-btn" data-action="nav-prev-year">‹</button>
+      <div class="dd-cal-nav-label">${year}</div>
+      <button type="button" class="dd-cal-nav-btn" data-action="nav-next-year">›</button>
+    </div>
     <div class="dd-mini-year-grid">${months.map((mk) => renderMiniMonth(mk, incl)).join("")}</div>
     ${renderDayDetail(state.selectedCalendarDay, incl)}
     ${renderCalLegend(incl)}
-    <div class="dd-mono-muted" style="font-size:11px;margin-top:10px">Weekends greyed; school holidays highlighted yellow.</div>`;
+    <div class="dd-cal-legend">
+      <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:#E4E1D4"></span>Weekend</div>
+      <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:#F5E3A1"></span>School Holiday</div>
+      <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:#F2B8B0"></span>Public Holiday</div>
+    </div>`;
 }
 function renderMonthCalendar(monthKeyStr, incl) {
   const [y, m] = monthKeyStr.split("-").map(Number);
@@ -1676,10 +1762,8 @@ function renderMonthlyChart() {
       ${opts.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
     </div>`;
   const rangeSelectorHtml = `
-    <div class="dd-mono-muted" style="font-size:10px;text-transform:uppercase;margin-bottom:6px">View</div>
     ${rangePillsRow(CHART_RANGE_OPTIONS_PRIMARY)}
-    <div class="dd-mono-muted" style="font-size:10px;text-transform:uppercase;margin:10px 0 6px">Or a wider range</div>
-    ${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY)}`;
+    <div style="margin-top:8px">${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY)}</div>`;
 
   if (rangeMode === "today") {
     return `
@@ -2018,6 +2102,7 @@ function renderLogSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderLevelBreakdown("discipline", state.incidents, "date")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
           <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
@@ -2262,6 +2347,7 @@ function renderSuspensionSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderLevelBreakdown("suspension", state.suspensions, "startDate")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -2571,6 +2657,7 @@ function renderParentMeetingSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderLevelBreakdown("pm", state.parentMeetings, "date")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -2697,6 +2784,14 @@ function attachMainListeners() {
   document.querySelectorAll('[data-action="toggle-entry-expanded"]').forEach((el) =>
     el.addEventListener("click", () => { state.entryExpanded[el.dataset.id] = !state.entryExpanded[el.dataset.id]; render(); }));
 
+  document.querySelectorAll('[data-action="toggle-level"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const key = `${el.dataset.page}ExpandedLevel`;
+      const level = parseInt(el.dataset.level, 10);
+      state[key] = state[key] === level ? null : level;
+      renderKeepingPageScroll();
+    }));
+
   document.getElementById("btn-backup").addEventListener("click", downloadBackupFile);
 
   const helpBtn = document.getElementById("btn-help");
@@ -2727,9 +2822,25 @@ function attachDashboardListeners() {
       state.chartRangeMode = el.dataset.range;
       if (el.dataset.range === "custom") state.showChartCustomModal = true;
       if (el.dataset.range === "thisMonth") state.calendarViewMonth = currentMonthKeyStr();
+      if (el.dataset.range === "today") state.dayViewDate = todayISO();
+      if (el.dataset.range === "thisWeek") state.weekViewMonday = currentWeekBounds().monday;
+      if (el.dataset.range === "thisYear") state.yearViewYear = new Date().getFullYear();
       state.selectedCalendarDay = null;
       renderKeepingPageScroll();
     }));
+
+  document.querySelectorAll('[data-action="nav-prev-day"]').forEach((el) =>
+    el.addEventListener("click", () => { state.dayViewDate = addDays(state.dayViewDate || todayISO(), -1); renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="nav-next-day"]').forEach((el) =>
+    el.addEventListener("click", () => { state.dayViewDate = addDays(state.dayViewDate || todayISO(), 1); renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="nav-prev-week"]').forEach((el) =>
+    el.addEventListener("click", () => { state.weekViewMonday = addDays(state.weekViewMonday || currentWeekBounds().monday, -7); state.selectedCalendarDay = null; renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="nav-next-week"]').forEach((el) =>
+    el.addEventListener("click", () => { state.weekViewMonday = addDays(state.weekViewMonday || currentWeekBounds().monday, 7); state.selectedCalendarDay = null; renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="nav-prev-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state.yearViewYear = (state.yearViewYear || new Date().getFullYear()) - 1; state.selectedCalendarDay = null; renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="nav-next-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state.yearViewYear = (state.yearViewYear || new Date().getFullYear()) + 1; state.selectedCalendarDay = null; renderKeepingPageScroll(); }));
 
   document.querySelectorAll('[data-action="cal-prev-month"]').forEach((el) =>
     el.addEventListener("click", () => {
