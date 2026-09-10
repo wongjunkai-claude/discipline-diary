@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.24.0";
+const APP_VERSION = "2.25.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1421,16 +1421,19 @@ function niceAxisMax(v) {
   else niceResidual = 10;
   return niceResidual * magnitude;
 }
-const CHART_RANGE_OPTIONS = [
-  { key: "today", label: "Today" },
-  { key: "thisWeek", label: "This Week" },
-  { key: "thisMonth", label: "1M" },
-  { key: "3months", label: "3M" },
-  { key: "6months", label: "6M" },
-  { key: "9months", label: "9M" },
-  { key: "thisYear", label: "This Year" },
+const CHART_RANGE_OPTIONS_PRIMARY = [
+  { key: "today", label: "Day" },
+  { key: "thisWeek", label: "Week" },
+  { key: "thisMonth", label: "Month" },
+  { key: "thisYear", label: "Year" },
+];
+const CHART_RANGE_OPTIONS_SECONDARY = [
+  { key: "3months", label: "3 Months" },
+  { key: "6months", label: "6 Months" },
+  { key: "9months", label: "9 Months" },
   { key: "custom", label: "Custom" },
 ];
+const CHART_RANGE_OPTIONS = [...CHART_RANGE_OPTIONS_PRIMARY, ...CHART_RANGE_OPTIONS_SECONDARY];
 const CATEGORY_META = {
   discipline: { label: "Discipline", checkboxLabel: "Discipline" },
   suspension: { label: "Suspension", checkboxLabel: "Suspension" },
@@ -1559,6 +1562,56 @@ function renderWeekCalendar(incl) {
     ${renderDayDetail(state.selectedCalendarDay, incl)}
     ${renderCalLegend(incl)}`;
 }
+function isHolidayNotWeekend(iso) { return isNonSchoolDay(iso) && !isWeekend(iso); }
+function renderMiniMonth(monthKeyStr, incl) {
+  const [y, m] = monthKeyStr.split("-").map(Number);
+  const firstDow = weekdayOf(`${monthKeyStr}-01`);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const today = todayISO();
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(`<div class="dd-mini-cell dd-mini-cell-empty"></div>`);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
+    const c = computeCountsForDate(iso);
+    const segs = [];
+    if (incl.discipline && c.discipline > 0) segs.push({ n: c.discipline, color: CHART_COLORS.discipline });
+    if (incl.suspension && c.suspensionISS > 0) segs.push({ n: c.suspensionISS, color: CHART_COLORS.suspension });
+    if (incl.suspension && c.suspensionOSS > 0) segs.push({ n: c.suspensionOSS, color: OSS_DOT_COLOR });
+    if (incl.parentMeeting && c.parentMeeting > 0) segs.push({ n: c.parentMeeting, color: CHART_COLORS.parentMeeting });
+    const totalN = segs.reduce((s, x) => s + x.n, 0);
+    const barHtml = totalN > 0
+      ? `<div class="dd-mini-bar">${segs.map((s) => `<span style="flex:${s.n};background:${s.color}"></span>`).join("")}</div>`
+      : `<div class="dd-mini-bar dd-mini-bar-empty"></div>`;
+    const isWknd = isWeekend(iso);
+    const isHol = isHolidayNotWeekend(iso);
+    const cellClass = isHol ? "dd-mini-holiday" : isWknd ? "dd-mini-weekend" : "";
+    const isSelected = state.selectedCalendarDay === iso;
+    cells.push(`<button type="button" class="dd-mini-cell ${cellClass} ${iso === today ? "dd-mini-today" : ""} ${isSelected ? "dd-mini-selected" : ""}" data-action="select-cal-day" data-date="${iso}">
+      <span class="dd-mini-daynum">${d}</span>${barHtml}
+    </button>`);
+  }
+  return `
+    <div class="dd-mini-month">
+      <div class="dd-mini-month-title">${monthLabelFromKey(monthKeyStr).split(" ")[0]}</div>
+      <div class="dd-mini-weekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+      <div class="dd-mini-grid">${cells.join("")}</div>
+    </div>`;
+}
+function renderYearCalendar(incl) {
+  const year = new Date().getFullYear();
+  const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
+  const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  totals.discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
+  totals.parentMeeting = state.parentMeetings.filter((m) => !m.deleted && m.date && m.date.startsWith(`${year}-`)).length;
+  totals.suspension = suspensionEntryCountForRange(`${year}-01-01`, `${year}-12-31`);
+  const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+  return `
+    ${renderTallyGrid(cats, totals)}
+    <div class="dd-mini-year-grid">${months.map((mk) => renderMiniMonth(mk, incl)).join("")}</div>
+    ${renderDayDetail(state.selectedCalendarDay, incl)}
+    ${renderCalLegend(incl)}
+    <div class="dd-mono-muted" style="font-size:11px;margin-top:10px">Weekends greyed; school holidays highlighted yellow.</div>`;
+}
 function renderMonthCalendar(monthKeyStr, incl) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const daily = computeDailyCountsForMonth(monthKeyStr);
@@ -1596,7 +1649,6 @@ function renderMonthCalendar(monthKeyStr, incl) {
     ${renderCalLegend(incl)}`;
 }
 function renderChartCustomModal() {
-  const monthOptions = chartMonthOptionKeys();
   return `
     <div class="dd-modal-backdrop" id="chart-custom-modal-backdrop">
       <div class="dd-modal" id="chart-custom-modal">
@@ -1605,13 +1657,9 @@ function renderChartCustomModal() {
           <button type="button" class="dd-modal-close" id="chart-custom-modal-close">✕</button>
         </div>
         <label class="dd-label" style="margin-top:0">From</label>
-        <select class="dd-input" id="chart-custom-from">
-          ${monthOptions.map((k) => `<option value="${k}" ${state.chartCustomFrom === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
-        </select>
+        <input type="month" class="dd-input" id="chart-custom-from" value="${state.chartCustomFrom}" />
         <label class="dd-label">To</label>
-        <select class="dd-input" id="chart-custom-to">
-          ${monthOptions.map((k) => `<option value="${k}" ${state.chartCustomTo === k ? "selected" : ""}>${monthLabelFromKey(k)}</option>`).join("")}
-        </select>
+        <input type="month" class="dd-input" id="chart-custom-to" value="${state.chartCustomTo}" />
         <button class="dd-btn-primary" type="button" id="chart-custom-apply">Apply</button>
       </div>
     </div>`;
@@ -1623,10 +1671,15 @@ function renderMonthlyChart() {
     suspension: state.chartIncludeSuspension !== false,
     parentMeeting: state.chartIncludeParentMeeting !== false,
   };
-  const rangeSelectorHtml = `
+  const rangePillsRow = (opts) => `
     <div class="dd-range-pills">
-      ${CHART_RANGE_OPTIONS.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
+      ${opts.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
     </div>`;
+  const rangeSelectorHtml = `
+    <div class="dd-mono-muted" style="font-size:10px;text-transform:uppercase;margin-bottom:6px">View</div>
+    ${rangePillsRow(CHART_RANGE_OPTIONS_PRIMARY)}
+    <div class="dd-mono-muted" style="font-size:10px;text-transform:uppercase;margin:10px 0 6px">Or a wider range</div>
+    ${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY)}`;
 
   if (rangeMode === "today") {
     return `
@@ -1654,6 +1707,16 @@ function renderMonthlyChart() {
       ${rangeSelectorHtml}
       ${renderCategoryToggles(incl)}
       ${renderMonthCalendar(state.calendarViewMonth || currentMonthKeyStr(), incl)}
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
+  }
+
+  if (rangeMode === "thisYear") {
+    return `
+    <div class="dd-panel" style="margin-top:16px">
+      ${rangeSelectorHtml}
+      ${renderCategoryToggles(incl)}
+      ${renderYearCalendar(incl)}
     </div>
     ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
   }
