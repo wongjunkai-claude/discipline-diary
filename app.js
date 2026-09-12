@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.32.2";
+const APP_VERSION = "2.32.3";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -807,13 +807,12 @@ async function submitNewCase() {
     render();
   }
 }
-async function submitNewIncident(e) {
-  e.preventDefault();
-  const f = e.target;
+async function submitNewIncident() {
+  const container = document.getElementById("new-form");
   const d = state._newIncidentDraft;
-  const studentName = f.studentName.value.trim();
-  const studentClass = f.studentClass.value;
-  const date = f.date.value;
+  const studentName = (container.querySelector('[name="studentName"]')?.value || "").trim();
+  const studentClass = container.querySelector('[name="studentClass"]')?.value || "";
+  const date = container.querySelector('[name="date"]')?.value || d.date;
   const selectedIssues = d.selectedIssues || [];
   if (!studentName) { state.newIncidentFormError = "Enter the student's name."; render(); return; }
   if (!studentClass) { state.newIncidentFormError = "Select a class."; render(); return; }
@@ -2688,7 +2687,7 @@ function renderNewForm() {
   const hasRelated = related.suspensions.length > 0 || related.parentMeetings.length > 0;
   return `
     <div class="dd-modal-backdrop" id="modal-backdrop">
-      <form class="dd-modal" id="new-form">
+      <div class="dd-modal" id="new-form">
         <div class="dd-modal-head"><div class="dd-modal-title">New grooming issue</div><button type="button" class="dd-modal-close" id="modal-close">✕</button></div>
         <label class="dd-label">Student name</label>
         <input class="dd-input" name="studentName" id="new-incident-student-name" required value="${escapeHtml(d.studentName)}" />
@@ -2730,8 +2729,8 @@ function renderNewForm() {
         </div>` : ""}
         ${state.newIncidentFormError ? `<div class="dd-error">${escapeHtml(state.newIncidentFormError)}</div>` : ""}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
-        <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save entry"}</button>
-      </form>
+        <button class="dd-btn-primary" type="button" id="btn-save-new-incident" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save entry"}</button>
+      </div>
     </div>`;
 }
 function renderEditIncidentForm() {
@@ -3565,7 +3564,8 @@ function attachLogListeners() {
 
   if (state.showNewForm) {
     const form = document.getElementById("new-form");
-    form.addEventListener("submit", submitNewIncident);
+    const saveBtn = document.getElementById("btn-save-new-incident");
+    if (saveBtn) saveBtn.addEventListener("click", submitNewIncident);
     document.getElementById("modal-close").addEventListener("click", () => { state.showNewForm = false; state._newIncidentDraft = null; render(); });
     document.getElementById("modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "modal-backdrop") { state.showNewForm = false; state._newIncidentDraft = null; render(); } });
 
@@ -3581,9 +3581,9 @@ function attachLogListeners() {
       const ns = document.getElementById("new-incident-student-name");
       if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
     });
-    const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._newIncidentDraft[name] = el.value; }); };
+    const syncField = (name) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.addEventListener("input", () => { state._newIncidentDraft[name] = el.value; }); };
     syncField("date");
-    const classEl = form.elements["studentClass"];
+    const classEl = form.querySelector('[name="studentClass"]');
     if (classEl) classEl.addEventListener("change", () => { state._newIncidentDraft.studentClass = classEl.value; });
 
     form.querySelectorAll(".dd-grooming-issue-cb").forEach((cb) =>
