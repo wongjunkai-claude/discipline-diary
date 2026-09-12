@@ -96,6 +96,25 @@ Entry button) opens a plain-language guide for
 teachers — statuses, suspensions, editing, removing, and backups — separate
 from this README, which is aimed at whoever maintains the app.
 
+## Settings & Annual Summary Reports
+
+A gear icon sits in the header, next to Help. It opens **Settings → Annual
+Summary Reports → pick a year** to see that year's report:
+
+- Total tally (Discipline / Suspension / Parent Meeting) for the year
+- A Term 1–4 breakdown table
+- Two bar-row charts: by month, and by term
+- **Most challenging levels** and **most challenging classes** — ranked by
+  combined discipline + suspension total, with each individual number
+  still shown alongside the total (not just a merged figure)
+- Every student with at least one suspension that year, in full — not
+  just a top few
+
+There's no archiving step and nothing runs automatically on any date —
+the report just queries the same live Firestore data by year on demand,
+since nothing in this app is ever hard-deleted (see "Removing entries"
+below), so past years' records are always there to query.
+
 ## Dashboard (Home)
 
 The home icon in the nav is the first stop — trends of who's been named
@@ -104,11 +123,16 @@ section below (which includes a **Today** view covering the same
 "who's in today" info the old ISS/OSS tracker boxes used to show, now
 folded into the trend section instead of living separately).
 
-**"Most named students"** has three pills — **Both**, **Discipline Only**,
-**Suspension Only** — filtering the list to students with at least one
-matching record. Sort order is total mentions first, then (as a tiebreak)
-whoever has more suspensions, then whoever has more discipline entries —
-suspensions are weighted as the more serious signal when totals tie.
+**"Students' Watchlist"** (was "Most named students") sorts students into
+three risk tiers, checked in this priority order so nobody is double
+counted:
+- **High Risk** — 2 or more suspensions
+- **Medium Risk** — 1 suspension, or more than 3 discipline entries
+- **Low Risk** — discipline entries only, no suspension
+
+Within a tier, sorted by suspension count then discipline count,
+descending. The Parent Meeting dashboard panel has been removed entirely
+(not folded into anything else).
 
 A row of tappable pills picks how the section below displays: **Today**,
 **This Week**, **1M**, **3M**, **6M**, **9M**, **This Year**, or **Custom**
