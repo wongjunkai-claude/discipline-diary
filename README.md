@@ -115,6 +115,23 @@ the report just queries the same live Firestore data by year on demand,
 since nothing in this app is ever hard-deleted (see "Removing entries"
 below), so past years' records are always there to query.
 
+**Settings → Classes For The Year** controls which classes appear in the
+class dropdown when logging any entry, for the current year only. Tick
+which of the full P1-1 to P6-6 roster are actually running this year
+(useful after re-streaming, or if a level doesn't run every class every
+year) — untick ones that don't apply, tick any that do. An entry's
+already-saved class always still shows up when editing it, even if it's
+since been unticked, so nothing silently blanks out.
+
+There's no explicit "1 January" trigger for the prompt to review this —
+instead, since nothing is configured yet for a brand new year, a banner
+on the Dashboard and in Settings shows automatically the moment the
+current year has no saved class list, which is exactly what happens the
+first time anyone opens the app after the year changes. Same reasoning as
+the 30-day purge and the Annual Reports: this app has no server to run a
+job on a specific date, so anything date-triggered here works by noticing
+missing data instead, not by watching a clock.
+
 ## Dashboard (Home)
 
 The home icon in the nav is the first stop — trends of who's been named

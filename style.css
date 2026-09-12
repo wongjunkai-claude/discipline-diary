@@ -262,10 +262,10 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 }
 @keyframes dd-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-.dd-range-pills { display: flex; flex-wrap: nowrap; gap: 3px; margin-bottom: 12px; }
+.dd-range-pills { display: flex; flex-wrap: nowrap; gap: 4px; margin-bottom: 8px; }
 .dd-range-pill {
-  font-family: 'IBM Plex Sans', sans-serif; font-size: 9px; font-weight: 600; padding: 6px 4px; border-radius: 999px;
-  border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer; white-space: nowrap; flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  flex: 1; font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; font-weight: 600; padding: 7px 3px; border-radius: 999px;
+  border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .dd-range-pill.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 

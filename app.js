@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.30.1";
+const APP_VERSION = "2.32.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -375,8 +375,10 @@ const state = {
   showHelp: false,
   chartRangeMode: "thisMonth",
   watchTier: "high",
-  settingsView: "menu", // 'menu' | 'yearList' | 'yearReport'
+  settingsView: "menu", // 'menu' | 'yearList' | 'yearReport' | 'classesForYear'
   settingsSelectedYear: null,
+  classConfig: null,
+  _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
   dayViewDate: null, // set on first render to today
   weekViewMonday: null, // set on first render to this week's Monday
@@ -422,6 +424,7 @@ const state = {
   _pmDraft: null,
   pmFormError: "",
   suspFormError: "",
+  newIncidentFormError: "",
 
   showNewCaseFlow: false,
   newCaseStep: "discipline",
@@ -491,6 +494,11 @@ function startListening() {
     doc(db, "holidays", "singapore"),
     (snap) => { if (snap.exists()) { state.holidays = snap.data(); render(); } },
     () => {}
+  );
+  onSnapshot(
+    doc(db, "settings", "classConfig"),
+    (snap) => { state.classConfig = snap.exists() ? snap.data() : {}; render(); },
+    () => { state.classConfig = {}; render(); }
   );
 }
 
@@ -807,8 +815,11 @@ async function submitNewIncident(e) {
   const studentClass = f.studentClass.value;
   const date = f.date.value;
   const selectedIssues = d.selectedIssues || [];
-  if (!studentName || !studentClass || selectedIssues.length === 0) return;
-  if (selectedIssues.includes("Others") && !(d.othersText || "").trim()) return;
+  if (!studentName) { state.newIncidentFormError = "Enter the student's name."; render(); return; }
+  if (!studentClass) { state.newIncidentFormError = "Select a class."; render(); return; }
+  if (selectedIssues.length === 0) { state.newIncidentFormError = "Select at least one issue."; render(); return; }
+  if (selectedIssues.includes("Others") && !(d.othersText || "").trim()) { state.newIncidentFormError = "Specify what \"Others\" means for this entry."; render(); return; }
+  state.newIncidentFormError = "";
   state.saveError = false;
   state.saving = true;
   render();
@@ -1603,13 +1614,13 @@ const CHART_RANGE_OPTIONS_PRIMARY = [
   { key: "today", label: "Day" },
   { key: "thisWeek", label: "Week" },
   { key: "thisMonth", label: "Month" },
+  { key: "thisYear", label: "Year" },
+];
+const CHART_RANGE_OPTIONS_SECONDARY = [
   { key: "term1", label: "Term 1" },
   { key: "term2", label: "Term 2" },
   { key: "term3", label: "Term 3" },
   { key: "term4", label: "Term 4" },
-  { key: "thisYear", label: "Year" },
-];
-const CHART_RANGE_OPTIONS_SECONDARY = [
   { key: "custom", label: "Custom" },
 ];
 const CHART_RANGE_OPTIONS = [...CHART_RANGE_OPTIONS_PRIMARY, ...CHART_RANGE_OPTIONS_SECONDARY];
@@ -1620,7 +1631,7 @@ const CATEGORY_META = {
 };
 function renderCategoryToggles(incl) {
   const cats = [
-    { key: "discipline", label: "Discipline" },
+    { key: "discipline", label: "Grooming Issue" },
     { key: "suspension", label: "Suspension" },
     { key: "parentMeeting", label: "Parent Meeting" },
   ];
@@ -1694,7 +1705,7 @@ function computeYearSuspensionRoster(year) {
 }
 function renderReportBarRows(rows) {
   const cats = [
-    { key: "discipline", label: "Discipline" },
+    { key: "discipline", label: "Grooming Issue" },
     { key: "suspension", label: "Suspension" },
     { key: "parentMeeting", label: "Parent Meeting" },
   ];
@@ -1786,10 +1797,33 @@ function renderSettingsSection() {
       <div style="display:flex;flex-direction:column;gap:8px">
         ${years.map((y) => `<button type="button" class="dd-pill" style="text-align:left" data-action="settings-open-year" data-year="${y}">${y}</button>`).join("")}
       </div>`;
+  } else if (state.settingsView === "classesForYear") {
+    const year = new Date().getFullYear();
+    const draft = state._classDraft || classOptionsForCurrentYear();
+    body = `
+      ${backBtn("Settings", "settings-back-to-menu")}
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Classes For ${year}</div>
+      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:12px">
+        Only ticked classes will show up in the class dropdown when logging an entry this year. Untick any that don't exist this year (e.g. after re-streaming); tick any new ones.
+      </div>
+      <div class="dd-issue-grid">
+        ${CLASS_OPTIONS.map((c) => `
+          <label class="dd-checkbox-pill" style="display:flex">
+            <input type="checkbox" class="dd-class-year-cb" value="${c}" ${draft.includes(c) ? "checked" : ""} />
+            <span>${c}</span>
+          </label>`).join("")}
+      </div>
+      <button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px">Save for ${year}</button>`;
   } else {
+    const year = new Date().getFullYear();
+    const needsReview = !state.classConfig?.classesByYear?.[String(year)];
     body = `
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Settings</div>
-      <button type="button" class="dd-pill" style="text-align:left" data-action="settings-open-years">Annual Summary Reports</button>`;
+      ${needsReview ? `<div class="dd-error" style="margin-bottom:10px">Classes for ${year} haven't been reviewed yet — pick which classes are active this year below.</div>` : ""}
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button type="button" class="dd-pill" style="text-align:left" data-action="settings-open-years">Annual Summary Reports</button>
+        <button type="button" class="dd-pill" style="text-align:left" data-action="settings-open-classes">Classes For The Year</button>
+      </div>`;
   }
   return `
     <div class="dd-app">
@@ -1908,7 +1942,7 @@ function suspensionEntryCountForRange(fromISO, toISO) {
 function renderCalLegend(incl) {
   const legendLeft = [];
   const legendRight = [];
-  if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Discipline" });
+  if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Grooming Issue" });
   if (incl.parentMeeting) legendLeft.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meeting" });
   if (incl.suspension) legendRight.push({ color: CHART_COLORS.suspension, label: "In-School Suspension" });
   if (incl.suspension) legendRight.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension" });
@@ -2340,34 +2374,39 @@ function renderDashboardSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${!state.classConfig?.classesByYear?.[String(new Date().getFullYear())] ? `
+        <div class="dd-error" style="margin-bottom:12px" data-action="goto-classes-for-year">Classes for ${new Date().getFullYear()} haven't been reviewed yet — <button type="button" class="dd-back-link" data-action="goto-classes-for-year" style="text-decoration:underline">tap here to set them up</button>.</div>` : ""}
         <div class="dd-new-entry-row">
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ New Grooming Issue</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ New Suspension</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ New Parents Meet</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ Grooming Issue</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ Suspension</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parents Meeting</button>
         </div>
 
         ${renderMonthlyChart()}
 
         <div class="dd-panel" style="margin-top:16px">
           <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Students' Watchlist</div>
-          <div class="dd-range-pills">
-            <button type="button" class="dd-range-pill ${watchTier === "high" ? "active" : ""}" data-action="set-watch-tier" data-tier="high">High Risk</button>
-            <button type="button" class="dd-range-pill ${watchTier === "medium" ? "active" : ""}" data-action="set-watch-tier" data-tier="medium">Medium Risk</button>
-            <button type="button" class="dd-range-pill ${watchTier === "low" ? "active" : ""}" data-action="set-watch-tier" data-tier="low">Low Risk</button>
+          <div class="dd-range-pills" style="flex-wrap:nowrap">
+            <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>
+            <button type="button" class="dd-range-pill${watchTier === "medium" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="medium">Medium Risk</button>
+            <button type="button" class="dd-range-pill${watchTier === "low" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="low">Low Risk</button>
           </div>
-          <div class="dd-mono-muted" style="font-size:11px;margin-bottom:10px">
+          <div class="dd-mono-muted" style="font-size:11px;margin:10px 0">
             ${watchTier === "high" ? "2+ suspensions, or 3+ final warnings, this semester" : watchTier === "medium" ? "1 suspension, 4-6 second warnings, or 2 final warnings, this semester" : "1-3 second warnings this semester, no suspension"}
           </div>
           ${watchlist.length === 0 ? `<div class="dd-dash-empty">No students in this tier.</div>` : `
-          <div style="display:flex;flex-direction:column;gap:8px">
-            ${watchlist.map((t) => `
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #E4E1D4;padding-bottom:6px">
-                <div>
-                  <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(t.name))}</div>
-                  ${t.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Class ${escapeHtml(t.studentClass)}</div>` : ""}
-                </div>
-                <span class="dd-mono-muted" style="font-size:12px;text-align:right;flex-shrink:0;margin-left:8px">${t.second} 2nd warning · ${t.third} final warning · ${t.suspension} suspension</span>
-              </div>`).join("")}
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${watchlist.map((t) => {
+              const stats = [];
+              if (t.suspension > 0) stats.push(`${t.suspension} suspension${t.suspension === 1 ? "" : "s"}`);
+              if (t.third > 0) stats.push(`${t.third} final warning${t.third === 1 ? "" : "s"}`);
+              if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
+              return `
+              <div style="border-bottom:1px solid #E4E1D4;padding-bottom:8px">
+                <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
+                ${stats.map((s) => `<div class="dd-mono-muted" style="font-size:12px;margin-top:2px">${s}</div>`).join("")}
+              </div>`;
+            }).join("")}
           </div>`}
         </div>
         ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
@@ -2625,8 +2664,21 @@ function recycleBinButton(id, active, count) {
     </svg>
   </button>`;
 }
+// The classes actually available this year, if configured under Settings
+// → Classes For The Year — falls back to the full roster if nothing has
+// been set for this year yet (e.g. before the feature was ever used).
+function classOptionsForCurrentYear() {
+  const year = String(new Date().getFullYear());
+  const configured = state.classConfig?.classesByYear?.[year];
+  return Array.isArray(configured) && configured.length ? configured : CLASS_OPTIONS;
+}
 function classOptionsHtml(selected) {
-  return `<option value="">Select class…</option>` + CLASS_OPTIONS.map((c) => `<option value="${c}" ${c === selected ? "selected" : ""}>${c}</option>`).join("");
+  const options = classOptionsForCurrentYear();
+  // If an entry's saved class isn't in this year's active list (e.g. an
+  // older record, or the list changed after it was logged), still show it
+  // so editing doesn't silently blank out the field.
+  const withSelected = selected && !options.includes(selected) ? [...options, selected] : options;
+  return `<option value="">Select class…</option>` + withSelected.map((c) => `<option value="${c}" ${c === selected ? "selected" : ""}>${c}</option>`).join("");
 }
 
 function renderNewForm() {
@@ -2675,6 +2727,8 @@ function renderNewForm() {
             return `${escapeHtml(type)}: 1st Warning due ${formatDate(addDays(d.date, cfg.days[0]))}${cfg.parentFrom <= 1 ? " — parents contacted immediately" : ""}`;
           }).join("<br>")}
         </div>` : ""}
+        ${state.newIncidentFormError ? `<div class="dd-error">${escapeHtml(state.newIncidentFormError)}</div>` : ""}
+        ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save entry"}</button>
       </form>
     </div>`;
@@ -3233,6 +3287,31 @@ function attachMainListeners() {
   document.querySelectorAll('[data-action="settings-open-year"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsSelectedYear = parseInt(el.dataset.year, 10); state.settingsView = "yearReport"; render(); }));
 
+  document.querySelectorAll('[data-action="settings-open-classes"]').forEach((el) =>
+    el.addEventListener("click", () => { state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; render(); }));
+  document.querySelectorAll('[data-action="goto-classes-for-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state.section = "settings"; state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; render(); }));
+  document.querySelectorAll(".dd-class-year-cb").forEach((cb) =>
+    cb.addEventListener("change", () => {
+      if (!state._classDraft) state._classDraft = classOptionsForCurrentYear().slice();
+      if (cb.checked) { if (!state._classDraft.includes(cb.value)) state._classDraft.push(cb.value); }
+      else { state._classDraft = state._classDraft.filter((x) => x !== cb.value); }
+    }));
+  const saveClassBtn = document.getElementById("btn-save-class-config");
+  if (saveClassBtn) saveClassBtn.addEventListener("click", async () => {
+    const year = String(new Date().getFullYear());
+    const classes = (state._classDraft || []).slice();
+    try {
+      await setDoc(doc(db, "settings", "classConfig"), { classesByYear: { ...(state.classConfig?.classesByYear || {}), [year]: classes } }, { merge: true });
+      state.settingsView = "menu";
+      render();
+    } catch (err) {
+      state.saveError = true;
+      state.saveErrorDetail = err?.message || String(err);
+      render();
+    }
+  });
+
   const helpBtn = document.getElementById("btn-help");
   if (helpBtn) helpBtn.addEventListener("click", () => { state.showHelp = true; render(); });
   if (state.showHelp) {
@@ -3321,6 +3400,7 @@ function attachDashboardListeners() {
   if (newCaseBtn) newCaseBtn.addEventListener("click", () => {
     state.showNewForm = true;
     state._newIncidentDraft = freshIncidentDraft();
+    state.newIncidentFormError = "";
     render();
   });
 
