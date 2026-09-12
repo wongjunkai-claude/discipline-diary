@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.32.0";
+const APP_VERSION = "2.32.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1813,7 +1813,8 @@ function renderSettingsSection() {
             <span>${c}</span>
           </label>`).join("")}
       </div>
-      <button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px">Save for ${year}</button>`;
+      ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
+      <button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : `Save for ${year}`}</button>`;
   } else {
     const year = new Date().getFullYear();
     const needsReview = !state.classConfig?.classesByYear?.[String(year)];
@@ -3073,7 +3074,7 @@ function renderSuspForm(isEdit) {
         ${!isEdit ? `
         <label class="dd-checkbox-pill" style="display:flex;margin-top:14px">
           <input type="checkbox" id="susp-tag-pm-cb" ${d.tagPm ? "checked" : ""} />
-          <span>Tag a Parent Meeting to this suspension?</span>
+          <span>Meeting Parents</span>
         </label>
         ${d.tagPm ? `
         <div class="dd-related-box" style="margin-top:8px">
@@ -3288,9 +3289,9 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.settingsSelectedYear = parseInt(el.dataset.year, 10); state.settingsView = "yearReport"; render(); }));
 
   document.querySelectorAll('[data-action="settings-open-classes"]').forEach((el) =>
-    el.addEventListener("click", () => { state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; render(); }));
+    el.addEventListener("click", () => { state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
   document.querySelectorAll('[data-action="goto-classes-for-year"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "settings"; state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; render(); }));
+    el.addEventListener("click", () => { state.section = "settings"; state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
   document.querySelectorAll(".dd-class-year-cb").forEach((cb) =>
     cb.addEventListener("change", () => {
       if (!state._classDraft) state._classDraft = classOptionsForCurrentYear().slice();
@@ -3301,13 +3302,18 @@ function attachMainListeners() {
   if (saveClassBtn) saveClassBtn.addEventListener("click", async () => {
     const year = String(new Date().getFullYear());
     const classes = (state._classDraft || []).slice();
+    state.saveError = false;
+    state.saving = true;
+    render();
     try {
       await setDoc(doc(db, "settings", "classConfig"), { classesByYear: { ...(state.classConfig?.classesByYear || {}), [year]: classes } }, { merge: true });
       state.settingsView = "menu";
+      state.saving = false;
       render();
     } catch (err) {
       state.saveError = true;
       state.saveErrorDetail = err?.message || String(err);
+      state.saving = false;
       render();
     }
   });
