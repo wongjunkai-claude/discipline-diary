@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.32.3";
+const APP_VERSION = "2.32.4";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -3759,7 +3759,7 @@ function setupPullToRefresh() {
   let pulling = false;
 
   document.addEventListener("touchstart", (e) => {
-    if (window.scrollY <= 0) {
+    if (window.scrollY <= 0 && !document.querySelector(".dd-modal-backdrop")) {
       startY = e.touches[0].clientY;
       pulling = true;
       indicator.style.transition = "none";
