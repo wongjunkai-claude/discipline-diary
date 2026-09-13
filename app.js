@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.34.0";
+const APP_VERSION = "2.34.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -3571,8 +3571,6 @@ function attachLogListeners() {
 
   if (state.showNewForm) {
     const form = document.getElementById("new-form");
-    document.getElementById("modal-close").addEventListener("click", () => { state.showNewForm = false; state._newIncidentDraft = null; render(); });
-    document.getElementById("modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "modal-backdrop") { state.showNewForm = false; state._newIncidentDraft = null; render(); } });
 
     // Student name re-renders on every keystroke (to refresh related-record
     // matches below it), so every other field needs to live in the draft too
@@ -3823,20 +3821,35 @@ setupPullToRefresh();
 // touchend fires the instant the finger lifts, before any of that. A
 // timestamp guard stops the same tap from firing twice if a click event
 // also ends up following the touchend.
-let lastDelegatedActionAt = 0;
-function runDelegatedAction(fn) {
+const lastDelegatedActionAt = {};
+function runDelegatedAction(key, fn) {
   const now = Date.now();
-  if (now - lastDelegatedActionAt < 500) return;
-  lastDelegatedActionAt = now;
+  if (now - (lastDelegatedActionAt[key] || 0) < 350) return;
+  lastDelegatedActionAt[key] = now;
   fn();
 }
 function handleDelegatedTap(e) {
+  const closeBtn = e.target.closest && e.target.closest("#modal-close");
+  const backdropHit = e.target.id === "modal-backdrop";
+  if (closeBtn || backdropHit) {
+    runDelegatedAction("close-new-form", () => { state.showNewForm = false; state._newIncidentDraft = null; render(); });
+    return;
+  }
+  // Whatever event actually changed the name field (input, autocomplete,
+  // autofill — not all of these reliably fire a plain "input" event on
+  // every browser), grab its current on-screen value before any action
+  // triggers a re-render, so a typed name can never be wiped out by a
+  // stale value lingering in state.
+  if (state._newIncidentDraft) {
+    const nameEl = document.getElementById("new-incident-student-name");
+    if (nameEl) state._newIncidentDraft.studentName = nameEl.value;
+  }
   const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
-  if (saveBtn && !saveBtn.disabled) { runDelegatedAction(() => submitNewIncident()); return; }
+  if (saveBtn && !saveBtn.disabled) { runDelegatedAction("save-new-incident", () => submitNewIncident()); return; }
   const tagBtn = e.target.closest && e.target.closest(".dd-issue-tag");
   if (tagBtn && state._newIncidentDraft) {
-    runDelegatedAction(() => {
-      const type = tagBtn.dataset.issue;
+    const type = tagBtn.dataset.issue;
+    runDelegatedAction("toggle-tag-" + type, () => {
       const list = state._newIncidentDraft.selectedIssues;
       if (list.includes(type)) state._newIncidentDraft.selectedIssues = list.filter((x) => x !== type);
       else list.push(type);
