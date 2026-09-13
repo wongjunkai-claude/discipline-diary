@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.33.0";
+const APP_VERSION = "2.33.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -3802,6 +3802,19 @@ async function forceRefreshApp() {
 setupPullToRefresh();
 
 // Attached once, permanently, to document — not inside attachMainListeners
+// On mobile, tapping a button while a text field is still focused often
+// "wastes" that first tap just dismissing the keyboard — the actual click
+// only registers on a second tap once the keyboard's gone. Blurring the
+// focused field as early as touchstart (before the keyboard-dismiss and
+// the click are competing for the same tap) means the first tap on a
+// button reliably does both at once.
+document.addEventListener("touchstart", (e) => {
+  const active = document.activeElement;
+  if (!active || active === document.body) return;
+  const isTextInput = active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
+  if (isTextInput && active !== e.target && !e.target.closest("label")) active.blur();
+}, { passive: true });
+
 // — so this specific button always works via event delegation even if a
 // render cycle somehow fails to (re-)attach a listener directly to it.
 document.addEventListener("click", (e) => {
