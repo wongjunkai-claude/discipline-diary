@@ -371,6 +371,12 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-rank-detail { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; flex: 1; }
 
 .dd-issue-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.dd-issue-tag-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.dd-issue-tag {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; padding: 8px 12px; border-radius: 999px;
+  border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer;
+}
+.dd-issue-tag.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 
 .dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; background: #FBFAF6; }
 .dd-issue-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

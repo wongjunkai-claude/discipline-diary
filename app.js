@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.32.5";
+const APP_VERSION = "2.33.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2709,13 +2709,10 @@ function renderNewForm() {
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
         <label class="dd-label">Date caught</label>
         <input class="dd-input" type="date" name="date" required value="${d.date}" />
-        <label class="dd-label">Issue(s) <span style="color:#A3372B">*</span> <span class="dd-mono-muted" style="font-size:11px;text-transform:none">select all that apply</span></label>
-        <div class="dd-issue-grid">
+        <label class="dd-label">Issue(s) <span style="color:#A3372B">*</span> <span class="dd-mono-muted" style="font-size:11px;text-transform:none">tap all that apply</span></label>
+        <div class="dd-issue-tag-grid">
           ${GROOMING_ISSUE_TYPES.map((type) => `
-            <label class="dd-checkbox-pill" style="display:flex">
-              <input type="checkbox" class="dd-grooming-issue-cb" value="${escapeHtml(type)}" ${d.selectedIssues.includes(type) ? "checked" : ""} />
-              <span>${escapeHtml(type)}</span>
-            </label>`).join("")}
+            <button type="button" class="dd-issue-tag ${d.selectedIssues.includes(type) ? "active" : ""}" data-action="toggle-grooming-issue" data-issue="${escapeHtml(type)}">${escapeHtml(type)}</button>`).join("")}
         </div>
         ${d.selectedIssues.includes("Others") ? `
         <label class="dd-label">Please specify <span style="color:#A3372B">*</span></label>
@@ -3584,13 +3581,6 @@ function attachLogListeners() {
     const classEl = form.querySelector('[name="studentClass"]');
     if (classEl) classEl.addEventListener("change", () => { state._newIncidentDraft.studentClass = classEl.value; });
 
-    form.querySelectorAll(".dd-grooming-issue-cb").forEach((cb) =>
-      cb.addEventListener("change", () => {
-        const list = state._newIncidentDraft.selectedIssues;
-        if (cb.checked) { if (!list.includes(cb.value)) list.push(cb.value); }
-        else { state._newIncidentDraft.selectedIssues = list.filter((x) => x !== cb.value); }
-        renderKeepingModalScroll();
-      }));
     const othersEl = document.getElementById("new-incident-others-text");
     if (othersEl) othersEl.addEventListener("input", () => { state._newIncidentDraft.othersText = othersEl.value; });
 
@@ -3816,7 +3806,15 @@ setupPullToRefresh();
 // render cycle somehow fails to (re-)attach a listener directly to it.
 document.addEventListener("click", (e) => {
   const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
-  if (saveBtn && !saveBtn.disabled) submitNewIncident();
+  if (saveBtn && !saveBtn.disabled) { submitNewIncident(); return; }
+  const tagBtn = e.target.closest && e.target.closest(".dd-issue-tag");
+  if (tagBtn && state._newIncidentDraft) {
+    const type = tagBtn.dataset.issue;
+    const list = state._newIncidentDraft.selectedIssues;
+    if (list.includes(type)) state._newIncidentDraft.selectedIssues = list.filter((x) => x !== type);
+    else list.push(type);
+    renderKeepingModalScroll();
+  }
 });
 
 render();
