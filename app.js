@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.32.4";
+const APP_VERSION = "2.32.5";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -3564,8 +3564,6 @@ function attachLogListeners() {
 
   if (state.showNewForm) {
     const form = document.getElementById("new-form");
-    const saveBtn = document.getElementById("btn-save-new-incident");
-    if (saveBtn) saveBtn.addEventListener("click", submitNewIncident);
     document.getElementById("modal-close").addEventListener("click", () => { state.showNewForm = false; state._newIncidentDraft = null; render(); });
     document.getElementById("modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "modal-backdrop") { state.showNewForm = false; state._newIncidentDraft = null; render(); } });
 
@@ -3812,5 +3810,13 @@ async function forceRefreshApp() {
   window.location.reload();
 }
 setupPullToRefresh();
+
+// Attached once, permanently, to document — not inside attachMainListeners
+// — so this specific button always works via event delegation even if a
+// render cycle somehow fails to (re-)attach a listener directly to it.
+document.addEventListener("click", (e) => {
+  const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
+  if (saveBtn && !saveBtn.disabled) submitNewIncident();
+});
 
 render();
