@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.33.1";
+const APP_VERSION = "2.33.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -3802,32 +3802,39 @@ async function forceRefreshApp() {
 setupPullToRefresh();
 
 // Attached once, permanently, to document — not inside attachMainListeners
-// On mobile, tapping a button while a text field is still focused often
-// "wastes" that first tap just dismissing the keyboard — the actual click
-// only registers on a second tap once the keyboard's gone. Blurring the
-// focused field as early as touchstart (before the keyboard-dismiss and
-// the click are competing for the same tap) means the first tap on a
-// button reliably does both at once.
-document.addEventListener("touchstart", (e) => {
-  const active = document.activeElement;
-  if (!active || active === document.body) return;
-  const isTextInput = active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
-  if (isTextInput && active !== e.target && !e.target.closest("label")) active.blur();
-}, { passive: true });
-
-// — so this specific button always works via event delegation even if a
-// render cycle somehow fails to (re-)attach a listener directly to it.
-document.addEventListener("click", (e) => {
+// — so these buttons always work via event delegation even if a render
+// cycle somehow fails to (re-)attach a listener directly to them.
+//
+// Triggered on touchend rather than waiting for the browser's synthetic
+// "click" event: a click only fires after the browser finishes its own
+// touch-to-click processing, which can occasionally get disrupted mid-tap
+// (e.g. if dismissing a keyboard shifts the layout underneath the finger)
+// — that looked like "the first tap does nothing, the second tap works."
+// touchend fires the instant the finger lifts, before any of that. A
+// timestamp guard stops the same tap from firing twice if a click event
+// also ends up following the touchend.
+let lastDelegatedActionAt = 0;
+function runDelegatedAction(fn) {
+  const now = Date.now();
+  if (now - lastDelegatedActionAt < 500) return;
+  lastDelegatedActionAt = now;
+  fn();
+}
+function handleDelegatedTap(e) {
   const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
-  if (saveBtn && !saveBtn.disabled) { submitNewIncident(); return; }
+  if (saveBtn && !saveBtn.disabled) { runDelegatedAction(() => submitNewIncident()); return; }
   const tagBtn = e.target.closest && e.target.closest(".dd-issue-tag");
   if (tagBtn && state._newIncidentDraft) {
-    const type = tagBtn.dataset.issue;
-    const list = state._newIncidentDraft.selectedIssues;
-    if (list.includes(type)) state._newIncidentDraft.selectedIssues = list.filter((x) => x !== type);
-    else list.push(type);
-    renderKeepingModalScroll();
+    runDelegatedAction(() => {
+      const type = tagBtn.dataset.issue;
+      const list = state._newIncidentDraft.selectedIssues;
+      if (list.includes(type)) state._newIncidentDraft.selectedIssues = list.filter((x) => x !== type);
+      else list.push(type);
+      renderKeepingModalScroll();
+    });
   }
-});
+}
+document.addEventListener("touchend", handleDelegatedTap);
+document.addEventListener("click", handleDelegatedTap);
 
 render();
