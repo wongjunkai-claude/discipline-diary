@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.33.2";
+const APP_VERSION = "2.33.3-diagnostic";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -3820,6 +3820,26 @@ function runDelegatedAction(fn) {
   lastDelegatedActionAt = now;
   fn();
 }
+// TEMPORARY DIAGNOSTIC — completely independent of every other listener in
+// this app. Shows a big banner naming exactly what element was touched,
+// for every single touch anywhere on the page. This exists purely to
+// answer one question we've been unable to answer any other way: is a
+// touch on the Save button reaching the browser's event system at all?
+// Safe to remove once that's answered.
+(function setupRawTouchDiagnostic() {
+  const banner = document.createElement("div");
+  banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#ff0000;color:#fff;font-family:monospace;font-size:14px;padding:10px;text-align:center;pointer-events:none;";
+  banner.textContent = "Waiting for a touch…";
+  document.body.appendChild(banner);
+  let count = 0;
+  document.addEventListener("touchstart", (e) => {
+    count++;
+    const t = e.target;
+    const desc = `#${t.id || "(no id)"} .${(t.className || "").toString().slice(0, 30) || "(no class)"} <${t.tagName}>`;
+    banner.textContent = `TOUCH #${count}: ${desc}`;
+  }, true);
+})();
+
 function handleDelegatedTap(e) {
   const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
   if (saveBtn && !saveBtn.disabled) { runDelegatedAction(() => submitNewIncident()); return; }
