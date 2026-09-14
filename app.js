@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.37.0";
+const APP_VERSION = "2.38.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -400,6 +400,7 @@ const state = {
   settingsSelectedYear: null,
   classConfig: null,
   confirmDeleteTarget: null,
+  showWatchlistInfo: false,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
   dayViewDate: null, // set on first render to today
@@ -2411,17 +2412,21 @@ function renderDashboardSection() {
         ${renderMonthlyChart()}
 
         <div class="dd-panel" style="margin-top:16px">
-          <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Students' Watchlist</div>
+          <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+            Students' Watchlist
+            <button type="button" class="dd-info-icon-btn" data-action="toggle-watchlist-info" title="How risk is worked out">i</button>
+          </div>
+          ${state.showWatchlistInfo ? `
+          <div class="dd-mono-muted" style="font-size:11px;margin-bottom:10px;background:#F2EFE6;padding:8px 10px;border-radius:4px">
+            Per semester — <b>High:</b> 2+ suspensions or 3+ final warnings. <b>Medium:</b> 1 suspension, 4-6 second warnings, or 2 final warnings. <b>Low:</b> 1-3 second warnings, no suspension.
+          </div>` : ""}
           <div class="dd-range-pills" style="flex-wrap:nowrap">
             <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>
             <button type="button" class="dd-range-pill${watchTier === "medium" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="medium">Medium Risk</button>
             <button type="button" class="dd-range-pill${watchTier === "low" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="low">Low Risk</button>
           </div>
-          <div class="dd-mono-muted" style="font-size:11px;margin:10px 0">
-            ${watchTier === "high" ? "2+ suspensions, or 3+ final warnings, this semester" : watchTier === "medium" ? "1 suspension, 4-6 second warnings, or 2 final warnings, this semester" : "1-3 second warnings this semester, no suspension"}
-          </div>
-          ${watchlist.length === 0 ? `<div class="dd-dash-empty">No students in this tier.</div>` : `
-          <div style="display:flex;flex-direction:column;gap:10px">
+          ${watchlist.length === 0 ? `<div class="dd-dash-empty" style="margin-top:10px">No students in this tier.</div>` : `
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
             ${watchlist.map((t) => {
               const stats = [];
               if (t.suspension > 0) stats.push(`${t.suspension} suspension${t.suspension === 1 ? "" : "s"}`);
@@ -2574,7 +2579,7 @@ function renderIncidentDetail(it) {
           <div class="dd-card-student">${escapeHtml(it.studentName)}</div>
           <div class="dd-card-meta">${formatDate(it.date)}${it.studentClass ? ` · ${escapeHtml(it.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(it.loggedBy)}</div>
-          <div class="dd-card-summary-issue">${escapeHtml(summaryLabel)}${isLegacy ? " (legacy entry)" : ""}</div>
+          ${isLegacy ? `<div class="dd-card-summary-issue">${escapeHtml(summaryLabel)} (legacy entry)</div>` : ""}
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
           <span class="dd-status-dot" style="background:${dotColor}" title="${resolved ? "Resolved" : "In Progress"}"></span>
@@ -2612,15 +2617,25 @@ function renderIncidentDetail(it) {
               </div>
               <span class="dd-mono-muted" style="font-size:12px">Due ${formatDate(issue.deadline)}${overdue ? " — overdue" : ""}</span>
             </div>
-            ${cfg.parentFrom <= issue.stage ? `<div class="dd-issue-instruction">Contact Parents</div>` : ""}
+            ${(() => {
+              // Only the one action relevant right now — never stacked.
+              // Final Warning always shows the escalated action (facilitated
+              // call, or SH/SM contact for the shsm-only issues); earlier
+              // stages show the Form Teacher parent-contact instruction only
+              // if this issue's rules call for it at this stage.
+              if (issue.stage === 3) {
+                return `<div class="dd-issue-instruction">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "LST or SH/SM Enforced Facilitated Call"}</div>`;
+              }
+              if (cfg.parentFrom <= issue.stage) return `<div class="dd-issue-instruction">FT Contact Parents</div>`;
+              return "";
+            })()}
             ${cfg.instructions ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>` : ""}
             ${cfg.note ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.note)}</div>` : ""}
-            ${issue.stage === 3 ? `<div class="dd-issue-instruction">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "Prompt Level Support Teachers / SH-SM For Facilitated Calling"}</div>` : ""}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
-              <button class="dd-add-btn" style="flex:1;background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>
+              ${issue.stage < 3 ? `<button class="dd-add-btn" style="flex:1;background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
             </div>
-            ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo last action</button>` : ""}
+            ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
             ` : `
             <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
             ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
@@ -3373,6 +3388,8 @@ function attachGroomingListeners() {
 }
 
 function attachDashboardListeners() {
+  document.querySelectorAll('[data-action="toggle-watchlist-info"]').forEach((el) =>
+    el.addEventListener("click", () => { state.showWatchlistInfo = !state.showWatchlistInfo; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="toggle-chart-cat"]').forEach((el) =>
     el.addEventListener("click", () => {
       const key = el.dataset.cat === "parentMeeting" ? "chartIncludeParentMeeting" : el.dataset.cat === "suspension" ? "chartIncludeSuspension" : "chartIncludeDiscipline";
