@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.38.1";
+const APP_VERSION = "2.39.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -112,7 +112,46 @@ const SUSP_STATUS_STYLE = {
   Completed: { ink: "#3C6E47", label: "COMPLETED" },
 };
 const LOCATION_OPTIONS = ["General Office", "MPR 1"];
+function composeReasonValue(form, draft, fieldName) {
+  fieldName = fieldName || "reason";
+  const sel = form.querySelector(`[name="${fieldName}"]`);
+  const val = sel ? sel.value : (draft?.reasonCategory || "");
+  if (val !== "Others") return val;
+  const othersEl = form.querySelector(`.dd-reason-others-input[data-for="${fieldName}"]`);
+  const text = (othersEl?.value ?? draft?.reasonOthersText ?? "").trim();
+  return text ? `Others — ${text}` : "Others";
+}
+function renderReasonPicker(selectedCategory, othersText, fieldName) {
+  fieldName = fieldName || "reason";
+  return `
+    <label class="dd-label">Reason <span style="color:#A3372B">*</span> <span class="dd-mono-muted" style="font-size:11px;text-transform:none">scroll for more</span></label>
+    <select class="dd-input dd-reason-select" name="${fieldName}" size="5" required>
+      <option value="" disabled ${selectedCategory ? "" : "selected"}>Select reason…</option>
+      ${REASON_OPTIONS.map((r) => `<option value="${escapeHtml(r)}" ${selectedCategory === r ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
+    </select>
+    ${selectedCategory === "Others" ? `
+    <label class="dd-label">Please specify <span style="color:#A3372B">*</span></label>
+    <input class="dd-input dd-reason-others-input" data-for="${fieldName}" value="${escapeHtml(othersText || "")}" />` : ""}`;
+}
+// Splits an already-saved reason (which might be a plain category, or a
+// composed "Others — some text" string from a past edit) back into the
+// category dropdown's value and the Others box's text, for editing.
+function splitSavedReason(saved) {
+  if (!saved) return { category: "", othersText: "" };
+  if (REASON_OPTIONS.includes(saved)) return { category: saved, othersText: "" };
+  const m = /^Others\s*—\s*(.*)$/.exec(saved);
+  if (m) return { category: "Others", othersText: m[1] };
+  return { category: "Others", othersText: saved };
+}
 const ATTENDEE_OPTIONS = ["Father", "Mother", "Grandfather", "Grandmother", "Guardian", "Others"];
+const REASON_OPTIONS = [
+  "Open Defiance", "Verbal Bullying", "Hurtful Behaviour", "Assault", "Physical Bullying",
+  "Fighting", "Skipping Classes", "Truancy", "Leaving School Grounds Without Permission",
+  "Vandalism", "Unauthorised Device Use", "Cheating", "Forgery", "Cyberbullying", "Theft",
+  "Smoking", "Vape-Related Offences", "Inhalant Abuse", "Pornography-Related Offence",
+  "Sexual Misconduct", "Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons",
+  "Illegal / Criminal Offences Causing Grievous Hurt", "Others",
+];
 
 // ---------- Grooming Log config ----------
 // days: [1st warning, 2nd warning, final warning] — calendar days given to
@@ -1040,10 +1079,10 @@ async function submitEditIncident(e) {
 // ==================== SUSPENSIONS (new unified per-day model) ====================
 function freshSuspDraft() {
   return {
-    studentName: "", studentClass: "", reason: "", startDate: todayISO(),
+    studentName: "", studentClass: "", reasonCategory: "", reasonOthersText: "", startDate: todayISO(),
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {},
-    tagPm: false, pmAttendees: [], pmOthersText: "", pmReason: "",
+    tagPm: false, pmAttendees: [], pmOthersText: "", pmReasonCategory: "", pmReasonOthersText: "",
   };
 }
 // OSS dates are chosen (default to the earliest school days from the start
@@ -1130,7 +1169,7 @@ async function submitNewSuspension(e) {
   const d = state._suspDraft;
   const studentName = f.studentName.value.trim();
   const studentClass = f.studentClass.value;
-  const reason = f.reason.value.trim();
+  const reason = composeReasonValue(f, d);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
     state.suspFormError = "Fill in every required field before saving.";
     render();
@@ -1141,7 +1180,8 @@ async function submitNewSuspension(e) {
     render();
     return;
   }
-  if (d.tagPm && (d.pmAttendees.length === 0 || !d.pmReason.trim())) {
+  const pmReasonValue = d.tagPm ? composeReasonValue(f, d, "pmReason") : "";
+  if (d.tagPm && (d.pmAttendees.length === 0 || !d.pmReasonCategory)) {
     state.suspFormError = "Fill in who's attending and the reason for the tagged parent meeting.";
     render();
     return;
@@ -1169,13 +1209,13 @@ async function submitNewSuspension(e) {
       try {
         const pmRef = await addDoc(collection(db, "parentMeetings"), {
           studentName, studentClass, date: d.startDate, attendees: d.pmAttendees.slice(),
-          othersText: d.pmOthersText || "", reason: d.pmReason.trim(),
+          othersText: d.pmOthersText || "", reason: pmReasonValue,
           linkedSuspensionIds: [docRef.id],
           loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
           history: [{ id: uid(), type: "created", detail: "Parent meeting tagged from a suspension entry", by: teacherName(), at: now }],
         });
         await updateDoc(doc(db, "suspensions", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
-        syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: d.pmReason.trim(), loggedBy: teacherName(), deleted: false });
+        syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonValue, loggedBy: teacherName(), deleted: false });
       } catch (err) { /* non-fatal — suspension already saved */ }
     }
     state.showNewSuspForm = false;
@@ -1202,8 +1242,9 @@ function openEditSuspension(id) {
   const issDates = issEntries.map((x) => x.date);
   const issVenues = {};
   issEntries.forEach((x) => { issVenues[x.date] = x.venue || ""; });
+  const reasonSplit = splitSavedReason(s.reason);
   state._suspDraft = {
-    studentName: s.studentName, studentClass: s.studentClass, reason: s.reason || "",
+    studentName: s.studentName, studentClass: s.studentClass, reasonCategory: reasonSplit.category, reasonOthersText: reasonSplit.othersText,
     startDate: s.startDate || (entries[0] && entries[0].date) || todayISO(),
     totalDays: s.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
     ossDates, issDates, issOverridden: issDates.map(() => false), issVenues,
@@ -1220,7 +1261,7 @@ async function submitEditSuspension(e) {
   const d = state._suspDraft;
   const studentName = f.studentName.value.trim();
   const studentClass = f.studentClass.value;
-  const reason = f.reason.value.trim();
+  const reason = composeReasonValue(f, d);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
     state.suspFormError = "Fill in every required field before saving.";
     render();
@@ -1264,9 +1305,10 @@ async function submitEditSuspension(e) {
 
 // ==================== PARENT MEETINGS ====================
 function freshPmDraft(m) {
+  const split = splitSavedReason(m?.reason);
   return {
     studentName: m?.studentName || "", studentClass: m?.studentClass || "",
-    date: m?.date || todayISO(), reason: m?.reason || "",
+    date: m?.date || todayISO(), reasonCategory: split.category, reasonOthersText: split.othersText,
     attendees: (m?.attendees || []).slice(), othersText: m?.othersText || "",
   };
 }
@@ -1276,7 +1318,7 @@ async function submitNewParentMeeting(e) {
   const studentName = f.studentName.value.trim();
   const studentClass = f.studentClass.value;
   const date = f.date.value;
-  const reason = f.reason.value.trim();
+  const reason = composeReasonValue(f, state._pmDraft);
   const attendees = state._pmDraft.attendees.slice();
   const othersText = state._pmDraft.othersText.trim();
   if (!studentName || !studentClass || !date || !reason || attendees.length === 0) {
@@ -1321,7 +1363,7 @@ async function submitEditParentMeeting(e) {
   if (!m) return;
   const updated = {
     studentName: f.studentName.value.trim(), studentClass: f.studentClass.value,
-    date: f.date.value, reason: f.reason.value.trim(),
+    date: f.date.value, reason: composeReasonValue(f, state._pmDraft),
     attendees: state._pmDraft.attendees.slice(), othersText: state._pmDraft.othersText.trim(),
   };
   if (!updated.studentName || !updated.studentClass || !updated.date || !updated.reason || updated.attendees.length === 0) {
@@ -2904,8 +2946,7 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
   const dayCountOptions = (max) => Array.from({ length: max + 1 }, (_, i) => i);
   const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
   return `
-        <label class="dd-label">Reason <span style="color:#A3372B">*</span></label>
-        <textarea class="dd-textarea dd-input" name="reason" rows="2" required>${escapeHtml(d.reason)}</textarea>
+        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
         <label class="dd-label">Start date (used to suggest default days)</label>
         <div class="dd-issue-due-row">
           <div class="dd-date-icon-btn" title="Change the start date">
@@ -3105,8 +3146,7 @@ function renderSuspForm(isEdit) {
               </label>`).join("")}
           </div>
           ${d.pmAttendees.includes("Others") ? `<input class="dd-input" id="susp-pm-others-text" style="margin-top:8px" placeholder="Please specify" value="${escapeHtml(d.pmOthersText)}" />` : ""}
-          <label class="dd-label">Reason for meeting <span style="color:#A3372B">*</span></label>
-          <textarea class="dd-textarea dd-input" id="susp-pm-reason" rows="2">${escapeHtml(d.pmReason)}</textarea>
+          ${renderReasonPicker(d.pmReasonCategory, d.pmReasonOthersText, "pmReason")}
         </div>` : ""}` : ""}
         ${state.suspFormError ? `<div class="dd-error">${escapeHtml(state.suspFormError)}</div>` : ""}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
@@ -3247,8 +3287,7 @@ function renderPmForm(isEdit) {
           </div>
           <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
         </div>
-        <label class="dd-label">Reason for meeting <span style="color:#A3372B">*</span></label>
-        <textarea class="dd-textarea dd-input" name="reason" rows="3" required>${escapeHtml(d.reason)}</textarea>
+        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save meeting"}</button>
       </form>
@@ -3598,9 +3637,13 @@ function attachSuspFormModalListeners() {
     });
 
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._suspDraft[name] = el.value; }); };
-    syncField("studentName"); syncField("reason");
+    syncField("studentName");
     const classEl = form.elements["studentClass"];
     if (classEl) classEl.addEventListener("change", () => { state._suspDraft.studentClass = classEl.value; });
+    const reasonSel = form.elements["reason"];
+    if (reasonSel) reasonSel.addEventListener("change", () => { state._suspDraft.reasonCategory = reasonSel.value; renderKeepingModalScroll(); });
+    const reasonOthersEl = form.querySelector(".dd-reason-others-input");
+    if (reasonOthersEl) reasonOthersEl.addEventListener("input", () => { state._suspDraft.reasonOthersText = reasonOthersEl.value; });
 
     attachSuspFieldListeners(form, "susp", state._suspDraft, render);
 
@@ -3615,8 +3658,10 @@ function attachSuspFormModalListeners() {
       }));
     const pmOthersEl = document.getElementById("susp-pm-others-text");
     if (pmOthersEl) pmOthersEl.addEventListener("input", () => { state._suspDraft.pmOthersText = pmOthersEl.value; });
-    const pmReasonEl = document.getElementById("susp-pm-reason");
-    if (pmReasonEl) pmReasonEl.addEventListener("input", () => { state._suspDraft.pmReason = pmReasonEl.value; });
+    const pmReasonSel = form.querySelector('[name="pmReason"]');
+    if (pmReasonSel) pmReasonSel.addEventListener("change", () => { state._suspDraft.pmReasonCategory = pmReasonSel.value; renderKeepingModalScroll(); });
+    const pmReasonOthersEl = form.querySelector('.dd-reason-others-input[data-for="pmReason"]');
+    if (pmReasonOthersEl) pmReasonOthersEl.addEventListener("input", () => { state._suspDraft.pmReasonOthersText = pmReasonOthersEl.value; });
   }
 }
 
@@ -3654,7 +3699,11 @@ function attachPmFormModalListeners() {
       if (e.target.id === "pm-modal-backdrop") { state.showNewPmForm = false; state.editingPmId = null; state._pmDraft = null; render(); }
     });
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._pmDraft[name] = el.value; }); };
-    syncField("studentName"); syncField("reason");
+    syncField("studentName");
+    const reasonSel = form.elements["reason"];
+    if (reasonSel) reasonSel.addEventListener("change", () => { state._pmDraft.reasonCategory = reasonSel.value; renderKeepingModalScroll(); });
+    const reasonOthersEl = form.querySelector(".dd-reason-others-input");
+    if (reasonOthersEl) reasonOthersEl.addEventListener("input", () => { state._pmDraft.reasonOthersText = reasonOthersEl.value; });
     const pmDateEl = form.elements["date"];
     if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];
