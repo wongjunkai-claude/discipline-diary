@@ -96,6 +96,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-card-issue { font-family: 'IBM Plex Sans', sans-serif; color: #5B5748; font-size: 14px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-card-meta { font-family: 'IBM Plex Mono', monospace; color: #8A8571; font-size: 11px; margin-top: 6px; }
 .dd-card-meta + .dd-card-meta { margin-top: 2px; }
+.dd-card-meta-primary { font-size: 13px; color: #6B6652; }
 .dd-card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .dd-stamp { font-family: 'IBM Plex Mono', monospace; font-weight: 500; letter-spacing: 0.08em; border: 2px solid currentColor; border-radius: 3px; padding: 2px 8px; font-size: 11px; transform: rotate(-3deg); display: inline-block; background: none; cursor: pointer; }
@@ -168,7 +169,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-entry-select { margin-bottom: 16px; }
 
-.dd-detail-card { border: 1px solid #C9C4B4; background: #fff; border-radius: 3px; padding: 16px; }
+.dd-detail-card { border: 1px solid #C9C4B4; background: #fff; border-radius: 3px; padding: 8px; }
 .dd-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 
 .dd-stamp-subtle {
