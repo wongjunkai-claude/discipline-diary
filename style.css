@@ -398,3 +398,25 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
   font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 700; font-style: italic; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
 }
+
+.dd-settings-add-btn {
+  width: 30px; height: 30px; border-radius: 6px; border: 1px solid #1B2A41; background: #1B2A41; color: #fff;
+  font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+}
+.dd-settings-list-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #E4E1D4;
+}
+.dd-settings-list-row:last-child { border-bottom: none; }
+button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
+
+.dd-settings-menu-group {
+  background: #fff; border: 1px solid #C9C4B4; border-radius: 6px; overflow: hidden;
+}
+.dd-settings-menu-row {
+  display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box;
+  padding: 14px 14px; background: #fff; border: none; border-bottom: 1px solid #E4E1D4;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 15px; color: #1B2A41; text-align: left; cursor: pointer;
+}
+.dd-settings-menu-row:last-child { border-bottom: none; }
+.dd-settings-menu-row:active { background: #F2EFE6; }
+.dd-settings-chevron { color: #B8B29C; font-size: 18px; }
