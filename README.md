@@ -379,9 +379,11 @@ All three logs (and the Dashboard) share one layout:
 - **Nav pills** (Discipline Log / Suspension Log / Parent Meeting) all fit
   on one line next to the home icon.
 - **Filter pills** sit on their own row.
-- **Sort by and the recycling-bin "Deleted" icon share the row below the
-  pills** — Sort by on the left, the bin on the far right.
-- Then search, then the list.
+- **Tapping a level** (P1-P6) filters the list below to that level and
+  shows one equally-sized pill per active class in it, in place of where
+  a sort control used to be — tapping a class pill narrows further to
+  just that class.
+- Then search, then the list, always sorted by date.
 
 **Suspension Log filters**: Show All / This Week / Upcoming / Completed.
 "This Week" means the suspension has at least one day falling in the
@@ -449,20 +451,12 @@ stays visible under "Show audit trail."
 
 ## Removing entries
 
-Clicking **"Remove entry"** (inside an expanded discipline entry) or
-**"Remove"** (on a suspension or meeting) asks for a password before hiding
-it from the normal views. The record stays in Firestore, tagged as removed,
-and shows up under the **"Deleted"** view (the recycling-bin icon) where it
-can be restored any time with no password needed — **for 30 days**.
-
-**After 30 days in the Deleted view, an entry is permanently erased** — not
-just hidden, actually deleted from Firestore, with no way to recover it.
-This check runs client-side the next time anyone has the app open (there's
-no server here to run it on a schedule), so it's best-effort: an entry
-might sit for a little longer than exactly 30 days if nobody opens the app
-around that date, but it will never be purged early. Firestore rules only
-allow deleting a record that's already marked as removed, so even a bug in
-this logic can't erase an active entry.
+Clicking **"Remove entry"** (inside an expanded grooming entry) or
+**"Remove"** (on a suspension or meeting) asks for a password before
+deleting it. This is **permanent and immediate** — there's no recycling
+bin, no 30-day recovery window, and no way to undo it once confirmed.
+Removing an entry does not affect the students it's about; it only
+deletes that specific logged record.
 
 If you'd rather entries were kept forever until manually restored (the
 original behavior), change `DELETED_RETENTION_DAYS` near the top of

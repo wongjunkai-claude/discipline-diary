@@ -271,10 +271,10 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-show-box { border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px 12px; margin-bottom: 14px; background: #fff; }
 .dd-show-header { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #8A8571; margin-bottom: 8px; }
-.dd-show-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.dd-show-buttons { display: flex; gap: 4px; flex-wrap: nowrap; }
 .dd-show-btn {
-  font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 999px;
-  border: 1px solid #C9C4B4; background: #EDEAE0; color: #A6A18E; cursor: pointer;
+  flex: 1; font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; font-weight: 600; padding: 7px 4px; border-radius: 999px;
+  border: 1px solid #C9C4B4; background: #EDEAE0; color: #A6A18E; cursor: pointer; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .dd-show-btn.active { color: #fff; }
 
@@ -384,3 +384,8 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-issue-stage-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #F2EFE6; color: #B8863B; flex-shrink: 0; }
 .dd-issue-overdue { background: #FBEAE7; color: #A3372B; }
 .dd-issue-resolved { background: #EAF3EC; color: #3C6E47; }
+
+.dd-issue-due-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.dd-issue-instruction { font-family: 'IBM Plex Sans', sans-serif; font-weight: 700; font-size: 12px; color: #A3372B; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.02em; }
+
+.dd-followup-row-item { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; cursor: pointer; background: #FBFAF6; }

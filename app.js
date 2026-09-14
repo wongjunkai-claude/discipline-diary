@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.34.1";
+const APP_VERSION = "2.36.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -393,7 +393,6 @@ const state = {
   query: "",
   incidentSortBy: "date",
   disciplineFilter: "all", // 'all' | 'Monitoring' | 'Resolved'
-  viewDeletedIncidents: false,
   selectedIncidentId: null,
   showNewForm: false,
   editingIncidentId: null,
@@ -639,14 +638,29 @@ function escalateGroomingIssue(entryId, issueId) {
 }
 // A student/parent can propose their own date instead of the computed
 // deadline — this fully replaces it, no limit on how many times.
-function overrideGroomingIssueDeadline(entryId, issueId, newDate, overriddenBy) {
+function overrideGroomingIssueDeadline(entryId, issueId, newDate) {
   const entry = state.incidents.find((i) => i.id === entryId);
   if (!entry) return;
   const issue = (entry.issues || []).find((x) => x.id === issueId);
   if (!issue) return;
   issue.deadline = newDate;
-  issue.overriddenBy = overriddenBy;
-  issue.history.push({ stage: issue.stage, deadline: newDate, action: `Deadline moved to ${formatDate(newDate)} (${overriddenBy}'s request)`, at: todayISO() });
+  issue.history.push({ stage: issue.stage, deadline: newDate, action: `Deadline moved to ${formatDate(newDate)}`, at: todayISO() });
+  saveIncidentIssueUpdate(entry);
+}
+// Reverts an issue to the state it was in before its most recent logged
+// action (resolve, escalate, or a deadline change) — in case something
+// was tapped by mistake.
+function undoGroomingIssueAction(entryId, issueId) {
+  const entry = state.incidents.find((i) => i.id === entryId);
+  if (!entry) return;
+  const issue = (entry.issues || []).find((x) => x.id === issueId);
+  if (!issue || issue.history.length < 2) return;
+  issue.history.pop();
+  const prev = issue.history[issue.history.length - 1];
+  issue.stage = prev.stage;
+  issue.deadline = prev.deadline || issue.deadline;
+  issue.resolved = false;
+  issue.resolvedAt = null;
   saveIncidentIssueUpdate(entry);
 }
 // An entry is only "Resolved" once every issue inside it is resolved.
@@ -657,6 +671,28 @@ function groomingEntryResolved(entry) {
 // issues — used for the per-entry (not per-issue) risk-tier counting.
 function groomingEntryMaxStage(entry) {
   return (entry.issues || []).reduce((max, x) => Math.max(max, x.stage), 0);
+}
+// Every non-resolved grooming issue whose deadline has arrived (today or
+// earlier), across all entries — this is the actual "who needs following
+// up today" list, flattened to one row per issue rather than per entry,
+// since an entry with two issues might only need follow-up on one of them.
+function computeGroomingFollowUpList() {
+  const today = todayISO();
+  const rows = [];
+  state.incidents.forEach((it) => {
+    if (it.deleted || !Array.isArray(it.issues)) return;
+    it.issues.forEach((issue) => {
+      if (!issue.resolved && issue.deadline <= today) {
+        rows.push({
+          incidentId: it.id, issueId: issue.id,
+          name: it.studentName, studentClass: it.studentClass,
+          issueLabel: groomingIssueLabel(issue), stage: issue.stage,
+          deadline: issue.deadline, entryDate: it.date,
+        });
+      }
+    });
+  });
+  return rows.sort((a, b) => a.deadline.localeCompare(b.deadline));
 }
 async function saveIncidentIssueUpdate(entry) {
   state.saving = true; render();
@@ -855,7 +891,6 @@ async function submitNewIncident() {
     state._newIncidentDraft = null;
     state.section = "log";
     state.disciplineFilter = "all";
-    state.viewDeletedIncidents = false;
     state.selectedIncidentId = docRef.id;
     state.entryExpanded[docRef.id] = true;
     syncIncidentToSheet({ id: docRef.id, studentName, studentClass, date, issue: issueSummary, actionTaken: "", status: "Monitoring", followUps: [], loggedBy: teacherName(), deleted: false });
@@ -942,26 +977,9 @@ async function deleteFollowUp(incidentId, followUpId) {
 }
 async function deleteIncident(id) {
   if (!askDeletePassword()) return;
-  const it = state.incidents.find((i) => i.id === id);
-  const now = Date.now();
   try {
-    await updateDoc(doc(db, "incidents", id), {
-      deleted: true, deletedAt: now, deletedBy: teacherName(),
-      history: arrayUnion({ id: uid(), type: "deleted", detail: "Entry removed", by: teacherName(), at: now }),
-    });
-    if (it) syncIncidentToSheet({ ...it, deleted: true });
-  } catch (err) { state.saveError = true; render(); }
-}
-async function restoreIncident(id) {
-  const it = state.incidents.find((i) => i.id === id);
-  const now = Date.now();
-  try {
-    await updateDoc(doc(db, "incidents", id), {
-      deleted: false,
-      history: arrayUnion({ id: uid(), type: "restored", detail: "Entry restored", by: teacherName(), at: now }),
-    });
-    if (it) syncIncidentToSheet({ ...it, deleted: false });
-  } catch (err) { state.saveError = true; render(); }
+    await deleteDoc(doc(db, "incidents", id));
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 function openEditIncident(id) { state.editingIncidentId = id; render(); }
 async function submitEditIncident(e) {
@@ -1149,26 +1167,9 @@ async function submitNewSuspension(e) {
 }
 async function deleteSuspension(id) {
   if (!askDeletePassword()) return;
-  const s = state.suspensions.find((i) => i.id === id);
-  const now = Date.now();
   try {
-    await updateDoc(doc(db, "suspensions", id), {
-      deleted: true, deletedAt: now, deletedBy: teacherName(),
-      history: arrayUnion({ id: uid(), type: "deleted", detail: "Suspension removed", by: teacherName(), at: now }),
-    });
-    if (s) syncSuspensionToSheet({ ...s, deleted: true });
-  } catch (err) { state.saveError = true; render(); }
-}
-async function restoreSuspension(id) {
-  const s = state.suspensions.find((i) => i.id === id);
-  const now = Date.now();
-  try {
-    await updateDoc(doc(db, "suspensions", id), {
-      deleted: false,
-      history: arrayUnion({ id: uid(), type: "restored", detail: "Suspension restored", by: teacherName(), at: now }),
-    });
-    if (s) syncSuspensionToSheet({ ...s, deleted: false });
-  } catch (err) { state.saveError = true; render(); }
+    await deleteDoc(doc(db, "suspensions", id));
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 function openEditSuspension(id) {
   const s = state.suspensions.find((i) => i.id === id);
@@ -1330,59 +1331,16 @@ async function submitEditParentMeeting(e) {
 }
 async function deleteParentMeeting(id) {
   if (!askDeletePassword()) return;
-  const m = state.parentMeetings.find((i) => i.id === id);
-  const now = Date.now();
   try {
-    await updateDoc(doc(db, "parentMeetings", id), {
-      deleted: true, deletedAt: now, deletedBy: teacherName(),
-      history: arrayUnion({ id: uid(), type: "deleted", detail: "Meeting removed", by: teacherName(), at: now }),
-    });
-    if (m) syncParentMeetingToSheet({ ...m, deleted: true });
-  } catch (err) { state.saveError = true; render(); }
-}
-async function restoreParentMeeting(id) {
-  const m = state.parentMeetings.find((i) => i.id === id);
-  const now = Date.now();
-  try {
-    await updateDoc(doc(db, "parentMeetings", id), {
-      deleted: false,
-      history: arrayUnion({ id: uid(), type: "restored", detail: "Meeting restored", by: teacherName(), at: now }),
-    });
-    if (m) syncParentMeetingToSheet({ ...m, deleted: false });
-  } catch (err) { state.saveError = true; render(); }
+    await deleteDoc(doc(db, "parentMeetings", id));
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 
 // ==================== RENDER ====================
-const DELETED_RETENTION_DAYS = 30;
-let purgeAttempted = false;
-// Deleted entries are kept for 30 days (recoverable via the Deleted pill),
-// then permanently erased — not just hidden, actually removed from
-// Firestore. This only runs client-side (there's no server for this app to
-// run a scheduled job on), so it's best-effort: it happens the next time
-// someone has the app open after an entry's 30-day mark passes, not at a
-// guaranteed exact moment.
-async function purgeOldDeletedEntries() {
-  if (purgeAttempted) return;
-  purgeAttempted = true;
-  const cutoff = Date.now() - DELETED_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  const buckets = [
-    { name: "incidents", items: state.incidents },
-    { name: "suspensions", items: state.suspensions },
-    { name: "parentMeetings", items: state.parentMeetings },
-  ];
-  for (const { name, items } of buckets) {
-    for (const item of items) {
-      if (item.deleted && item.deletedAt && item.deletedAt < cutoff) {
-        try { await deleteDoc(doc(db, name, item.id)); } catch (e) { /* non-fatal, try again next session */ }
-      }
-    }
-  }
-}
 function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
   if (!state.dataLoaded || !state.suspLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
-  purgeOldDeletedEntries();
   root.innerHTML = renderMain();
   attachMainListeners();
 }
@@ -1843,6 +1801,19 @@ function renderSettingsSection() {
       </div>
     </div>`;
 }
+// Shown where "Sort by" used to be, only once a level is selected: one
+// equally-sized pill per class in that level (this year's active classes
+// only), letting the list be narrowed to a single class on top of the
+// level filter already in effect.
+function renderClassPillsRow(pageKey, level) {
+  const classes = classOptionsForCurrentYear().filter((c) => classLevel(c) === level);
+  if (!classes.length) return "";
+  const selected = state[`${pageKey}SelectedClass`] || null;
+  return `
+    <div class="dd-range-pills" style="flex-wrap:nowrap;margin-bottom:14px">
+      ${classes.map((c) => `<button type="button" class="dd-range-pill${selected === c ? " active" : ""}" style="flex:1" data-action="select-class-pill" data-page="${pageKey}" data-class="${c}">${c}</button>`).join("")}
+    </div>`;
+}
 function renderLevelBreakdown(pageKey, items, dateField) {
   const year = new Date().getFullYear();
   const moe = computeMoeCalendar(year);
@@ -1862,7 +1833,7 @@ function renderLevelBreakdown(pageKey, items, dateField) {
         </button>`).join("")}
     </div>`;
   if (!expandedLevel) return countersHtml;
-  const classes = CLASS_OPTIONS.filter((c) => classLevel(c) === expandedLevel);
+  const classes = classOptionsForCurrentYear().filter((c) => classLevel(c) === expandedLevel);
   const termCountFor = (cls, t) => (t.start > today ? null : active.filter((it) => it.studentClass === cls && it[dateField] >= t.start && it[dateField] <= t.end).length);
   const rowTotals = classes.map((cls) => moe.terms.reduce((sum, t) => sum + (termCountFor(cls, t) || 0), 0));
   const colTotals = moe.terms.map((t) => classes.reduce((sum, cls) => sum + (termCountFor(cls, t) || 0), 0));
@@ -2342,6 +2313,28 @@ function computeCurrentSemesterBounds() {
   if (today <= t2.end) return { start: t1.start, end: t2.end };
   return { start: t3.start, end: t4.end };
 }
+function renderGroomingFollowUpList() {
+  const rows = computeGroomingFollowUpList();
+  return `
+    <div class="dd-panel" style="margin-bottom:16px">
+      <div class="dd-dash-title" style="color:#1B2A41;display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px">
+        <span>Grooming Follow-Up List</span>
+        <span class="dd-mono-muted" style="font-size:12px;font-weight:400">${formatDate(todayISO())}</span>
+      </div>
+      ${rows.length === 0 ? `<div class="dd-dash-empty" style="margin-top:8px">Nothing due for follow-up today.</div>` : `
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+        ${rows.map((r) => `
+          <div class="dd-followup-row-item" data-action="jump-to-incident" data-id="${r.incidentId}">
+            <div style="display:flex;justify-content:space-between;gap:8px">
+              <span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(r.name))}</span>
+              <span class="dd-issue-stage-badge ${r.deadline < todayISO() ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
+            </div>
+            <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(r.studentClass || "")} · ${escapeHtml(r.issueLabel)}</div>
+            <div class="dd-mono-muted" style="font-size:11px">Entry logged ${formatDate(r.entryDate)}</div>
+          </div>`).join("")}
+      </div>`}
+    </div>`;
+}
 function renderDashboardSection() {
   const activeIncidents = state.incidents.filter((i) => !i.deleted);
   const activeSusp = state.suspensions.filter((s) => !s.deleted);
@@ -2391,6 +2384,8 @@ function renderDashboardSection() {
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ Suspension</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parents Meeting</button>
         </div>
+
+        ${renderGroomingFollowUpList()}
 
         ${renderMonthlyChart()}
 
@@ -2479,8 +2474,8 @@ function classLevel(cls) {
   return m ? parseInt(m[1], 10) : 999;
 }
 function filteredIncidents() {
-  let list = state.incidents.filter((it) => (state.viewDeletedIncidents ? it.deleted : !it.deleted));
-  if (!state.viewDeletedIncidents && state.disciplineFilter && state.disciplineFilter !== "all") {
+  let list = state.incidents.filter((it) => !it.deleted);
+  if (state.disciplineFilter && state.disciplineFilter !== "all") {
     const wantResolved = state.disciplineFilter === "Resolved";
     list = list.filter((it) => {
       const isLegacy = !Array.isArray(it.issues);
@@ -2488,17 +2483,15 @@ function filteredIncidents() {
       return resolved === wantResolved;
     });
   }
+  if (state.disciplineExpandedLevel) {
+    list = list.filter((it) => classLevel(it.studentClass) === state.disciplineExpandedLevel);
+    if (state.disciplineSelectedClass) list = list.filter((it) => it.studentClass === state.disciplineSelectedClass);
+  }
   if (state.query.trim()) {
     const q = state.query.trim().toLowerCase();
     list = list.filter((it) => it.studentName.toLowerCase().includes(q));
   }
-  const sortBy = state.incidentSortBy || "date";
-  const sorted = [...list];
-  if (sortBy === "name") sorted.sort((a, b) => a.studentName.localeCompare(b.studentName));
-  else if (sortBy === "class") sorted.sort((a, b) => (a.studentClass || "").localeCompare(b.studentClass || ""));
-  else if (sortBy === "level") sorted.sort((a, b) => classLevel(a.studentClass) - classLevel(b.studentClass) || (a.studentClass || "").localeCompare(b.studentClass || ""));
-  else sorted.sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
-  return sorted;
+  return [...list].sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
 }
 function counts() {
   const c = { Open: 0, Monitoring: 0, Resolved: 0, Deleted: 0 };
@@ -2514,7 +2507,6 @@ function counts() {
 function renderLogSection() {
   const list = filteredIncidents();
   const c = counts();
-  const sortBy = state.incidentSortBy || "date";
   const filter = state.disciplineFilter || "all";
   return `
     <div class="dd-app">
@@ -2526,18 +2518,7 @@ function renderLogSection() {
           <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
           <button class="dd-pill ${filter === "Resolved" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Resolved">Resolved (${c.Resolved})</button>
         </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px">
-          <div style="max-width:220px;flex:1">
-            <label class="dd-label" style="margin-top:0">Sort by</label>
-            <select class="dd-input" id="incident-sort-by">
-              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-            </select>
-          </div>
-          <div style="margin-left:auto">${recycleBinButton("btn-toggle-deleted-incidents", state.viewDeletedIncidents, c.Deleted)}</div>
-        </div>
+        ${state.disciplineExpandedLevel ? renderClassPillsRow("discipline", state.disciplineExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
             <input class="dd-input dd-search" id="search-input" placeholder="Search by student name…" value="${escapeHtml(state.query)}" />
@@ -2593,6 +2574,7 @@ function renderIncidentDetail(it) {
         ${issues.map((issue) => {
           const cfg = GROOMING_ISSUE_CONFIG[issue.type] || GROOMING_ISSUE_CONFIG.Others;
           const overdue = !issue.resolved && issue.deadline < today;
+          const canUndo = issue.history.length > 1;
           return `
           <div class="dd-issue-card">
             <div class="dd-issue-card-head">
@@ -2602,20 +2584,26 @@ function renderIncidentDetail(it) {
                 : `<span class="dd-issue-stage-badge ${overdue ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[issue.stage]}</span>`}
             </div>
             ${!issue.resolved ? `
-            <div class="dd-mono-muted" style="font-size:12px;margin-top:4px">
-              Due ${formatDate(issue.deadline)}${overdue ? " — overdue" : ""}${issue.overriddenBy ? ` (moved by ${issue.overriddenBy})` : ""}
-              ${issue.parentContacted ? " · parents contacted" : ""}
+            <div class="dd-issue-due-row">
+              <div class="dd-date-icon-btn" title="Change this issue's deadline">
+                <input type="date" class="dd-input dd-issue-override-input" data-id="${it.id}" data-issue="${issue.id}" value="${issue.deadline}" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+              </div>
+              <span class="dd-mono-muted" style="font-size:12px">Due ${formatDate(issue.deadline)}${overdue ? " — overdue" : ""}</span>
             </div>
+            ${cfg.parentFrom <= issue.stage ? `<div class="dd-issue-instruction">Contact Parents</div>` : ""}
             ${cfg.instructions ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>` : ""}
             ${cfg.note ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.note)}</div>` : ""}
-            ${issue.stage === 3 ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${cfg.finalAction === "shsm-only" ? "SH/SM to call parents directly." : "Prompt Level Support Teachers / SH-SM for enforced facilitated calling."}</div>` : ""}
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-              <button class="dd-add-btn" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
-              <button class="dd-add-btn" style="background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Not resolved — escalate</button>
-              <input type="date" class="dd-input dd-issue-override-input" style="width:auto;flex-shrink:0;padding:6px 8px;font-size:12px" data-id="${it.id}" data-issue="${issue.id}" value="${issue.deadline}" />
-              <button class="dd-followup-icon-btn" data-action="override-issue-student" data-id="${it.id}" data-issue="${issue.id}" title="Student proposed this date">Student</button>
-              <button class="dd-followup-icon-btn" data-action="override-issue-parent" data-id="${it.id}" data-issue="${issue.id}" title="Parent proposed this date">Parent</button>
-            </div>` : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>`}
+            ${issue.stage === 3 ? `<div class="dd-issue-instruction">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "Prompt Level Support Teachers / SH-SM For Facilitated Calling"}</div>` : ""}
+            <div style="display:flex;gap:6px;margin-top:8px">
+              <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
+              <button class="dd-add-btn" style="flex:1;background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>
+            </div>
+            ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo last action</button>` : ""}
+            ` : `
+            <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
+            ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
+            `}
           </div>`;
         }).join("")}
       </div>`}
@@ -2652,10 +2640,7 @@ function renderIncidentDetail(it) {
       <button class="dd-history-toggle" data-action="toggle-history" data-id="${it.id}">${state.historyOpen[it.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[it.id] ? `<div class="dd-history">${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${it.deleted
-          ? `<div class="dd-mono-muted" style="font-size:11px">Removed by ${escapeHtml(it.deletedBy || "")} on ${formatDateTime(it.deletedAt)}</div>
-             <button class="dd-add-btn" data-action="restore-incident" data-id="${it.id}">Restore entry</button>`
-          : `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>`}
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>
       </div>` : ""}
     </div>`;
 }
@@ -2718,7 +2703,13 @@ function renderNewForm() {
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
         <label class="dd-label">Date caught</label>
-        <input class="dd-input" type="date" name="date" required value="${d.date}" />
+        <div class="dd-issue-due-row">
+          <div class="dd-date-icon-btn" title="Change the date">
+            <input class="dd-input" type="date" name="date" required value="${d.date}" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+          </div>
+          <span class="dd-sans" style="font-size:15px" id="new-incident-date-label">${formatDate(d.date)}</span>
+        </div>
         <label class="dd-label">Issue(s) <span style="color:#A3372B">*</span> <span class="dd-mono-muted" style="font-size:11px;text-transform:none">tap all that apply</span></label>
         <div class="dd-issue-tag-grid">
           ${GROOMING_ISSUE_TYPES.map((type) => `
@@ -2784,23 +2775,17 @@ function suspensionWeekCategory(s) {
   return "This Week";
 }
 function filteredSuspensions() {
-  let list = state.suspensions.map((s) => ({ ...s, _week: suspensionWeekCategory(s) }));
-  if (state.suspTab === "Deleted") list = list.filter((s) => s.deleted);
-  else {
-    list = list.filter((s) => !s.deleted);
-    if (state.suspTab !== "All") list = list.filter((s) => s._week === state.suspTab);
+  let list = state.suspensions.map((s) => ({ ...s, _week: suspensionWeekCategory(s) })).filter((s) => !s.deleted);
+  if (state.suspTab !== "All") list = list.filter((s) => s._week === state.suspTab);
+  if (state.suspensionExpandedLevel) {
+    list = list.filter((s) => classLevel(s.studentClass) === state.suspensionExpandedLevel);
+    if (state.suspensionSelectedClass) list = list.filter((s) => s.studentClass === state.suspensionSelectedClass);
   }
   if (state.suspQuery.trim()) {
     const q = state.suspQuery.trim().toLowerCase();
     list = list.filter((s) => s.studentName.toLowerCase().includes(q));
   }
-  const sortBy = state.suspSortBy || "date";
-  const sorted = [...list];
-  if (sortBy === "name") sorted.sort((a, b) => a.studentName.localeCompare(b.studentName));
-  else if (sortBy === "class") sorted.sort((a, b) => (a.studentClass || "").localeCompare(b.studentClass || ""));
-  else if (sortBy === "level") sorted.sort((a, b) => classLevel(a.studentClass) - classLevel(b.studentClass) || (a.studentClass || "").localeCompare(b.studentClass || ""));
-  else sorted.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
-  return sorted;
+  return [...list].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
 }
 function suspCounts() {
   const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
@@ -2811,7 +2796,6 @@ function suspCounts() {
 function renderSuspensionSection() {
   const list = filteredSuspensions();
   const c = suspCounts();
-  const sortBy = state.suspSortBy || "date";
   return `
     <div class="dd-app">
       ${renderNav()}
@@ -2820,18 +2804,7 @@ function renderSuspensionSection() {
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px">
-          <div style="max-width:220px;flex:1">
-            <label class="dd-label" style="margin-top:0">Sort by</label>
-            <select class="dd-input" id="susp-sort-by">
-              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-            </select>
-          </div>
-          <div style="margin-left:auto">${recycleBinButton("btn-toggle-deleted-susp", state.suspTab === "Deleted", c.Deleted)}</div>
-        </div>
+        ${state.suspensionExpandedLevel ? renderClassPillsRow("suspension", state.suspensionExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
             <input class="dd-input dd-search" id="susp-search-input" placeholder="Search by student name…" value="${escapeHtml(state.suspQuery)}" />
@@ -2884,11 +2857,8 @@ function renderSuspensionDetail(s) {
       <button class="dd-history-toggle" data-action="toggle-susp-history" data-id="${s.id}">${state.historyOpen[s.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[s.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${s.deleted
-          ? `<div class="dd-mono-muted" style="font-size:11px">Removed by ${escapeHtml(s.deletedBy || "")} on ${formatDateTime(s.deletedAt)}</div>
-             <button class="dd-add-btn" data-action="restore-suspension" data-id="${s.id}">Restore</button>`
-          : `<button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
-             <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>`}
+        <button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>
       </div>` : ""}
     </div>`;
 }
@@ -2901,7 +2871,13 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
         <label class="dd-label">Reason <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="reason" rows="2" required>${escapeHtml(d.reason)}</textarea>
         <label class="dd-label">Start date (used to suggest default days)</label>
-        <input class="dd-input" type="date" id="${idPrefix}-start-date" value="${d.startDate}" />
+        <div class="dd-issue-due-row">
+          <div class="dd-date-icon-btn" title="Change the start date">
+            <input class="dd-input" type="date" id="${idPrefix}-start-date" value="${d.startDate}" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+          </div>
+          <span class="dd-sans" style="font-size:15px">${formatDate(d.startDate)}</span>
+        </div>
 
         <label class="dd-label">Total days of suspension</label>
         <select class="dd-input" id="${idPrefix}-total-days">
@@ -3113,23 +3089,17 @@ function parentMeetingWeekCategory(m) {
   return "This Week";
 }
 function filteredParentMeetings() {
-  let list = state.parentMeetings.map((m) => ({ ...m, _week: parentMeetingWeekCategory(m) }));
-  if (state.pmTab === "Deleted") list = list.filter((m) => m.deleted);
-  else {
-    list = list.filter((m) => !m.deleted);
-    if (state.pmTab !== "All") list = list.filter((m) => m._week === state.pmTab);
+  let list = state.parentMeetings.map((m) => ({ ...m, _week: parentMeetingWeekCategory(m) })).filter((m) => !m.deleted);
+  if (state.pmTab !== "All") list = list.filter((m) => m._week === state.pmTab);
+  if (state.pmExpandedLevel) {
+    list = list.filter((m) => classLevel(m.studentClass) === state.pmExpandedLevel);
+    if (state.pmSelectedClass) list = list.filter((m) => m.studentClass === state.pmSelectedClass);
   }
   if (state.pmQuery.trim()) {
     const q = state.pmQuery.trim().toLowerCase();
     list = list.filter((m) => m.studentName.toLowerCase().includes(q));
   }
-  const sortBy = state.pmSortBy || "date";
-  const sorted = [...list];
-  if (sortBy === "name") sorted.sort((a, b) => a.studentName.localeCompare(b.studentName));
-  else if (sortBy === "class") sorted.sort((a, b) => (a.studentClass || "").localeCompare(b.studentClass || ""));
-  else if (sortBy === "level") sorted.sort((a, b) => classLevel(a.studentClass) - classLevel(b.studentClass) || (a.studentClass || "").localeCompare(b.studentClass || ""));
-  else sorted.sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
-  return sorted;
+  return [...list].sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
 }
 function pmCounts() {
   const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
@@ -3140,7 +3110,6 @@ function pmCounts() {
 function renderParentMeetingSection() {
   const list = filteredParentMeetings();
   const c = pmCounts();
-  const sortBy = state.pmSortBy || "date";
   return `
     <div class="dd-app">
       ${renderNav()}
@@ -3149,18 +3118,7 @@ function renderParentMeetingSection() {
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:14px">
-          <div style="max-width:220px;flex:1">
-            <label class="dd-label" style="margin-top:0">Sort by</label>
-            <select class="dd-input" id="pm-sort-by">
-              <option value="date" ${sortBy === "date" ? "selected" : ""}>Date (default)</option>
-              <option value="name" ${sortBy === "name" ? "selected" : ""}>Name</option>
-              <option value="class" ${sortBy === "class" ? "selected" : ""}>Class</option>
-              <option value="level" ${sortBy === "level" ? "selected" : ""}>Level</option>
-            </select>
-          </div>
-          <div style="margin-left:auto">${recycleBinButton("btn-toggle-deleted-pm", state.pmTab === "Deleted", c.Deleted)}</div>
-        </div>
+        ${state.pmExpandedLevel ? renderClassPillsRow("pm", state.pmExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
             <input class="dd-input dd-search" id="pm-search-input" placeholder="Search by student name…" value="${escapeHtml(state.pmQuery)}" />
@@ -3214,11 +3172,8 @@ function renderParentMeetingDetail(m) {
       <button class="dd-history-toggle" data-action="toggle-pm-history" data-id="${m.id}">${state.historyOpen[m.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[m.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${m.deleted
-          ? `<div class="dd-mono-muted" style="font-size:11px">Removed by ${escapeHtml(m.deletedBy || "")} on ${formatDateTime(m.deletedAt)}</div>
-             <button class="dd-add-btn" data-action="restore-pm" data-id="${m.id}">Restore</button>`
-          : `<button class="dd-add-btn" data-action="edit-pm" data-id="${m.id}">Edit entry</button>
-             <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Remove</button>`}
+        <button class="dd-add-btn" data-action="edit-pm" data-id="${m.id}">Edit entry</button>
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Remove</button>
       </div>` : ""}
     </div>`;
 }
@@ -3249,7 +3204,13 @@ function renderPmForm(isEdit) {
         <label class="dd-label">Specify "Others"</label>
         <input class="dd-input" id="pm-others-text" value="${escapeHtml(d.othersText)}" placeholder="e.g. Aunt" />` : ""}
         <label class="dd-label">Date</label>
-        <input class="dd-input" type="date" name="date" required value="${d.date}" />
+        <div class="dd-issue-due-row">
+          <div class="dd-date-icon-btn" title="Change the date">
+            <input class="dd-input" type="date" name="date" required value="${d.date}" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+          </div>
+          <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
+        </div>
         <label class="dd-label">Reason for meeting <span style="color:#A3372B">*</span></label>
         <textarea class="dd-textarea dd-input" name="reason" rows="3" required>${escapeHtml(d.reason)}</textarea>
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
@@ -3264,7 +3225,7 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.section = el.dataset.section; render(); }));
 
   document.querySelectorAll('[data-action="jump-to-incident"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.disciplineFilter = "all"; state.viewDeletedIncidents = false; state.entryExpanded[el.dataset.id] = true; render(); }));
+    el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.disciplineFilter = "all"; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="jump-to-suspension"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = "suspensions"; state.selectedSuspId = el.dataset.id; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="jump-to-pm"]').forEach((el) =>
@@ -3277,6 +3238,13 @@ function attachMainListeners() {
       const key = `${el.dataset.page}ExpandedLevel`;
       const level = parseInt(el.dataset.level, 10);
       state[key] = state[key] === level ? null : level;
+      state[`${el.dataset.page}SelectedClass`] = null;
+      renderKeepingPageScroll();
+    }));
+  document.querySelectorAll('[data-action="select-class-pill"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const key = `${el.dataset.page}SelectedClass`;
+      state[key] = state[key] === el.dataset.class ? null : el.dataset.class;
       renderKeepingPageScroll();
     }));
 
@@ -3333,8 +3301,7 @@ function attachMainListeners() {
     });
   }
 
-  if (state.section === "log") attachLogListeners();
-  else if (state.section === "suspensions") attachSuspListeners();
+  if (state.section === "suspensions") attachSuspListeners();
   else if (state.section === "parentMeetings") attachPmListeners();
   else if (state.section === "dashboard") attachDashboardListeners();
 }
@@ -3512,113 +3479,10 @@ function attachNewCaseListeners() {
   }
 }
 
-function attachLogListeners() {
-
-  document.getElementById("btn-toggle-deleted-incidents").addEventListener("click", () => {
-    state.viewDeletedIncidents = !state.viewDeletedIncidents; render();
-  });
-  document.querySelectorAll('[data-action="set-discipline-filter"]').forEach((el) =>
-    el.addEventListener("click", () => { state.disciplineFilter = el.dataset.filter; render(); }));
-  const sortSel = document.getElementById("incident-sort-by");
-  if (sortSel) sortSel.addEventListener("change", () => { state.incidentSortBy = sortSel.value; render(); });
-
-  const search = document.getElementById("search-input");
-  if (search) search.addEventListener("input", () => {
-    state.query = search.value;
-    const cursor = search.selectionStart;
-    render();
-    const ns = document.getElementById("search-input");
-    if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
-  });
-
-  document.querySelectorAll('[data-action="set-status"]').forEach((el) =>
-    el.addEventListener("click", () => updateStatus(el.dataset.id, el.dataset.status, el.dataset.current)));
-  document.querySelectorAll('[data-action="follow-input"]').forEach((el) =>
-    el.addEventListener("input", () => { state.followDraft[el.dataset.id] = el.value; }));
-  document.querySelectorAll('[data-action="add-followup"]').forEach((el) =>
-    el.addEventListener("click", () => addFollowUp(el.dataset.id)));
-  document.querySelectorAll('[data-action="edit-followup"]').forEach((el) =>
-    el.addEventListener("click", () => openEditFollowUp(el.dataset.incident, el.dataset.fu)));
-  document.querySelectorAll('[data-action="cancel-followup-edit"]').forEach((el) =>
-    el.addEventListener("click", () => cancelEditFollowUp()));
-  document.querySelectorAll('[data-action="save-followup-edit"]').forEach((el) =>
-    el.addEventListener("click", () => submitEditFollowUp(el.dataset.incident, el.dataset.fu)));
-  document.querySelectorAll('[data-action="delete-followup"]').forEach((el) =>
-    el.addEventListener("click", () => deleteFollowUp(el.dataset.incident, el.dataset.fu)));
-  document.querySelectorAll(".dd-followup-edit-input").forEach((el) =>
-    el.addEventListener("input", () => { state.followEditDraft[el.dataset.fu] = el.value; }));
-  document.querySelectorAll('[data-action="toggle-history"]').forEach((el) =>
-    el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
-  document.querySelectorAll('[data-action="delete-incident"]').forEach((el) =>
-    el.addEventListener("click", () => deleteIncident(el.dataset.id)));
-  document.querySelectorAll('[data-action="restore-incident"]').forEach((el) =>
-    el.addEventListener("click", () => restoreIncident(el.dataset.id)));
-
-  document.querySelectorAll('[data-action="resolve-issue"]').forEach((el) =>
-    el.addEventListener("click", () => resolveGroomingIssue(el.dataset.id, el.dataset.issue)));
-  document.querySelectorAll('[data-action="escalate-issue"]').forEach((el) =>
-    el.addEventListener("click", () => escalateGroomingIssue(el.dataset.id, el.dataset.issue)));
-  document.querySelectorAll('[data-action="override-issue-student"]').forEach((el) =>
-    el.addEventListener("click", () => {
-      const input = document.querySelector(`.dd-issue-override-input[data-id="${el.dataset.id}"][data-issue="${el.dataset.issue}"]`);
-      if (input && input.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, input.value, "student");
-    }));
-  document.querySelectorAll('[data-action="override-issue-parent"]').forEach((el) =>
-    el.addEventListener("click", () => {
-      const input = document.querySelector(`.dd-issue-override-input[data-id="${el.dataset.id}"][data-issue="${el.dataset.issue}"]`);
-      if (input && input.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, input.value, "parent");
-    }));
-
-  if (state.showNewForm) {
-    const form = document.getElementById("new-form");
-
-    // Student name re-renders on every keystroke (to refresh related-record
-    // matches below it), so every other field needs to live in the draft too
-    // or it would get wiped by that re-render — same fix as the earlier
-    // Parent Meeting bug.
-    const nameEl = document.getElementById("new-incident-student-name");
-    if (nameEl) nameEl.addEventListener("input", () => {
-      state._newIncidentDraft.studentName = nameEl.value;
-      const cursor = nameEl.selectionStart;
-      render();
-      const ns = document.getElementById("new-incident-student-name");
-      if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
-    });
-    const syncField = (name) => { const el = form.querySelector(`[name="${name}"]`); if (el) el.addEventListener("input", () => { state._newIncidentDraft[name] = el.value; }); };
-    syncField("date");
-    const classEl = form.querySelector('[name="studentClass"]');
-    if (classEl) classEl.addEventListener("change", () => { state._newIncidentDraft.studentClass = classEl.value; });
-
-    const othersEl = document.getElementById("new-incident-others-text");
-    if (othersEl) othersEl.addEventListener("input", () => { state._newIncidentDraft.othersText = othersEl.value; });
-
-    form.querySelectorAll(".dd-link-susp-cb").forEach((cb) =>
-      cb.addEventListener("change", () => {
-        const ids = state._newIncidentDraft.linkedSuspensionIds;
-        if (cb.checked) { if (!ids.includes(cb.value)) ids.push(cb.value); }
-        else { state._newIncidentDraft.linkedSuspensionIds = ids.filter((x) => x !== cb.value); }
-      }));
-    form.querySelectorAll(".dd-link-pm-cb").forEach((cb) =>
-      cb.addEventListener("change", () => {
-        const ids = state._newIncidentDraft.linkedPmIds;
-        if (cb.checked) { if (!ids.includes(cb.value)) ids.push(cb.value); }
-        else { state._newIncidentDraft.linkedPmIds = ids.filter((x) => x !== cb.value); }
-      }));
-  }
-  if (state.editingIncidentId) {
-    document.getElementById("edit-form").addEventListener("submit", submitEditIncident);
-    document.getElementById("edit-modal-close").addEventListener("click", () => { state.editingIncidentId = null; render(); });
-    document.getElementById("edit-modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "edit-modal-backdrop") { state.editingIncidentId = null; render(); } });
-  }
-}
 
 function attachSuspListeners() {
   document.querySelectorAll('[data-action="set-susp-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
-  const deletedBtn = document.getElementById("btn-toggle-deleted-susp");
-  if (deletedBtn) deletedBtn.addEventListener("click", () => { state.suspTab = state.suspTab === "Deleted" ? "All" : "Deleted"; render(); });
-  const suspSortSel = document.getElementById("susp-sort-by");
-  if (suspSortSel) suspSortSel.addEventListener("change", () => { state.suspSortBy = suspSortSel.value; render(); });
 
   const search = document.getElementById("susp-search-input");
   if (search) search.addEventListener("input", () => {
@@ -3631,8 +3495,6 @@ function attachSuspListeners() {
 
   document.querySelectorAll('[data-action="delete-suspension"]').forEach((el) =>
     el.addEventListener("click", () => deleteSuspension(el.dataset.id)));
-  document.querySelectorAll('[data-action="restore-suspension"]').forEach((el) =>
-    el.addEventListener("click", () => restoreSuspension(el.dataset.id)));
   document.querySelectorAll('[data-action="edit-suspension"]').forEach((el) =>
     el.addEventListener("click", () => { openEditSuspension(el.dataset.id); state.showNewSuspForm = false; }));
   document.querySelectorAll('[data-action="toggle-susp-history"]').forEach((el) =>
@@ -3687,15 +3549,9 @@ function attachPmListeners() {
 
   document.querySelectorAll('[data-action="set-pm-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.pmTab = el.dataset.tab; render(); }));
-  const pmDeletedBtn = document.getElementById("btn-toggle-deleted-pm");
-  if (pmDeletedBtn) pmDeletedBtn.addEventListener("click", () => { state.pmTab = state.pmTab === "Deleted" ? "All" : "Deleted"; render(); });
-  const pmSortSel = document.getElementById("pm-sort-by");
-  if (pmSortSel) pmSortSel.addEventListener("change", () => { state.pmSortBy = pmSortSel.value; render(); });
 
   document.querySelectorAll('[data-action="delete-pm"]').forEach((el) =>
     el.addEventListener("click", () => deleteParentMeeting(el.dataset.id)));
-  document.querySelectorAll('[data-action="restore-pm"]').forEach((el) =>
-    el.addEventListener("click", () => restoreParentMeeting(el.dataset.id)));
   document.querySelectorAll('[data-action="edit-pm"]').forEach((el) =>
     el.addEventListener("click", () => { openEditParentMeeting(el.dataset.id); state.showNewPmForm = false; }));
   document.querySelectorAll('[data-action="toggle-pm-history"]').forEach((el) =>
@@ -3715,7 +3571,9 @@ function attachPmFormModalListeners() {
       if (e.target.id === "pm-modal-backdrop") { state.showNewPmForm = false; state.editingPmId = null; state._pmDraft = null; render(); }
     });
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._pmDraft[name] = el.value; }); };
-    syncField("studentName"); syncField("date"); syncField("reason");
+    syncField("studentName"); syncField("reason");
+    const pmDateEl = form.elements["date"];
+    if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];
     if (classEl) classEl.addEventListener("change", () => { state._pmDraft.studentClass = classEl.value; });
     form.querySelectorAll(".dd-attendee-cb").forEach((cb) =>
@@ -3835,14 +3693,26 @@ function handleDelegatedTap(e) {
     runDelegatedAction("close-new-form", () => { state.showNewForm = false; state._newIncidentDraft = null; render(); });
     return;
   }
-  // Whatever event actually changed the name field (input, autocomplete,
-  // autofill — not all of these reliably fire a plain "input" event on
-  // every browser), grab its current on-screen value before any action
-  // triggers a re-render, so a typed name can never be wiped out by a
-  // stale value lingering in state.
+  // Whatever event actually changed a field (input, change, autocomplete,
+  // autofill, a native picker's own "Done" button — not all of these
+  // reliably fire a plain input/change event in every browser before a
+  // subsequent tap elsewhere registers), grab every field's current
+  // on-screen value before any action triggers a re-render, so nothing
+  // typed or picked can ever be wiped out by a stale value lingering in
+  // state. Same fix as the name field, applied to every field in this
+  // form rather than just the one we happened to notice first.
   if (state._newIncidentDraft) {
-    const nameEl = document.getElementById("new-incident-student-name");
-    if (nameEl) state._newIncidentDraft.studentName = nameEl.value;
+    const container = document.getElementById("new-form");
+    if (container) {
+      const nameEl = container.querySelector("#new-incident-student-name");
+      if (nameEl) state._newIncidentDraft.studentName = nameEl.value;
+      const classEl = container.querySelector('[name="studentClass"]');
+      if (classEl) state._newIncidentDraft.studentClass = classEl.value;
+      const dateEl = container.querySelector('[name="date"]');
+      if (dateEl) state._newIncidentDraft.date = dateEl.value;
+      const othersEl = container.querySelector("#new-incident-others-text");
+      if (othersEl) state._newIncidentDraft.othersText = othersEl.value;
+    }
   }
   const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
   if (saveBtn && !saveBtn.disabled) { runDelegatedAction("save-new-incident", () => submitNewIncident()); return; }
