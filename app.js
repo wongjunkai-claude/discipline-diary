@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.39.0";
+const APP_VERSION = "2.39.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -124,13 +124,13 @@ function composeReasonValue(form, draft, fieldName) {
 function renderReasonPicker(selectedCategory, othersText, fieldName) {
   fieldName = fieldName || "reason";
   return `
-    <label class="dd-label">Reason <span style="color:#A3372B">*</span> <span class="dd-mono-muted" style="font-size:11px;text-transform:none">scroll for more</span></label>
+    <label class="dd-label">Reason <span class="dd-mono-muted" style="font-size:11px;text-transform:none">scroll for more</span></label>
     <select class="dd-input dd-reason-select" name="${fieldName}" size="5" required>
       <option value="" disabled ${selectedCategory ? "" : "selected"}>Select reason…</option>
       ${REASON_OPTIONS.map((r) => `<option value="${escapeHtml(r)}" ${selectedCategory === r ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
     </select>
     ${selectedCategory === "Others" ? `
-    <label class="dd-label">Please specify <span style="color:#A3372B">*</span></label>
+    <label class="dd-label">Please specify</label>
     <input class="dd-input dd-reason-others-input" data-for="${fieldName}" value="${escapeHtml(othersText || "")}" />` : ""}`;
 }
 // Splits an already-saved reason (which might be a plain category, or a
@@ -2291,9 +2291,9 @@ function renderNewCaseStepBody(step, d) {
       <select class="dd-input" id="case-student-class" required>${classOptionsHtml(d.studentClass)}</select>
       <label class="dd-label">Date</label>
       <input class="dd-input" type="date" id="case-date" required value="${d.date}" />
-      <label class="dd-label">Issue <span style="color:#A3372B">*</span></label>
+      <label class="dd-label">Issue</label>
       <textarea class="dd-textarea dd-input" id="case-issue" rows="3" required placeholder="What happened?">${escapeHtml(d.issue)}</textarea>
-      <label class="dd-label">Action taken <span style="color:#A3372B">*</span></label>
+      <label class="dd-label">Action taken</label>
       <textarea class="dd-textarea dd-input" id="case-action-taken" rows="2" required placeholder="What was done in response?">${escapeHtml(d.actionTaken)}</textarea>
       <label class="dd-label">Status</label>
       <div class="dd-status-row">
@@ -2328,7 +2328,7 @@ function renderNewCaseStepBody(step, d) {
   if (step === "pm") {
     return `
       <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">For ${escapeHtml(d.studentName)}, Class ${escapeHtml(d.studentClass)}</div>
-      <label class="dd-label">Who is attending? <span style="color:#A3372B">*</span></label>
+      <label class="dd-label">Who is attending?</label>
       <div class="dd-checkbox-group">
         ${ATTENDEE_OPTIONS.map((a) => `
           <label class="dd-checkbox-pill">
@@ -2339,7 +2339,7 @@ function renderNewCaseStepBody(step, d) {
       ${d.pmDraft.attendees.includes("Others") ? `
       <label class="dd-label">Specify "Others"</label>
       <input class="dd-input" id="case-pm-others-text" value="${escapeHtml(d.pmDraft.othersText)}" placeholder="e.g. Aunt" />` : ""}
-      <label class="dd-label">Reason for meeting <span style="color:#A3372B">*</span></label>
+      <label class="dd-label">Reason for meeting</label>
       <textarea class="dd-textarea dd-input" id="case-pm-reason" rows="3" required>${escapeHtml(d.pmDraft.reason)}</textarea>
       ${renderNewCaseNav("pm", d)}`;
   }
@@ -2788,13 +2788,13 @@ function renderNewForm() {
           </div>
           <span class="dd-sans" style="font-size:15px" id="new-incident-date-label">${formatDate(d.date)}</span>
         </div>
-        <label class="dd-label">Issue(s) <span style="color:#A3372B">*</span> <span class="dd-mono-muted" style="font-size:11px;text-transform:none">tap all that apply</span></label>
+        <label class="dd-label">Issue(s) <span class="dd-mono-muted" style="font-size:11px;text-transform:none">tap all that apply</span></label>
         <div class="dd-issue-tag-grid">
           ${GROOMING_ISSUE_TYPES.map((type) => `
             <button type="button" class="dd-issue-tag ${d.selectedIssues.includes(type) ? "active" : ""}" data-action="toggle-grooming-issue" data-issue="${escapeHtml(type)}">${escapeHtml(type)}</button>`).join("")}
         </div>
         ${d.selectedIssues.includes("Others") ? `
-        <label class="dd-label">Please specify <span style="color:#A3372B">*</span></label>
+        <label class="dd-label">Please specify</label>
         <input class="dd-input" id="new-incident-others-text" value="${escapeHtml(d.othersText)}" />` : ""}
         ${d.selectedIssues.length > 0 ? `
         <div class="dd-mono-muted" style="font-size:11px;margin-top:10px">
@@ -2822,9 +2822,9 @@ function renderEditIncidentForm() {
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(it.studentClass || "")}</select>
         <label class="dd-label">Date</label>
         <input class="dd-input" type="date" name="date" required value="${it.date}" />
-        <label class="dd-label">Issue <span style="color:#A3372B">*</span></label>
+        <label class="dd-label">Issue</label>
         <textarea class="dd-textarea dd-input" name="issue" rows="3" required>${escapeHtml(it.issue)}</textarea>
-        <label class="dd-label">Action taken <span style="color:#A3372B">*</span></label>
+        <label class="dd-label">Action taken</label>
         <textarea class="dd-textarea dd-input" name="actionTaken" rows="2" required>${escapeHtml(it.actionTaken || "")}</textarea>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
@@ -2911,7 +2911,6 @@ function renderSuspensionDetail(s) {
           <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-meta">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · ${escapeHtml(s.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
-          <div class="dd-card-summary-issue">${escapeHtml(s.reason || "")}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
           <span class="dd-status-dot" style="background:${statusStyle.ink}" title="${escapeHtml(statusStyle.label)}"></span>
@@ -3137,7 +3136,7 @@ function renderSuspForm(isEdit) {
         </label>
         ${d.tagPm ? `
         <div class="dd-related-box" style="margin-top:8px">
-          <label class="dd-label" style="margin-top:0">Who is attending? <span style="color:#A3372B">*</span></label>
+          <label class="dd-label" style="margin-top:0">Who is attending?</label>
           <div style="display:flex;flex-wrap:wrap;gap:6px">
             ${ATTENDEE_OPTIONS.map((a) => `
               <label class="dd-checkbox-pill">
@@ -3228,7 +3227,6 @@ function renderParentMeetingDetail(m) {
           <div class="dd-card-student">${escapeHtml(m.studentName)}</div>
           <div class="dd-card-meta">${formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
-          <div class="dd-card-summary-issue">${escapeHtml(m.reason || "")}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
           <span class="dd-status-dot" style="background:${dotColor}" title="${escapeHtml(dotLabel)}"></span>
@@ -3267,7 +3265,16 @@ function renderPmForm(isEdit) {
         <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
-        <label class="dd-label">Who is attending? <span style="color:#A3372B">*</span></label>
+        <label class="dd-label">Date</label>
+        <div class="dd-issue-due-row">
+          <div class="dd-date-icon-btn" title="Change the date">
+            <input class="dd-input" type="date" name="date" required value="${d.date}" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+          </div>
+          <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
+        </div>
+        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
+        <label class="dd-label">Who is attending?</label>
         <div class="dd-checkbox-group">
           ${ATTENDEE_OPTIONS.map((a) => `
             <label class="dd-checkbox-pill">
@@ -3279,15 +3286,6 @@ function renderPmForm(isEdit) {
         ${d.attendees.includes("Others") ? `
         <label class="dd-label">Specify "Others"</label>
         <input class="dd-input" id="pm-others-text" value="${escapeHtml(d.othersText)}" placeholder="e.g. Aunt" />` : ""}
-        <label class="dd-label">Date</label>
-        <div class="dd-issue-due-row">
-          <div class="dd-date-icon-btn" title="Change the date">
-            <input class="dd-input" type="date" name="date" required value="${d.date}" />
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
-          </div>
-          <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
-        </div>
-        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save meeting"}</button>
       </form>
