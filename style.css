@@ -379,7 +379,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-issue-tag.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 
 .dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; background: #FBFAF6; }
-.dd-issue-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dd-issue-card-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .dd-issue-card-label { font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; font-size: 14px; color: #1B2A41; }
 .dd-issue-stage-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #F2EFE6; color: #B8863B; flex-shrink: 0; }
 .dd-issue-overdue { background: #FBEAE7; color: #A3372B; }

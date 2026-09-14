@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.36.0";
+const APP_VERSION = "2.37.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -307,14 +307,35 @@ function diffText(oldObj, newObj, fields) {
   return changes;
 }
 
-function askDeletePassword() {
-  const pw = window.prompt("Enter password to remove this entry:");
-  if (pw === null) return false;
-  if (pw !== DELETE_PASSWORD) {
-    alert("Incorrect password. Entry was not removed.");
-    return false;
-  }
-  return true;
+// Deleting an entry now just asks "Delete the entry?" with Yes/No,
+// rather than a password — the confirmation IS the safeguard.
+function requestDeleteConfirmation(type, id) {
+  state.confirmDeleteTarget = { type, id };
+  render();
+}
+function cancelDeleteConfirmation() {
+  state.confirmDeleteTarget = null;
+  render();
+}
+async function confirmDeleteYes() {
+  const target = state.confirmDeleteTarget;
+  if (!target) return;
+  state.confirmDeleteTarget = null;
+  if (target.type === "incident") await deleteIncident(target.id);
+  else if (target.type === "suspension") await deleteSuspension(target.id);
+  else if (target.type === "parentMeeting") await deleteParentMeeting(target.id);
+}
+function renderDeleteConfirmModal() {
+  return `
+    <div class="dd-modal-backdrop" id="confirm-delete-backdrop">
+      <div class="dd-modal" style="max-width:340px;text-align:center">
+        <div class="dd-modal-title" style="margin-bottom:18px">Delete the entry?</div>
+        <div style="display:flex;gap:8px">
+          <button class="dd-add-btn" style="flex:1;background:#8A8571" id="btn-confirm-delete-no">No</button>
+          <button class="dd-add-btn" style="flex:1;background:#A3372B" id="btn-confirm-delete-yes">Yes</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 // ---------- Suspension day-entry helpers (new unified per-day model) ----------
@@ -378,6 +399,7 @@ const state = {
   settingsView: "menu", // 'menu' | 'yearList' | 'yearReport' | 'classesForYear'
   settingsSelectedYear: null,
   classConfig: null,
+  confirmDeleteTarget: null,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
   dayViewDate: null, // set on first render to today
@@ -976,7 +998,6 @@ async function deleteFollowUp(incidentId, followUpId) {
   } catch (err) { state.saveError = true; } finally { render(); }
 }
 async function deleteIncident(id) {
-  if (!askDeletePassword()) return;
   try {
     await deleteDoc(doc(db, "incidents", id));
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
@@ -1166,7 +1187,6 @@ async function submitNewSuspension(e) {
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
 }
 async function deleteSuspension(id) {
-  if (!askDeletePassword()) return;
   try {
     await deleteDoc(doc(db, "suspensions", id));
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
@@ -1330,7 +1350,6 @@ async function submitEditParentMeeting(e) {
   } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
 }
 async function deleteParentMeeting(id) {
-  if (!askDeletePassword()) return;
   try {
     await deleteDoc(doc(db, "parentMeetings", id));
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
@@ -1359,11 +1378,13 @@ function renderNameScreen() {
 function attachNameListeners() { document.getElementById("name-form").addEventListener("submit", handleNameSubmit); }
 
 function renderMain() {
-  if (state.section === "dashboard") return renderDashboardSection();
-  if (state.section === "log") return renderLogSection();
-  if (state.section === "suspensions") return renderSuspensionSection();
-  if (state.section === "settings") return renderSettingsSection();
-  return renderParentMeetingSection();
+  let html;
+  if (state.section === "dashboard") html = renderDashboardSection();
+  else if (state.section === "log") html = renderLogSection();
+  else if (state.section === "suspensions") html = renderSuspensionSection();
+  else if (state.section === "settings") html = renderSettingsSection();
+  else html = renderParentMeetingSection();
+  return html + (state.confirmDeleteTarget ? renderDeleteConfirmModal() : "");
 }
 
 function renderNav() {
@@ -2551,7 +2572,7 @@ function renderIncidentDetail(it) {
       <div class="dd-detail-head">
         <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(it.studentName)}</div>
-          <div class="dd-card-meta">${formatDate(it.date)}${it.studentClass ? ` · Class ${escapeHtml(it.studentClass)}` : ""}</div>
+          <div class="dd-card-meta">${formatDate(it.date)}${it.studentClass ? ` · ${escapeHtml(it.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(it.loggedBy)}</div>
           <div class="dd-card-summary-issue">${escapeHtml(summaryLabel)}${isLegacy ? " (legacy entry)" : ""}</div>
         </div>
@@ -2640,7 +2661,7 @@ function renderIncidentDetail(it) {
       <button class="dd-history-toggle" data-action="toggle-history" data-id="${it.id}">${state.historyOpen[it.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[it.id] ? `<div class="dd-history">${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Remove entry</button>
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Delete Entry</button>
       </div>` : ""}
     </div>`;
 }
@@ -2831,7 +2852,7 @@ function renderSuspensionDetail(s) {
       <div class="dd-detail-head">
         <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
-          <div class="dd-card-meta">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · Class ${escapeHtml(s.studentClass)}` : ""}</div>
+          <div class="dd-card-meta">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · ${escapeHtml(s.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
           <div class="dd-card-summary-issue">${escapeHtml(s.reason || "")}</div>
         </div>
@@ -2858,7 +2879,7 @@ function renderSuspensionDetail(s) {
       ${state.historyOpen[s.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Remove</button>
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Delete Entry</button>
       </div>` : ""}
     </div>`;
 }
@@ -3150,7 +3171,7 @@ function renderParentMeetingDetail(m) {
       <div class="dd-detail-head">
         <div style="min-width:0">
           <div class="dd-card-student">${escapeHtml(m.studentName)}</div>
-          <div class="dd-card-meta">${formatDate(m.date)}${m.studentClass ? ` · Class ${escapeHtml(m.studentClass)}` : ""}</div>
+          <div class="dd-card-meta">${formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
           <div class="dd-card-summary-issue">${escapeHtml(m.reason || "")}</div>
         </div>
@@ -3173,7 +3194,7 @@ function renderParentMeetingDetail(m) {
       ${state.historyOpen[m.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-pm" data-id="${m.id}">Edit entry</button>
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Remove</button>
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Delete Entry</button>
       </div>` : ""}
     </div>`;
 }
@@ -3303,7 +3324,52 @@ function attachMainListeners() {
 
   if (state.section === "suspensions") attachSuspListeners();
   else if (state.section === "parentMeetings") attachPmListeners();
+  else if (state.section === "log") attachGroomingListeners();
   else if (state.section === "dashboard") attachDashboardListeners();
+}
+
+// Grooming Log page — filter pills, search, follow-up thread, audit
+// trail, and the per-issue resolve/escalate/override/undo actions.
+function attachGroomingListeners() {
+  document.querySelectorAll('[data-action="set-discipline-filter"]').forEach((el) =>
+    el.addEventListener("click", () => { state.disciplineFilter = el.dataset.filter; render(); }));
+
+  const search = document.getElementById("search-input");
+  if (search) search.addEventListener("input", () => {
+    state.query = search.value;
+    const cursor = search.selectionStart;
+    render();
+    const ns = document.getElementById("search-input");
+    if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
+  });
+
+  document.querySelectorAll('[data-action="follow-input"]').forEach((el) =>
+    el.addEventListener("input", () => { state.followDraft[el.dataset.id] = el.value; }));
+  document.querySelectorAll('[data-action="add-followup"]').forEach((el) =>
+    el.addEventListener("click", () => addFollowUp(el.dataset.id)));
+  document.querySelectorAll('[data-action="edit-followup"]').forEach((el) =>
+    el.addEventListener("click", () => openEditFollowUp(el.dataset.incident, el.dataset.fu)));
+  document.querySelectorAll('[data-action="cancel-followup-edit"]').forEach((el) =>
+    el.addEventListener("click", () => cancelEditFollowUp()));
+  document.querySelectorAll('[data-action="save-followup-edit"]').forEach((el) =>
+    el.addEventListener("click", () => submitEditFollowUp(el.dataset.incident, el.dataset.fu)));
+  document.querySelectorAll('[data-action="delete-followup"]').forEach((el) =>
+    el.addEventListener("click", () => deleteFollowUp(el.dataset.incident, el.dataset.fu)));
+  document.querySelectorAll(".dd-followup-edit-input").forEach((el) =>
+    el.addEventListener("input", () => { state.followEditDraft[el.dataset.fu] = el.value; }));
+  document.querySelectorAll('[data-action="toggle-history"]').forEach((el) =>
+    el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
+  document.querySelectorAll('[data-action="delete-incident"]').forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("incident", el.dataset.id)));
+
+  document.querySelectorAll('[data-action="resolve-issue"]').forEach((el) =>
+    el.addEventListener("click", () => resolveGroomingIssue(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll('[data-action="escalate-issue"]').forEach((el) =>
+    el.addEventListener("click", () => escalateGroomingIssue(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll(".dd-issue-override-input").forEach((el) =>
+    el.addEventListener("change", () => { if (el.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, el.value); }));
+  document.querySelectorAll('[data-action="undo-issue-action"]').forEach((el) =>
+    el.addEventListener("click", () => undoGroomingIssueAction(el.dataset.id, el.dataset.issue)));
 }
 
 function attachDashboardListeners() {
@@ -3494,7 +3560,7 @@ function attachSuspListeners() {
   });
 
   document.querySelectorAll('[data-action="delete-suspension"]').forEach((el) =>
-    el.addEventListener("click", () => deleteSuspension(el.dataset.id)));
+    el.addEventListener("click", () => requestDeleteConfirmation("suspension", el.dataset.id)));
   document.querySelectorAll('[data-action="edit-suspension"]').forEach((el) =>
     el.addEventListener("click", () => { openEditSuspension(el.dataset.id); state.showNewSuspForm = false; }));
   document.querySelectorAll('[data-action="toggle-susp-history"]').forEach((el) =>
@@ -3551,7 +3617,7 @@ function attachPmListeners() {
     el.addEventListener("click", () => { state.pmTab = el.dataset.tab; render(); }));
 
   document.querySelectorAll('[data-action="delete-pm"]').forEach((el) =>
-    el.addEventListener("click", () => deleteParentMeeting(el.dataset.id)));
+    el.addEventListener("click", () => requestDeleteConfirmation("parentMeeting", el.dataset.id)));
   document.querySelectorAll('[data-action="edit-pm"]').forEach((el) =>
     el.addEventListener("click", () => { openEditParentMeeting(el.dataset.id); state.showNewPmForm = false; }));
   document.querySelectorAll('[data-action="toggle-pm-history"]').forEach((el) =>
@@ -3687,6 +3753,11 @@ function runDelegatedAction(key, fn) {
   fn();
 }
 function handleDelegatedTap(e) {
+  const yesBtn = e.target.closest && e.target.closest("#btn-confirm-delete-yes");
+  if (yesBtn) { runDelegatedAction("confirm-delete-yes", () => confirmDeleteYes()); return; }
+  const noBtn = e.target.closest && e.target.closest("#btn-confirm-delete-no");
+  const confirmBackdropHit = e.target.id === "confirm-delete-backdrop";
+  if (noBtn || confirmBackdropHit) { runDelegatedAction("confirm-delete-no", () => cancelDeleteConfirmation()); return; }
   const closeBtn = e.target.closest && e.target.closest("#modal-close");
   const backdropHit = e.target.id === "modal-backdrop";
   if (closeBtn || backdropHit) {
