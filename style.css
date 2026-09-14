@@ -170,7 +170,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-entry-select { margin-bottom: 16px; }
 
 .dd-detail-card { border: 1px solid #C9C4B4; background: #fff; border-radius: 3px; padding: 8px; }
-.dd-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.dd-detail-head { display: flex; align-items: stretch; justify-content: space-between; gap: 12px; }
 
 .dd-stamp-subtle {
   font-family: 'IBM Plex Mono', monospace; font-weight: 500; letter-spacing: 0.06em;
@@ -283,7 +283,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-tally-col { text-align: center; background: #F2EFE6; border-radius: 3px; padding: 10px 2px; min-width: 0; }
 .dd-tally-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dd-tally-number { font-family: 'Zilla Slab', serif; font-size: 26px; font-weight: 700; margin-top: 2px; }
-.dd-cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.dd-cal-nav { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
 .dd-cal-nav-btn {
   width: 32px; height: 32px; border-radius: 50%; border: 1px solid #C9C4B4; background: #fff; color: #1B2A41;
   font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
@@ -305,7 +305,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 }
 .dd-cal-cell-empty { border: none; background: transparent; cursor: default; }
 .dd-cal-today { border-color: #1B2A41; border-width: 2px; }
-.dd-cal-selected { background: #1B2A41; }
+.dd-cal-selected { background: #1B2A41 !important; }
 .dd-cal-selected .dd-cal-daynum { color: #fff; }
 .dd-cal-daynum { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #1B2A41; }
 .dd-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
@@ -318,6 +318,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-day-detail-location { color: #8A8571; font-family: 'IBM Plex Mono', monospace; font-size: 11px; margin-left: auto; }
 .dd-cal-legend { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #C9C4B4; }
 .dd-cal-legend-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.dd-daytype-legend { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 6px 10px; }
 .dd-cal-legend-col { display: flex; flex-direction: column; gap: 6px; }
 .dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #4A4536; }
 .dd-cal-legend-item .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
@@ -339,6 +340,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-mini-weekend { background: #E4E1D4; }
 .dd-mini-holiday { background: #F5E3A1; }
 .dd-mini-pubholiday { background: #F2B8B0; }
+.dd-mini-closure { background: #B8D4E8; }
 .dd-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
 .dd-mini-today .dd-mini-daynum { font-weight: 700; text-decoration: underline; }
 .dd-mini-selected { background: #1B2A41 !important; }
