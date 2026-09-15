@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.54.0";
+const APP_VERSION = "2.54.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -711,10 +711,10 @@ let unsubUsers = null;
 const ALLOWED_EMAIL_DOMAIN = "moe.edu.sg";
 async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
-  // Pre-filters the Google account picker to the school domain — this is
-  // only a UX hint, so the hard check below (and the Firestore rules)
-  // are what actually enforce it.
-  provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN });
+  // Not passing an "hd" domain hint here — the account picker will show
+  // any Google account, but the real enforcement (which actually matters)
+  // happens right after sign-in below, and again at the Firestore rules
+  // level, so this isn't a security gap.
   state.authError = "";
   render();
   try {
