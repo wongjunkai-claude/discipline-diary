@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.45.1";
+const APP_VERSION = "2.46.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -367,7 +367,11 @@ function applyCalendarOverrides(year, computed) {
 // actually at home. Entries can span a range of days (startDate..endDate;
 // a single day just has startDate === endDate).
 function schoolClosureEntryFor(iso) {
-  return (state.schoolClosureDays?.entries || []).find((e) => iso >= e.startDate && iso <= e.endDate) || null;
+  return (state.schoolClosureDays?.entries || []).find((e) => {
+    const start = e.startDate || e.date;
+    const end = e.endDate || e.date;
+    return start && iso >= start && iso <= end;
+  }) || null;
 }
 // A public holiday can be a single day or a range (Chinese New Year is
 // usually 2 days) — checks both the new named-entry list and the older
@@ -387,6 +391,8 @@ function isNonSchoolDay(iso, level) {
   const h = state.holidays;
   if (h && h.publicHolidays && h.publicHolidays.includes(iso)) return true;
   if (publicHolidayEntryFor(iso)) return true;
+  const extraHolidays = state.schoolCalendarOverrides?.[year]?.extraHolidays || [];
+  if (extraHolidays.some((e) => iso >= e.startDate && iso <= e.endDate)) return true;
   const closure = schoolClosureEntryFor(iso);
   if (closure) {
     // With a specific level in hand (e.g. scheduling a suspension for a
@@ -453,6 +459,15 @@ async function confirmDeleteYes() {
     const remaining = (state.schoolClosureDays?.entries || []).filter((e) => e.id !== target.id);
     try { await setDoc(doc(db, "settings", "schoolClosureDays"), { entries: remaining }, { merge: true }); }
     catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+  } else if (target.type === "extraSchoolHoliday") {
+    const all = state.schoolCalendarOverrides || {};
+    const patch = {};
+    for (const yr of Object.keys(all)) {
+      const list = all[yr]?.extraHolidays || [];
+      if (list.some((e) => e.id === target.id)) patch[yr] = { ...all[yr], extraHolidays: list.filter((e) => e.id !== target.id) };
+    }
+    try { await setDoc(doc(db, "settings", "schoolCalendarOverrides"), patch, { merge: true }); }
+    catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
   }
 }
 // Tapping "+" opens this with an empty draft (id: null); tapping an
@@ -514,6 +529,23 @@ function renderClosureDayModal() {
         </div>` : ""}
         ${state.saveError ? `<div class="dd-error">${escapeHtml(state.saveErrorDetail || "Fill in every field.")}</div>` : ""}
         <button class="dd-btn-primary" type="button" id="btn-save-closure-day" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button>
+      </div>
+    </div>`;
+}
+function renderExtraSchoolHolidayModal() {
+  const d = state._extraSchoolHolidayDraft;
+  return `
+    <div class="dd-modal-backdrop" id="esh-modal-backdrop">
+      <div class="dd-modal">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">${d.id ? "Edit" : "Add"} school holiday</div>
+          <button type="button" class="dd-modal-close" id="esh-modal-close">✕</button>
+        </div>
+        <label class="dd-label" style="margin-top:0">Name</label>
+        <input class="dd-input" id="esh-name-input" value="${escapeHtml(d.name)}" placeholder="e.g. Special one-off closure" />
+        ${renderDateRangeFields("esh", d.startDate, d.endDate)}
+        ${state.saveError ? `<div class="dd-error">${escapeHtml(state.saveErrorDetail || "Fill in every field.")}</div>` : ""}
+        <button class="dd-btn-primary" type="button" id="btn-save-extra-school-holiday" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button>
       </div>
     </div>`;
 }
@@ -1632,6 +1664,7 @@ function renderMain() {
   else html = renderParentMeetingSection();
   if (state._publicHolidayDraft) html += renderPublicHolidayModal();
   if (state._schoolHolidayDraft) html += renderSchoolHolidayEditModal();
+  if (state._extraSchoolHolidayDraft) html += renderExtraSchoolHolidayModal();
   if (state._closureModalDraft) html += renderClosureDayModal();
   return html + (state.confirmDeleteTarget ? renderDeleteConfirmModal() : "");
 }
@@ -2081,7 +2114,10 @@ function renderSettingsSection() {
     const year = new Date().getFullYear();
     const moe = computeMoeCalendar(year);
     const phEntries = (state.holidays?.publicHolidayEntries || []).filter((e) => e.startDate.startsWith(String(year))).sort((a, b) => a.startDate.localeCompare(b.startDate));
-    const closureEntries = (state.schoolClosureDays?.entries || []).filter((e) => e.startDate.startsWith(String(year))).sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const closureEntries = (state.schoolClosureDays?.entries || [])
+      .map((e) => ({ ...e, startDate: e.startDate || e.date, endDate: e.endDate || e.date }))
+      .filter((e) => e.startDate && e.startDate.startsWith(String(year)))
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
     const sectionHead = (label, addAction) => `
       <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px">
         <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:0">${label}</div>
@@ -2112,8 +2148,9 @@ function renderSettingsSection() {
       )).join("")}
       <button type="button" class="dd-back-link" id="btn-load-known-holidays" style="margin-top:8px">Load known public holidays (2026 &amp; 2027)</button>
 
-      ${sectionHead("School Holidays", null)}
+      ${sectionHead("School Holidays", "open-add-school-holiday")}
       ${moe.ranges.map((r, i) => listRow(r.label, formatDateOrRange(r.start, r.end), "edit-school-holiday", `data-key="${rangeKeys[i]}" data-range="true" data-label="${escapeHtml(r.label)}" data-start="${r.start}" data-end="${r.end}"`, null, null)).join("")}
+      ${(state.schoolCalendarOverrides?.[year]?.extraHolidays || []).map((e) => listRow(e.name, formatDateOrRange(e.startDate, e.endDate), "edit-extra-school-holiday", `data-id="${e.id}"`, "request-delete-extra-school-holiday", e.id)).join("")}
       ${moe.singleDays.map((d, i) => ({ d, label: moe.singleDayLabels[i], key: singleDayKeys[i] }))
         .filter(({ label, d }) => label !== "National Day (in lieu)" || !publicHolidayEntryFor(d))
         .map(({ d, label, key }) => listRow(label, formatDate(d), "edit-school-holiday", `data-key="${key}" data-range="false" data-label="${escapeHtml(label)}" data-start="${d}" data-end="${d}"`, null, null)).join("")}
@@ -3676,6 +3713,17 @@ function attachMainListeners() {
       render();
     }));
 
+  document.querySelectorAll('[data-action="open-add-school-holiday"]').forEach((el) =>
+    el.addEventListener("click", () => { state._extraSchoolHolidayDraft = { id: null, name: "", startDate: todayISO(), endDate: todayISO() }; state.saveError = false; render(); }));
+  document.querySelectorAll('[data-action="edit-extra-school-holiday"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const year = new Date().getFullYear();
+      const entry = (state.schoolCalendarOverrides?.[year]?.extraHolidays || []).find((e) => e.id === el.dataset.id);
+      if (entry) { state._extraSchoolHolidayDraft = { ...entry }; state.saveError = false; render(); }
+    }));
+  document.querySelectorAll('[data-action="request-delete-extra-school-holiday"]').forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("extraSchoolHoliday", el.dataset.id)));
+
   // -- School Closure / HBL Days --
   document.querySelectorAll('[data-action="open-add-closure-day"]').forEach((el) =>
     el.addEventListener("click", () => { state._closureModalDraft = { id: null, type: "closure", startDate: todayISO(), endDate: todayISO(), levels: [1, 2, 3, 4, 5, 6] }; state.saveError = false; render(); }));
@@ -3739,6 +3787,35 @@ function attachMainListeners() {
     });
   }
 
+  // -- Extra (custom) School Holiday modal --
+  if (state._extraSchoolHolidayDraft) {
+    const d = state._extraSchoolHolidayDraft;
+    const close = () => { state._extraSchoolHolidayDraft = null; state.saveError = false; render(); };
+    const closeBtn = document.getElementById("esh-modal-close");
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    const backdrop = document.getElementById("esh-modal-backdrop");
+    if (backdrop) backdrop.addEventListener("click", (e) => { if (e.target.id === "esh-modal-backdrop") close(); });
+    const nameEl = document.getElementById("esh-name-input");
+    if (nameEl) nameEl.addEventListener("input", () => { d.name = nameEl.value; });
+    const startEl = document.getElementById("esh-start");
+    const endEl = document.getElementById("esh-end");
+    if (startEl) startEl.addEventListener("change", () => { d.startDate = startEl.value; if (d.endDate < d.startDate) d.endDate = d.startDate; renderKeepingModalScroll(); });
+    if (endEl) endEl.addEventListener("change", () => { d.endDate = endEl.value < d.startDate ? d.startDate : endEl.value; renderKeepingModalScroll(); });
+    const saveExtraBtn = document.getElementById("btn-save-extra-school-holiday");
+    if (saveExtraBtn) saveExtraBtn.addEventListener("click", async () => {
+      if (!d.name.trim()) { state.saveError = true; state.saveErrorDetail = "Give this holiday a name."; render(); return; }
+      state.saveError = false; state.saving = true; render();
+      const year = String(new Date(d.startDate).getFullYear());
+      try {
+        const existing = state.schoolCalendarOverrides?.[year]?.extraHolidays || [];
+        const entry = { id: d.id || uid(), name: d.name.trim(), startDate: d.startDate, endDate: d.endDate };
+        const updated = d.id ? existing.map((e) => e.id === d.id ? entry : e) : [...existing, entry];
+        await setDoc(doc(db, "settings", "schoolCalendarOverrides"), { [year]: { ...(state.schoolCalendarOverrides?.[year] || {}), extraHolidays: updated } }, { merge: true });
+        state._extraSchoolHolidayDraft = null; state.saving = false; render();
+      } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); state.saving = false; render(); }
+    });
+  }
+
   // -- School Closure / HBL Day modal --
   if (state._closureModalDraft) {
     const d = state._closureModalDraft;
@@ -3762,9 +3839,27 @@ function attachMainListeners() {
     const saveBtn = document.getElementById("btn-save-closure-day");
     if (saveBtn) saveBtn.addEventListener("click", async () => {
       if (d.type === "hbl" && d.levels.length === 0) { state.saveError = true; state.saveErrorDetail = "Pick at least one level for the HBL day."; render(); return; }
+      const existing = state.schoolClosureDays?.entries || [];
+      const rangesOverlap = (aStart, aEnd, bStart, bEnd) => aStart <= bEnd && bStart <= aEnd;
+      const dLevels = d.type === "closure" ? [1, 2, 3, 4, 5, 6] : d.levels;
+      const conflict = existing.find((e) => {
+        if (e.id === d.id) return false; // editing itself isn't a conflict
+        const eStart = e.startDate || e.date, eEnd = e.endDate || e.date;
+        if (!rangesOverlap(d.startDate, d.endDate, eStart, eEnd)) return false;
+        // A closure covers every level, so it conflicts with anything on
+        // the same dates; two HBL entries only conflict if they actually
+        // share a level (P1-P2 HBL and P3-P4 HBL the same day is fine).
+        return dLevels.some((l) => e.levels.includes(l));
+      });
+      if (conflict) {
+        const conflictLabel = conflict.levels.length === 6 ? "a School Closure" : "an HBL Day";
+        state.saveError = true;
+        state.saveErrorDetail = `Those dates overlap with ${conflictLabel} already on ${formatDateOrRange(conflict.startDate || conflict.date, conflict.endDate || conflict.date)} — a School Closure and an HBL Day can't cover the same date.`;
+        render();
+        return;
+      }
       state.saveError = false; state.saving = true; render();
       try {
-        const existing = state.schoolClosureDays?.entries || [];
         const entry = { id: d.id || uid(), startDate: d.startDate, endDate: d.endDate, levels: d.type === "closure" ? [1, 2, 3, 4, 5, 6] : d.levels.slice() };
         const updated = d.id ? existing.map((e) => e.id === d.id ? entry : e) : [...existing, entry];
         await setDoc(doc(db, "settings", "schoolClosureDays"), { entries: updated }, { merge: true });
