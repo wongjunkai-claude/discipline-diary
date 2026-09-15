@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.45.0";
+const APP_VERSION = "2.45.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -774,17 +774,14 @@ async function syncPublicHolidaysFromDataGovSg() {
       }
       if (!dateVal) continue;
       dates.add(dateVal);
-      const nameVal = rec.holiday || rec.day || rec.name || rec.description || "Public Holiday";
+      let nameVal = rec.holiday || rec.day || rec.name || rec.description || "Public Holiday";
+      // The dataset already lists in-lieu days as their own row, marked
+      // "Observed" — that's the authoritative source for which days are
+      // in lieu, so we just relabel it for consistency rather than also
+      // guessing our own in-lieu day from the Sunday-landing rule, which
+      // would double-count whatever MOM already states directly.
+      if (/observed/i.test(nameVal)) nameVal = nameVal.replace(/\s*\(?observed\)?/i, "").trim() + " (in lieu)";
       named.set(dateVal, nameVal);
-      // Singapore's rule: a holiday landing on a Sunday gets the
-      // following Monday off in lieu — Saturday-landing holidays do
-      // not. This mirrors the legal rule directly rather than relying
-      // on the dataset to spell out every in-lieu row itself.
-      if (weekdayOf(dateVal) === 0) {
-        const lieu = addDays(dateVal, 1);
-        dates.add(lieu);
-        named.set(lieu, `${nameVal} (in lieu)`);
-      }
     }
     if (dates.size < 50) return;
     const fresh = [...dates].sort();
