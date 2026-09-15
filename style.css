@@ -430,6 +430,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-undo-toast button {
   background: none; border: none; color: #F5C563; font-weight: 700; font-size: 14px; cursor: pointer; flex-shrink: 0;
 }
+.dd-undo-countdown { font-family: 'IBM Plex Mono', monospace; color: rgba(255,255,255,0.6); font-size: 12px; }
 
 /* Suspension dots are square rather than round, so category can be told
    apart by shape as well as color for colorblind users. */

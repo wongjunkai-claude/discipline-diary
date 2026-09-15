@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.49.1";
+const APP_VERSION = "2.51.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -173,16 +173,16 @@ const GROOMING_ISSUE_CONFIG = {
   "Missing Name Tag": {
     days: [7, 7, 3], parentFrom: 2, finalAction: "facilitated",
     instructions: [
-      "Order a replacement — direct the student to collect the form from the bookshop.",
+      "Direct Student to take Name Tag Form From Bookshop",
       "Order a replacement — direct parents to obtain the form from the school website.",
       "Order a replacement — give the hardcopy form directly to the student (over the weekend).",
     ],
   },
   "Improper Socks": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated" },
   "Improper Shoes": { days: [4, 4, 1], parentFrom: 2, finalAction: "facilitated" },
-  "Smartwatch/Handphone": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Keep/remove immediately." },
-  "Improper Earrings/Hair Accessories": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Remove immediately." },
-  "Wearing Make Up/Improper Facial Patches": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Remove immediately." },
+  "Smartwatch/Handphone": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Keep/Remove Immediately." },
+  "Improper Earrings/Hair Accessories": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
+  "Wearing Make Up/Improper Facial Patches": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
   "Religious Items": { days: [1, 1, 1], parentFrom: 1, finalAction: "shsm-only" },
   "Others": { days: [3, 3, 1], parentFrom: 2, finalAction: "facilitated" },
 };
@@ -227,6 +227,16 @@ function addDays(iso, days) {
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + days);
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+}
+// Whole calendar days between two ISO dates (to, minus from) — used to
+// say "overdue for N days" without drifting from timezone/DST quirks,
+// since both dates are treated as plain UTC midnight.
+function daysBetween(fromIso, toIso) {
+  const [fy, fm, fd] = fromIso.split("-").map(Number);
+  const [ty, tm, td] = toIso.split("-").map(Number);
+  const from = Date.UTC(fy, fm - 1, fd);
+  const to = Date.UTC(ty, tm - 1, td);
+  return Math.round((to - from) / 86400000);
 }
 function isWeekend(iso) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -436,8 +446,8 @@ function diffText(oldObj, newObj, fields) {
 
 // Deleting an entry now just asks "Delete the entry?" with Yes/No,
 // rather than a password — the confirmation IS the safeguard.
-function requestDeleteConfirmation(type, id) {
-  state.confirmDeleteTarget = { type, id };
+function requestDeleteConfirmation(type, id, extra) {
+  state.confirmDeleteTarget = { type, id, ...(extra || {}) };
   render();
 }
 function cancelDeleteConfirmation() {
@@ -468,6 +478,19 @@ async function confirmDeleteYes() {
     }
     try { await setDoc(doc(db, "settings", "schoolCalendarOverrides"), patch, { merge: true }); }
     catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+  } else if (target.type === "groomingIssue") {
+    const entry = state.incidents.find((i) => i.id === target.entryId);
+    if (entry) {
+      const remainingIssues = (entry.issues || []).filter((x) => x.id !== target.id);
+      if (remainingIssues.length === 0) {
+        // That was the only issue left on this entry — remove the whole
+        // entry rather than leaving an empty, issue-less record behind.
+        await deleteIncident(target.entryId);
+      } else {
+        try { await updateDoc(doc(db, "incidents", target.entryId), { issues: remainingIssues }); }
+        catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+      }
+    }
   }
 }
 // Tapping "+" opens this with an empty draft (id: null); tapping an
@@ -1277,18 +1300,27 @@ async function deleteFollowUp(incidentId, followUpId) {
 // After a permanent delete, briefly offer to undo it — this captures the
 // full document data right before deletion so "undo" can recreate the
 // exact same record (same id, same fields) rather than trying to guess
-// at reconstructing it.
-let undoToastTimer = null;
+// at reconstructing it. The toast counts down visibly so it's clear
+// exactly how long is left before the option disappears.
+let undoToastInterval = null;
+function clearUndoToastTimer() {
+  if (undoToastInterval) { clearInterval(undoToastInterval); undoToastInterval = null; }
+}
 function showUndoToast(collectionName, id, data) {
-  if (undoToastTimer) clearTimeout(undoToastTimer);
-  state.undoToast = { collectionName, id, data };
+  clearUndoToastTimer();
+  state.undoToast = { collectionName, id, data, secondsLeft: 5 };
   render();
-  undoToastTimer = setTimeout(() => { state.undoToast = null; render(); }, 10000);
+  undoToastInterval = setInterval(() => {
+    if (!state.undoToast) { clearUndoToastTimer(); return; }
+    state.undoToast.secondsLeft -= 1;
+    if (state.undoToast.secondsLeft <= 0) { clearUndoToastTimer(); state.undoToast = null; }
+    renderKeepingPageScroll();
+  }, 1000);
 }
 async function undoLastDelete() {
   const t = state.undoToast;
   if (!t) return;
-  if (undoToastTimer) clearTimeout(undoToastTimer);
+  clearUndoToastTimer();
   state.undoToast = null;
   try { await setDoc(doc(db, t.collectionName, t.id), t.data); }
   catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
@@ -1301,38 +1333,50 @@ async function deleteIncident(id) {
     if (entry) { const { id: _drop, ...data } = entry; showUndoToast("incidents", id, data); }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
-function openEditIncident(id) { state.editingIncidentId = id; render(); }
-async function submitEditIncident(e) {
-  e.preventDefault();
-  const f = e.target;
-  const id = state.editingIncidentId;
+function openEditIncident(id) {
   const it = state.incidents.find((i) => i.id === id);
   if (!it) return;
-  const updated = {
-    studentName: f.studentName.value.trim(),
-    studentClass: f.studentClass.value,
-    date: f.date.value,
-    issue: f.issue.value.trim(),
-    actionTaken: f.actionTaken.value.trim(),
+  state.editingIncidentId = id;
+  const existingIssues = Array.isArray(it.issues) ? it.issues : [];
+  state._editIncidentDraft = {
+    studentName: it.studentName, studentClass: it.studentClass, date: it.date,
+    selectedIssues: existingIssues.map((x) => x.type),
+    othersText: (existingIssues.find((x) => x.type === "Others") || {}).othersText || "",
   };
-  if (!updated.studentName || !updated.studentClass || !updated.issue || !updated.actionTaken) return;
-  const changes = diffText(it, updated, [
-    { key: "studentName", label: "Student name" }, { key: "studentClass", label: "Class" },
-    { key: "date", label: "Date" }, { key: "issue", label: "Issue" }, { key: "actionTaken", label: "Action taken" },
-  ]);
-  if (changes.length === 0) { state.editingIncidentId = null; render(); return; }
-  const now = Date.now();
+  state.newIncidentFormError = "";
+  render();
+}
+async function submitEditIncident() {
+  const d = state._editIncidentDraft;
+  const it = state.incidents.find((i) => i.id === state.editingIncidentId);
+  if (!it || !d) return;
+  if (!d.studentName.trim()) { state.newIncidentFormError = "Enter the student's name."; render(); return; }
+  if (!d.studentClass) { state.newIncidentFormError = "Select a class."; render(); return; }
+  if (d.selectedIssues.length === 0) { state.newIncidentFormError = "Select at least one issue."; render(); return; }
+  if (d.selectedIssues.includes("Others") && !(d.othersText || "").trim()) { state.newIncidentFormError = "Specify what \"Others\" means for this entry."; render(); return; }
+  state.newIncidentFormError = "";
   state.saveError = false;
   state.saving = true;
   render();
+  // Issues that are still selected keep their existing stage/deadline/
+  // history untouched; newly-ticked issue types start fresh at 1st
+  // Warning; anything unticked is dropped from the entry entirely.
+  const existingIssues = Array.isArray(it.issues) ? it.issues : [];
+  const keptIssues = existingIssues.filter((x) => d.selectedIssues.includes(x.type));
+  const newTypes = d.selectedIssues.filter((type) => !existingIssues.some((x) => x.type === type));
+  const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date));
+  const finalIssues = [...keptIssues, ...newIssues].map((x) => x.type === "Others" ? { ...x, othersText: d.othersText || "" } : x);
+  const now = Date.now();
   try {
-    await updateDoc(doc(db, "incidents", id), {
-      ...updated,
-      history: arrayUnion({ id: uid(), type: "edited", detail: `Entry edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
+    await updateDoc(doc(db, "incidents", it.id), {
+      studentName: d.studentName.trim(), studentClass: d.studentClass, date: d.date, issues: finalIssues,
+      history: arrayUnion({ id: uid(), type: "edited", detail: `Entry edited — issues now: ${finalIssues.map(groomingIssueLabel).join(", ")}`, by: teacherName(), at: now }),
     });
-    syncIncidentToSheet({ ...it, ...updated });
     state.editingIncidentId = null;
-  } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+    state._editIncidentDraft = null;
+    state.saving = false;
+    render();
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); state.saving = false; render(); }
 }
 
 // ==================== SUSPENSIONS (new unified per-day model) ====================
@@ -1712,9 +1756,10 @@ function renderMain() {
   return html;
 }
 function renderUndoToast() {
+  const secs = state.undoToast?.secondsLeft ?? 5;
   return `
     <div class="dd-undo-toast">
-      <span>Entry deleted.</span>
+      <span>Entry deleted. <span class="dd-undo-countdown">${secs}s</span></span>
       <button type="button" id="btn-undo-delete">Undo</button>
     </div>`;
 }
@@ -2887,7 +2932,10 @@ function renderGroomingFollowUpList() {
               <span class="dd-issue-stage-badge ${r.deadline < todayISO() ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
             </div>
             <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(r.studentClass || "")} · ${escapeHtml(r.issueLabel)}</div>
-            <div class="dd-mono-muted" style="font-size:11px">Entry logged ${formatDate(r.entryDate)}</div>
+            ${(() => {
+              const daysOverdue = daysBetween(r.deadline, todayISO());
+              return daysOverdue > 0 ? `<div class="dd-mono-muted" style="font-size:11px;color:#A3372B">Overdue for ${daysOverdue} day${daysOverdue === 1 ? "" : "s"}</div>` : "";
+            })()}
           </div>`).join("")}
       </div>`}
     </div>`;
@@ -3179,27 +3227,29 @@ function renderIncidentDetail(it) {
               <span class="dd-mono-muted" style="font-size:12px">Due ${formatDate(issue.deadline)}${overdue ? " — overdue" : ""}</span>
             </div>
             ${(() => {
-              // Only the one action relevant right now — never stacked.
-              // Final Warning always shows the escalated action (facilitated
-              // call, or SH/SM contact for the shsm-only issues); earlier
-              // stages show the Form Teacher parent-contact instruction only
-              // if this issue's rules call for it at this stage.
+              // Every non-final stage always shows exactly one FT-facing
+              // action: Contact Parents once this issue's rules call for
+              // it, otherwise a standing reminder that the student needs
+              // to be spoken to. Final Warning always shows the escalated
+              // action (facilitated call, or SH/SM contact for the
+              // shsm-only issues) instead of either of those.
               if (issue.stage === 3) {
                 return `<div class="dd-issue-instruction">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "LST or SH/SM Enforced Facilitated Call"}</div>`;
               }
-              if (cfg.parentFrom <= issue.stage) return `<div class="dd-issue-instruction">FT Contact Parents</div>`;
-              return "";
+              return `<div class="dd-issue-instruction">${cfg.parentFrom <= issue.stage ? "FT Contact Parents" : "FT Remind Students"}</div>`;
             })()}
             ${cfg.instructions ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>` : ""}
-            ${cfg.note ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.note)}</div>` : ""}
+            ${cfg.note ? `<div class="dd-issue-instruction">${escapeHtml(cfg.note)}</div>` : ""}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
               ${issue.stage < 3 ? `<button class="dd-add-btn" style="flex:1;background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
             </div>
             ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
+            <button class="dd-back-link" style="margin-top:6px;color:#A3372B" data-action="request-delete-grooming-issue" data-entry-id="${it.id}" data-issue="${issue.id}">✕ Delete this issue</button>
             ` : `
             <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
             ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
+            <button class="dd-back-link" style="margin-top:6px;color:#A3372B" data-action="request-delete-grooming-issue" data-entry-id="${it.id}" data-issue="${issue.id}">✕ Delete this issue</button>
             `}
           </div>`;
         }).join("")}
@@ -3237,6 +3287,7 @@ function renderIncidentDetail(it) {
       <button class="dd-history-toggle" data-action="toggle-history" data-id="${it.id}">${state.historyOpen[it.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[it.id] ? `<div class="dd-history">${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="dd-add-btn" data-action="open-edit-incident" data-id="${it.id}">Edit entry</button>
         <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Delete Entry</button>
       </div>` : ""}
     </div>`;
@@ -3330,24 +3381,31 @@ function renderNewForm() {
 }
 function renderEditIncidentForm() {
   const it = state.incidents.find((i) => i.id === state.editingIncidentId);
-  if (!it) return "";
+  const d = state._editIncidentDraft;
+  if (!it || !d) return "";
   return `
     <div class="dd-modal-backdrop" id="edit-modal-backdrop">
-      <form class="dd-modal" id="edit-form">
+      <div class="dd-modal" id="edit-form">
         <div class="dd-modal-head"><div class="dd-modal-title">Edit entry</div><button type="button" class="dd-modal-close" id="edit-modal-close">✕</button></div>
-        <label class="dd-label">Student name</label>
-        <input class="dd-input" name="studentName" required value="${escapeHtml(it.studentName)}" />
+        <label class="dd-label" style="margin-top:0">Student name</label>
+        <input class="dd-input" id="edit-incident-student-name" value="${escapeHtml(d.studentName)}" />
         <label class="dd-label">Class</label>
-        <select class="dd-input" name="studentClass" required>${classOptionsHtml(it.studentClass || "")}</select>
+        <select class="dd-input" id="edit-incident-class">${classOptionsHtml(d.studentClass)}</select>
         <label class="dd-label">Date</label>
-        <input class="dd-input" type="date" name="date" required value="${it.date}" />
-        <label class="dd-label">Issue</label>
-        <textarea class="dd-textarea dd-input" name="issue" rows="3" required>${escapeHtml(it.issue)}</textarea>
-        <label class="dd-label">Action taken</label>
-        <textarea class="dd-textarea dd-input" name="actionTaken" rows="2" required>${escapeHtml(it.actionTaken || "")}</textarea>
-        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
-        <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
-      </form>
+        ${renderDateField("edit-incident-date", d.date)}
+        <label class="dd-label">Issue(s) <span class="dd-mono-muted" style="font-size:11px;text-transform:none">tap all that apply</span></label>
+        <div class="dd-issue-tag-grid">
+          ${GROOMING_ISSUE_TYPES.map((type) => `
+            <button type="button" class="dd-issue-tag ${d.selectedIssues.includes(type) ? "active" : ""}" data-action="edit-toggle-grooming-issue" data-issue="${escapeHtml(type)}">${escapeHtml(type)}</button>`).join("")}
+        </div>
+        ${d.selectedIssues.includes("Others") ? `
+        <label class="dd-label">Please specify</label>
+        <input class="dd-input" id="edit-incident-others-text" value="${escapeHtml(d.othersText)}" />` : ""}
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Unticking an issue removes it and its warning history. Ticking a new one starts it fresh at 1st Warning. Issues left ticked keep their current stage untouched.</div>
+        ${state.newIncidentFormError ? `<div class="dd-error">${escapeHtml(state.newIncidentFormError)}</div>` : ""}
+        ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
+        <button class="dd-btn-primary" type="button" id="btn-save-edit-incident" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
+      </div>
     </div>`;
 }
 
@@ -4111,6 +4169,34 @@ function attachGroomingListeners() {
   document.querySelectorAll('[data-action="set-discipline-filter"]').forEach((el) =>
     el.addEventListener("click", () => { state.disciplineFilter = el.dataset.filter; render(); }));
 
+  document.querySelectorAll('[data-action="open-edit-incident"]').forEach((el) =>
+    el.addEventListener("click", () => openEditIncident(el.dataset.id)));
+
+  if (state.editingIncidentId && state._editIncidentDraft) {
+    const d = state._editIncidentDraft;
+    const close = () => { state.editingIncidentId = null; state._editIncidentDraft = null; state.newIncidentFormError = ""; render(); };
+    const closeBtn = document.getElementById("edit-modal-close");
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    const backdrop = document.getElementById("edit-modal-backdrop");
+    if (backdrop) backdrop.addEventListener("click", (e) => { if (e.target.id === "edit-modal-backdrop") close(); });
+    const nameEl = document.getElementById("edit-incident-student-name");
+    if (nameEl) nameEl.addEventListener("input", () => { d.studentName = nameEl.value; });
+    const classEl = document.getElementById("edit-incident-class");
+    if (classEl) classEl.addEventListener("change", () => { d.studentClass = classEl.value; });
+    const dateEl = document.getElementById("edit-incident-date");
+    if (dateEl) dateEl.addEventListener("change", () => { d.date = dateEl.value; renderKeepingModalScroll(); });
+    const othersEl = document.getElementById("edit-incident-others-text");
+    if (othersEl) othersEl.addEventListener("input", () => { d.othersText = othersEl.value; });
+    document.querySelectorAll('[data-action="edit-toggle-grooming-issue"]').forEach((el) =>
+      el.addEventListener("click", () => {
+        const type = el.dataset.issue;
+        d.selectedIssues = d.selectedIssues.includes(type) ? d.selectedIssues.filter((x) => x !== type) : [...d.selectedIssues, type];
+        renderKeepingModalScroll();
+      }));
+    const saveBtn = document.getElementById("btn-save-edit-incident");
+    if (saveBtn) saveBtn.addEventListener("click", submitEditIncident);
+  }
+
   const search = document.getElementById("search-input");
   if (search) search.addEventListener("input", () => {
     state.query = search.value;
@@ -4147,6 +4233,8 @@ function attachGroomingListeners() {
     el.addEventListener("change", () => { if (el.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, el.value); }));
   document.querySelectorAll('[data-action="undo-issue-action"]').forEach((el) =>
     el.addEventListener("click", () => undoGroomingIssueAction(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll('[data-action="request-delete-grooming-issue"]').forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("groomingIssue", el.dataset.issue, { entryId: el.dataset.entryId })));
 }
 
 function attachDashboardListeners() {
