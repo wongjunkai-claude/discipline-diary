@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.51.1";
+const APP_VERSION = "2.51.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -478,19 +478,6 @@ async function confirmDeleteYes() {
     }
     try { await setDoc(doc(db, "settings", "schoolCalendarOverrides"), patch, { merge: true }); }
     catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
-  } else if (target.type === "groomingIssue") {
-    const entry = state.incidents.find((i) => i.id === target.entryId);
-    if (entry) {
-      const remainingIssues = (entry.issues || []).filter((x) => x.id !== target.id);
-      if (remainingIssues.length === 0) {
-        // That was the only issue left on this entry — remove the whole
-        // entry rather than leaving an empty, issue-less record behind.
-        await deleteIncident(target.entryId);
-      } else {
-        try { await updateDoc(doc(db, "incidents", target.entryId), { issues: remainingIssues }); }
-        catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
-      }
-    }
   }
 }
 // Tapping "+" opens this with an empty draft (id: null); tapping an
@@ -3245,11 +3232,9 @@ function renderIncidentDetail(it) {
               ${issue.stage < 3 ? `<button class="dd-add-btn" style="flex:1;background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
             </div>
             ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
-            <button class="dd-back-link" style="margin-top:6px;color:#A3372B" data-action="request-delete-grooming-issue" data-entry-id="${it.id}" data-issue="${issue.id}">✕ Delete this issue</button>
             ` : `
             <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
             ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
-            <button class="dd-back-link" style="margin-top:6px;color:#A3372B" data-action="request-delete-grooming-issue" data-entry-id="${it.id}" data-issue="${issue.id}">✕ Delete this issue</button>
             `}
           </div>`;
         }).join("")}
@@ -4233,8 +4218,6 @@ function attachGroomingListeners() {
     el.addEventListener("change", () => { if (el.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, el.value); }));
   document.querySelectorAll('[data-action="undo-issue-action"]').forEach((el) =>
     el.addEventListener("click", () => undoGroomingIssueAction(el.dataset.id, el.dataset.issue)));
-  document.querySelectorAll('[data-action="request-delete-grooming-issue"]').forEach((el) =>
-    el.addEventListener("click", () => requestDeleteConfirmation("groomingIssue", el.dataset.issue, { entryId: el.dataset.entryId })));
 }
 
 function attachDashboardListeners() {
