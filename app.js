@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.52.3";
+const APP_VERSION = "2.52.4";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2208,9 +2208,12 @@ function renderSettingsSection() {
     const totals = computeYearlyCategoryTotals(year);
     body = `
       <div class="dd-print-hide">${backBtn("Years", "settings-back-to-years")}</div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:10px 0">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin:10px 0">
         <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
-        <button type="button" class="dd-back-link dd-print-hide" id="btn-print-report">🖶 Print / Save as PDF</button>
+        <button type="button" class="dd-print-btn dd-print-hide" id="btn-print-report">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"></path><rect x="4" y="9" width="16" height="8" rx="1.5"></rect><path d="M6 14h12v7H6z"></path></svg>
+          <span>Print/<br>Export PDF</span>
+        </button>
       </div>
       <div id="report-print-area">
       ${renderTallyGrid(["discipline", "suspension", "parentMeeting"], totals)}
