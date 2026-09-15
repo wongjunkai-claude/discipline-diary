@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.46.1";
+const APP_VERSION = "2.47.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -627,6 +627,7 @@ const state = {
   schoolCalendarOverrides: null,
   holidaysAddModal: null, // null | "publicHoliday" | "schoolClosure"
   confirmDeleteTarget: null,
+  undoToast: null,
   showWatchlistInfo: false,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
@@ -1271,9 +1272,31 @@ async function deleteFollowUp(incidentId, followUpId) {
     syncIncidentToSheet({ ...it, followUps: updatedFollowUps });
   } catch (err) { state.saveError = true; } finally { render(); }
 }
+// After a permanent delete, briefly offer to undo it — this captures the
+// full document data right before deletion so "undo" can recreate the
+// exact same record (same id, same fields) rather than trying to guess
+// at reconstructing it.
+let undoToastTimer = null;
+function showUndoToast(collectionName, id, data) {
+  if (undoToastTimer) clearTimeout(undoToastTimer);
+  state.undoToast = { collectionName, id, data };
+  render();
+  undoToastTimer = setTimeout(() => { state.undoToast = null; render(); }, 10000);
+}
+async function undoLastDelete() {
+  const t = state.undoToast;
+  if (!t) return;
+  if (undoToastTimer) clearTimeout(undoToastTimer);
+  state.undoToast = null;
+  try { await setDoc(doc(db, t.collectionName, t.id), t.data); }
+  catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  render();
+}
 async function deleteIncident(id) {
+  const entry = state.incidents.find((i) => i.id === id);
   try {
     await deleteDoc(doc(db, "incidents", id));
+    if (entry) { const { id: _drop, ...data } = entry; showUndoToast("incidents", id, data); }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 function openEditIncident(id) { state.editingIncidentId = id; render(); }
@@ -1463,8 +1486,10 @@ async function submitNewSuspension(e) {
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
 }
 async function deleteSuspension(id) {
+  const entry = state.suspensions.find((i) => i.id === id);
   try {
     await deleteDoc(doc(db, "suspensions", id));
+    if (entry) { const { id: _drop, ...data } = entry; showUndoToast("suspensions", id, data); }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 function openEditSuspension(id) {
@@ -1628,8 +1653,10 @@ async function submitEditParentMeeting(e) {
   } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
 }
 async function deleteParentMeeting(id) {
+  const entry = state.parentMeetings.find((i) => i.id === id);
   try {
     await deleteDoc(doc(db, "parentMeetings", id));
+    if (entry) { const { id: _drop, ...data } = entry; showUndoToast("parentMeetings", id, data); }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 
@@ -1666,7 +1693,16 @@ function renderMain() {
   if (state._schoolHolidayDraft) html += renderSchoolHolidayEditModal();
   if (state._extraSchoolHolidayDraft) html += renderExtraSchoolHolidayModal();
   if (state._closureModalDraft) html += renderClosureDayModal();
-  return html + (state.confirmDeleteTarget ? renderDeleteConfirmModal() : "");
+  html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
+  html += state.undoToast ? renderUndoToast() : "";
+  return html;
+}
+function renderUndoToast() {
+  return `
+    <div class="dd-undo-toast">
+      <span>Entry deleted.</span>
+      <button type="button" id="btn-undo-delete">Undo</button>
+    </div>`;
 }
 
 function renderNav() {
@@ -1963,6 +1999,73 @@ function computeYearClassRanking(year) {
     return { label: cls, discipline, suspension, total: discipline + suspension };
   }).filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
 }
+// Builds the plain-language trend paragraph for the Annual Summary
+// Report: how each category moved term-to-term within the year, which
+// grooming issue type came up most, and how the year compares to the
+// one before it. Everything here is computed from actual counts —
+// there's no AI writing involved, just a template filled in from data,
+// so the numbers it cites are always traceable back to real records.
+function describeTrend(firstCount, lastCount) {
+  if (firstCount === 0 && lastCount === 0) return "stayed flat";
+  if (lastCount > firstCount) return "trended upward";
+  if (lastCount < firstCount) return "trended downward";
+  return "stayed roughly level";
+}
+function computeTopGroomingIssueType(year) {
+  const tally = {};
+  state.incidents.forEach((it) => {
+    if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
+    it.issues.forEach((issue) => { tally[issue.type] = (tally[issue.type] || 0) + 1; });
+  });
+  const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+  return sorted.length ? { type: sorted[0][0], count: sorted[0][1] } : null;
+}
+function pctChangeLabel(prev, curr) {
+  if (prev === 0 && curr === 0) return "no change";
+  if (prev === 0) return `up from 0 to ${curr}`;
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  if (pct === 0) return "no real change";
+  return `${pct > 0 ? "up" : "down"} ${Math.abs(pct)}% (${prev} → ${curr})`;
+}
+function computeYearNarrative(year) {
+  const terms = computeYearTermTrend(year);
+  const thisYear = computeYearlyCategoryTotals(year);
+  const lastYear = computeYearlyCategoryTotals(year - 1);
+  const hasLastYear = lastYear.discipline + lastYear.suspension + lastYear.parentMeeting > 0;
+  const topIssue = computeTopGroomingIssueType(year);
+  const levelRanking = computeYearLevelRanking(year);
+  const classRanking = computeYearClassRanking(year);
+
+  const withinYear = terms.every((t) => t.discipline + t.suspension + t.parentMeeting === 0)
+    ? `No grooming, suspension, or parent meeting entries were logged for ${year} yet, so a within-year trend can't be drawn.`
+    : `Across the four terms, grooming issues ${describeTrend(terms[0].discipline, terms[3].discipline)} (Term 1: ${terms[0].discipline}, Term 4: ${terms[3].discipline}), suspensions ${describeTrend(terms[0].suspension, terms[3].suspension)} (Term 1: ${terms[0].suspension}, Term 4: ${terms[3].suspension}), and parent meetings ${describeTrend(terms[0].parentMeeting, terms[3].parentMeeting)} (Term 1: ${terms[0].parentMeeting}, Term 4: ${terms[3].parentMeeting}).` +
+      (topIssue ? ` The most common grooming issue this year was ${escapeHtml(topIssue.type)}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "");
+
+  const acrossYears = !hasLastYear
+    ? `There isn't a prior year on record yet to compare ${year} against.`
+    : `Compared to ${year - 1}, grooming issues are ${pctChangeLabel(lastYear.discipline, thisYear.discipline)}, suspensions are ${pctChangeLabel(lastYear.suspension, thisYear.suspension)}, and parent meetings are ${pctChangeLabel(lastYear.parentMeeting, thisYear.parentMeeting)}.`;
+
+  const improvements = [];
+  const concerns = [];
+  if (terms.length === 4) {
+    if (terms[3].discipline < terms[0].discipline) improvements.push("grooming issues eased off by Term 4 compared to Term 1");
+    else if (terms[3].discipline > terms[0].discipline) concerns.push("grooming issues were higher in Term 4 than Term 1 — worth watching whether this continues into next year");
+    if (terms[3].suspension < terms[0].suspension) improvements.push("suspensions were less frequent by Term 4");
+    else if (terms[3].suspension > terms[0].suspension) concerns.push("suspensions picked up later in the year rather than easing off");
+  }
+  if (hasLastYear) {
+    if (thisYear.discipline + thisYear.suspension < lastYear.discipline + lastYear.suspension) improvements.push(`overall discipline cases (grooming + suspensions) are down from ${year - 1}`);
+    else if (thisYear.discipline + thisYear.suspension > lastYear.discipline + lastYear.suspension) concerns.push(`overall discipline cases (grooming + suspensions) are up from ${year - 1}`);
+  }
+  if (levelRanking.length) concerns.push(`${levelRanking[0].label} recorded the most cases of any level (${levelRanking[0].discipline + levelRanking[0].suspension} combined) and may benefit from closer attention`);
+  if (classRanking.length) concerns.push(`${classRanking[0].label} was the single most-flagged class this year (${classRanking[0].total} combined cases)`);
+
+  const improvementsPara = improvements.length ? `Improvements: ${improvements.join("; ")}.` : "No clear year-over-year or in-year improvement stood out from the numbers alone.";
+  const concernsPara = concerns.length ? `Areas for improvement: ${concerns.join("; ")}.` : "No particular class or level stood out as needing extra attention this year.";
+
+  return { withinYear, acrossYears, improvementsPara, concernsPara };
+}
+
 function computeYearSuspensionRoster(year) {
   const rows = {};
   state.suspensions.forEach((s) => {
@@ -2068,6 +2171,17 @@ function renderSettingsSection() {
       ${renderReportBarRows(computeYearMonthlyTrend(year))}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term (chart)</div>
       ${renderReportBarRows(computeYearTermTrend(year))}
+      ${(() => {
+        const n = computeYearNarrative(year);
+        return `
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Trend analysis</div>
+      <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${n.withinYear}</p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${n.acrossYears}</p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 8px"><b>${n.improvementsPara}</b></p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">${n.concernsPara}</p>
+      </div>`;
+      })()}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Most challenging levels</div>
       ${renderRankingList(computeYearLevelRanking(year))}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Most challenging classes</div>
@@ -2307,9 +2421,9 @@ function renderCalLegend(incl) {
   const legendRight = [];
   if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Grooming Issue" });
   if (incl.parentMeeting) legendLeft.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meeting" });
-  if (incl.suspension) legendRight.push({ color: CHART_COLORS.suspension, label: "In-School Suspension" });
-  if (incl.suspension) legendRight.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension" });
-  const col = (items) => items.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot" style="background:${li.color}"></span>${li.label}</div>`).join("");
+  if (incl.suspension) legendRight.push({ color: CHART_COLORS.suspension, label: "In-School Suspension", square: true });
+  if (incl.suspension) legendRight.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension", square: true });
+  const col = (items) => items.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot${li.square ? " dd-cal-dot-suspension" : ""}" style="background:${li.color}"></span>${li.label}</div>`).join("");
   if (!legendLeft.length && !legendRight.length) return "";
   return `<div class="dd-cal-legend dd-cal-legend-2col"><div class="dd-cal-legend-col">${col(legendLeft)}</div><div class="dd-cal-legend-col">${col(legendRight)}</div></div>`;
 }
@@ -2347,8 +2461,8 @@ function renderWeekCalendar(incl) {
     const c = computeCountsForDate(d);
     const dots = [];
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}"></span>`);
-    if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}"></span>`);
-    if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot" style="background:${OSS_DOT_COLOR}"></span>`);
+    if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}"></span>`);
+    if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${OSS_DOT_COLOR}"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}"></span>`);
     const isSelected = state.selectedCalendarDay === d;
     const isWknd = isWeekend(d);
@@ -2486,8 +2600,8 @@ function renderMonthCalendar(monthKeyStr, incl) {
     const c = daily[iso];
     const dots = [];
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
-    if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
-    if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot" style="background:${OSS_DOT_COLOR}" title="${c.suspensionOSS} out-of-school suspension"></span>`);
+    if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
+    if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${OSS_DOT_COLOR}" title="${c.suspensionOSS} out-of-school suspension"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
     const isSelected = state.selectedCalendarDay === iso;
     const isWknd = isWeekend(iso);
@@ -2519,9 +2633,9 @@ function renderChartCustomModal() {
           <button type="button" class="dd-modal-close" id="chart-custom-modal-close">✕</button>
         </div>
         <label class="dd-label" style="margin-top:0">From</label>
-        <input type="date" class="dd-input" id="chart-custom-from" value="${state.chartCustomFrom}-01" />
+        ${renderDateField("chart-custom-from", `${state.chartCustomFrom}-01`)}
         <label class="dd-label">To</label>
-        <input type="date" class="dd-input" id="chart-custom-to" value="${state.chartCustomTo}-01" />
+        ${renderDateField("chart-custom-to", `${state.chartCustomTo}-01`)}
         <button class="dd-btn-primary" type="button" id="chart-custom-apply">Apply</button>
       </div>
     </div>`;
@@ -3653,6 +3767,9 @@ function renderPmForm(isEdit) {
 
 // ==================== LISTENERS ====================
 function attachMainListeners() {
+  const undoBtn = document.getElementById("btn-undo-delete");
+  if (undoBtn) undoBtn.addEventListener("click", undoLastDelete);
+
   document.querySelectorAll('[data-action="set-section"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = el.dataset.section; render(); }));
 
@@ -4032,6 +4149,10 @@ function attachDashboardListeners() {
   if (customModalClose) customModalClose.addEventListener("click", closeCustomModal);
   const customModalBackdrop = document.getElementById("chart-custom-modal-backdrop");
   if (customModalBackdrop) customModalBackdrop.addEventListener("click", (e) => { if (e.target.id === "chart-custom-modal-backdrop") closeCustomModal(); });
+  const customFromEl = document.getElementById("chart-custom-from");
+  const customToEl = document.getElementById("chart-custom-to");
+  if (customFromEl) customFromEl.addEventListener("change", () => { if (customFromEl.value) state.chartCustomFrom = monthKey(customFromEl.value); renderKeepingModalScroll(); });
+  if (customToEl) customToEl.addEventListener("change", () => { if (customToEl.value) state.chartCustomTo = monthKey(customToEl.value); renderKeepingModalScroll(); });
   const customApplyBtn = document.getElementById("chart-custom-apply");
   if (customApplyBtn) customApplyBtn.addEventListener("click", () => {
     const fromSel = document.getElementById("chart-custom-from");
