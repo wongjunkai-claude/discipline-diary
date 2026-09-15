@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.54.1";
+const APP_VERSION = "2.54.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2431,13 +2431,13 @@ function renderSettingsSection() {
       ${users.length === 0 ? `<div class="dd-dash-empty">No one has signed in yet.</div>` : `
       <div class="dd-level-breakdown">
         <div class="dd-level-row dd-level-row-header">
-          <div class="dd-level-cell-class">Name</div>
-          <div class="dd-level-cell-term">Email</div>
+          <div class="dd-level-cell-class" style="width:auto;flex:1 1 0">Name</div>
+          <div class="dd-level-cell-term" style="flex:2 1 0">Email</div>
         </div>
         ${users.map((u) => `
         <div class="dd-level-row">
-          <div class="dd-level-cell-class">${escapeHtml(u.name || "—")}</div>
-          <div class="dd-level-cell-term" style="text-align:left">${escapeHtml(u.email || "—")}</div>
+          <div class="dd-level-cell-class" style="width:auto;flex:1 1 0">${escapeHtml(u.name || "—")}</div>
+          <div class="dd-level-cell-term" style="flex:2 1 0;text-align:left">${escapeHtml(u.email || "—")}</div>
         </div>`).join("")}
       </div>`}`;
   } else {
