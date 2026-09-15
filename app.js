@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.52.0";
+const APP_VERSION = "2.52.2";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -173,7 +173,7 @@ const GROOMING_ISSUE_CONFIG = {
   "Missing Name Tag": {
     days: [7, 7, 3], parentFrom: 2, finalAction: "facilitated",
     instructions: [
-      "Direct Student to take Name Tag Form From Bookshop",
+      "Student To Take Name Tag Form From Bookshop",
       "Order a replacement — direct parents to obtain the form from the school website.",
       "Order a replacement — give the hardcopy form directly to the student (over the weekend).",
     ],
@@ -3236,9 +3236,11 @@ function renderIncidentDetail(it) {
               if (issue.stage === 3) {
                 return `<div class="dd-issue-instruction">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "LST or SH/SM Enforced Facilitated Call"}</div>`;
               }
-              return `<div class="dd-issue-instruction">${cfg.parentFrom <= issue.stage ? "FT Contact Parents" : "FT Remind Students"}</div>`;
+              return `<div class="dd-issue-instruction">${cfg.parentFrom <= issue.stage ? "FT Contact Parents" : "FT Remind Student"}</div>`;
             })()}
-            ${cfg.instructions ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>` : ""}
+            ${cfg.instructions ? (issue.stage === 1
+              ? `<div class="dd-issue-instruction">${escapeHtml(cfg.instructions[0] || "")}</div>`
+              : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`) : ""}
             ${cfg.note ? `<div class="dd-issue-instruction">${escapeHtml(cfg.note)}</div>` : ""}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
