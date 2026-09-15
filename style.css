@@ -19,7 +19,7 @@ body { margin: 0; background: #E3E1D6; }
 .dd-label { font-family: 'IBM Plex Mono', monospace; color: #1B2A41; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; display: block; margin-bottom: 6px; margin-top: 12px; }
 .dd-input, .dd-textarea, input[type="date"].dd-input {
   width: 100%; font-family: 'IBM Plex Sans', sans-serif; border: 1px solid #C9C4B4; background: #fff;
-  padding: 9px 12px; border-radius: 3px; font-size: 14px; outline: none;
+  padding: 9px 12px; border-radius: 3px; font-size: 16px; outline: none;
 }
 input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].dd-input {
   box-sizing: border-box;
