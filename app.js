@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.47.0";
+const APP_VERSION = "2.48.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -628,6 +628,8 @@ const state = {
   holidaysAddModal: null, // null | "publicHoliday" | "schoolClosure"
   confirmDeleteTarget: null,
   undoToast: null,
+  studentViewName: null,
+  studentViewFromSection: "dashboard",
   showWatchlistInfo: false,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
@@ -1684,7 +1686,8 @@ function attachNameListeners() { document.getElementById("name-form").addEventLi
 
 function renderMain() {
   let html;
-  if (state.section === "dashboard") html = renderDashboardSection();
+  if (state.section === "studentView") html = renderStudentView();
+  else if (state.section === "dashboard") html = renderDashboardSection();
   else if (state.section === "log") html = renderLogSection();
   else if (state.section === "suspensions") html = renderSuspensionSection();
   else if (state.section === "settings") html = renderSettingsSection();
@@ -2949,7 +2952,7 @@ function renderDashboardSection() {
               if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
               return `
               <div style="border-bottom:1px solid #E4E1D4;padding-bottom:8px">
-                <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
+                <div class="dd-sans dd-card-student-link" style="font-size:14px" data-action="view-student" data-name="${escapeHtml(t.name)}">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
                 ${stats.map((s) => `<div class="dd-mono-muted" style="font-size:12px;margin-top:2px">${s}</div>`).join("")}
               </div>`;
             }).join("")}
@@ -3075,6 +3078,29 @@ function renderLogSection() {
     </div>`;
 }
 
+function renderStudentView() {
+  const name = state.studentViewName || "";
+  const grooming = state.incidents.filter((i) => !i.deleted && i.studentName === name).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const suspensions = state.suspensions.filter((s) => !s.deleted && s.studentName === name).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const meetings = state.parentMeetings.filter((m) => !m.deleted && m.studentName === name).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const latestClass = (grooming[0]?.studentClass) || (suspensions[0]?.studentClass) || (meetings[0]?.studentClass) || "";
+  const sectionBlock = (title, count, items, renderFn) => `
+    <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:20px 0 8px">${title} (${count})</div>
+    ${count === 0 ? `<div class="dd-dash-empty">Nothing on file.</div>` : `<div style="display:flex;flex-direction:column;gap:12px">${items.map(renderFn).join("")}</div>`}`;
+  return `
+    <div class="dd-app">
+      ${renderNav()}
+      <div class="dd-main">
+        <button type="button" class="dd-back-link" data-action="student-view-back">‹ Back</button>
+        <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">${escapeHtml(name)}${latestClass ? ` <span class="dd-mono-muted" style="font-size:14px;font-weight:400">${escapeHtml(latestClass)}</span>` : ""}</div>
+        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:6px">Everything on file for this student, across all three logs.</div>
+        ${sectionBlock("Grooming Log", grooming.length, grooming, renderIncidentDetail)}
+        ${sectionBlock("Suspension Log", suspensions.length, suspensions, renderSuspensionDetail)}
+        ${sectionBlock("Parent Meetings", meetings.length, meetings, renderParentMeetingDetail)}
+      </div>
+    </div>`;
+}
+
 function renderIncidentDetail(it) {
   const isLegacy = !Array.isArray(it.issues);
   const issues = isLegacy ? [] : it.issues;
@@ -3091,7 +3117,7 @@ function renderIncidentDetail(it) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student">${escapeHtml(it.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(it.studentName)}">${escapeHtml(it.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${formatDate(it.date)}${it.studentClass ? ` · ${escapeHtml(it.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(it.loggedBy)}</div>
           ${isLegacy ? `<div class="dd-card-summary-issue">${escapeHtml(summaryLabel)} (legacy entry)</div>` : ""}
@@ -3381,7 +3407,7 @@ function renderSuspensionDetail(s) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student">${escapeHtml(s.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(s.studentName)}">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · ${escapeHtml(s.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
         </div>
@@ -3697,7 +3723,7 @@ function renderParentMeetingDetail(m) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student">${escapeHtml(m.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}">${escapeHtml(m.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
         </div>
@@ -3769,6 +3795,17 @@ function renderPmForm(isEdit) {
 function attachMainListeners() {
   const undoBtn = document.getElementById("btn-undo-delete");
   if (undoBtn) undoBtn.addEventListener("click", undoLastDelete);
+
+  document.querySelectorAll('[data-action="view-student"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.studentViewFromSection = state.section;
+      state.studentViewName = el.dataset.name;
+      state.section = "studentView";
+      window.scrollTo(0, 0);
+      render();
+    }));
+  document.querySelectorAll('[data-action="student-view-back"]').forEach((el) =>
+    el.addEventListener("click", () => { state.section = state.studentViewFromSection || "dashboard"; render(); }));
 
   document.querySelectorAll('[data-action="set-section"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = el.dataset.section; render(); }));
@@ -4042,6 +4079,7 @@ function attachMainListeners() {
   else if (state.section === "parentMeetings") attachPmListeners();
   else if (state.section === "log") attachGroomingListeners();
   else if (state.section === "dashboard") attachDashboardListeners();
+  else if (state.section === "studentView") { attachGroomingListeners(); attachSuspListeners(); attachPmListeners(); }
 }
 
 // Grooming Log page — filter pills, search, follow-up thread, audit
