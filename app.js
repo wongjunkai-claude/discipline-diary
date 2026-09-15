@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.52.2";
+const APP_VERSION = "2.52.3";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -180,7 +180,7 @@ const GROOMING_ISSUE_CONFIG = {
   },
   "Improper Socks": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated" },
   "Improper Shoes": { days: [4, 4, 1], parentFrom: 2, finalAction: "facilitated" },
-  "Smartwatch/Handphone": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Keep/Remove Immediately." },
+  "Smartwatch/Handphone": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Keep/Remove Immediately" },
   "Improper Earrings/Hair Accessories": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
   "Wearing Make Up/Improper Facial Patches": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
   "Religious Items": { days: [1, 1, 1], parentFrom: 1, finalAction: "shsm-only" },
