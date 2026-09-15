@@ -458,3 +458,22 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-print-btn span {
   font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; font-weight: 600; line-height: 1.25; text-align: center;
 }
+
+/* Desktop / large-screen scaling — the app is built mobile-first with a
+   lot of explicit pixel font-sizes scattered through inline styles, so
+   rather than re-derive every one of them in rem units, "zoom" scales
+   the whole rendered app (text, spacing, icons) proportionally while
+   keeping real layout flow (unlike transform:scale, which would not).
+   Widening max-width separately lets the layout actually use more of a
+   wide screen instead of just growing a narrow column bigger. */
+@media (min-width: 900px) {
+  .dd-header-inner, .dd-main { max-width: 1000px; }
+}
+@media (min-width: 1300px) {
+  .dd-header-inner, .dd-main { max-width: 1200px; }
+  body { zoom: 1.15; }
+}
+@media (min-width: 1700px) {
+  .dd-header-inner, .dd-main { max-width: 1320px; }
+  body { zoom: 1.25; }
+}
