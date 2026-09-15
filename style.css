@@ -436,3 +436,16 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-cal-dot-suspension { border-radius: 1px; }
 
 .dd-card-student-link { cursor: pointer; text-decoration: underline; text-decoration-color: #C9C4B4; text-underline-offset: 3px; }
+
+@media print {
+  .dd-header, .dd-print-hide, .dd-undo-toast { display: none !important; }
+  body, .dd-app, .dd-main { background: #fff !important; }
+  #report-print-area { padding: 0; }
+  .dd-panel, .dd-level-breakdown { break-inside: avoid; }
+}
+
+.dd-nav-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
+  background: #A3372B; color: #fff; border-radius: 999px; font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px #1B2A41;
+}

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.48.0";
+const APP_VERSION = "2.49.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -1667,8 +1667,19 @@ function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
   if (!state.dataLoaded || !state.suspLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
+  updateFollowUpBadge();
   root.innerHTML = renderMain();
   attachMainListeners();
+}
+// Reflects the overdue/due-today grooming follow-up count in the browser
+// tab title, and on the installed app's icon where the platform
+// supports it — so it's visible without having the app open.
+function updateFollowUpBadge() {
+  const n = computeGroomingFollowUpList().length;
+  document.title = n > 0 ? `(${n}) Discipline Diary` : "Discipline Diary";
+  if ("setAppBadge" in navigator) {
+    try { n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) { /* unsupported, non-fatal */ }
+  }
 }
 function renderNameScreen() {
   return `
@@ -1733,8 +1744,9 @@ function renderNav() {
       </div>
       <div class="dd-header-inner" style="margin-top:14px">
         <div style="display:flex;gap:6px;width:100%;align-items:center">
-          <button class="dd-circle-btn dd-nav-home ${state.section === "dashboard" ? "active" : ""}" data-action="set-section" data-section="dashboard" title="Dashboard">
+          <button class="dd-circle-btn dd-nav-home ${state.section === "dashboard" ? "active" : ""}" style="position:relative" data-action="set-section" data-section="dashboard" title="Dashboard">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"></path><path d="M5 10v10h14V10"></path></svg>
+            ${(() => { const n = computeGroomingFollowUpList().length; return n > 0 ? `<span class="dd-nav-badge">${n > 9 ? "9+" : n}</span>` : ""; })()}
           </button>
           ${items.map((it) => `<button class="dd-pill-tab dd-pill-tab-sm ${state.section === it.key ? "active" : ""}" data-action="set-section" data-section="${it.key}">${it.label}</button>`).join("")}
         </div>
@@ -2155,8 +2167,12 @@ function renderSettingsSection() {
     const year = state.settingsSelectedYear;
     const totals = computeYearlyCategoryTotals(year);
     body = `
-      ${backBtn("Years", "settings-back-to-years")}
-      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Annual Summary — ${year}</div>
+      <div class="dd-print-hide">${backBtn("Years", "settings-back-to-years")}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:10px 0">
+        <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
+        <button type="button" class="dd-back-link dd-print-hide" id="btn-print-report">🖶 Print / Save as PDF</button>
+      </div>
+      <div id="report-print-area">
       ${renderTallyGrid(["discipline", "suspension", "parentMeeting"], totals)}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term</div>
       <div class="dd-level-breakdown">
@@ -2200,7 +2216,8 @@ function renderSettingsSection() {
               <span class="dd-mono-muted" style="font-size:12px">${r.count} suspension${r.count === 1 ? "" : "s"}</span>
             </div>`).join("")}
         </div>`;
-      })()}`;
+      })()}
+      </div>`;
   } else if (state.settingsView === "yearList") {
     const years = availableReportYears();
     body = `
@@ -3098,6 +3115,9 @@ function renderStudentView() {
         ${sectionBlock("Suspension Log", suspensions.length, suspensions, renderSuspensionDetail)}
         ${sectionBlock("Parent Meetings", meetings.length, meetings, renderParentMeetingDetail)}
       </div>
+      ${state.editingIncidentId ? renderEditIncidentForm() : ""}
+      ${state.editingSuspensionId ? renderSuspForm(true) : ""}
+      ${state.editingPmId ? renderPmForm(true) : ""}
     </div>`;
 }
 
@@ -3853,6 +3873,9 @@ function attachMainListeners() {
 
   document.querySelectorAll('[data-action="settings-open-holidays"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsView = "holidays"; state.saveError = false; render(); }));
+
+  const printReportBtn = document.getElementById("btn-print-report");
+  if (printReportBtn) printReportBtn.addEventListener("click", () => window.print());
 
   const loadKnownBtn = document.getElementById("btn-load-known-holidays");
   if (loadKnownBtn) loadKnownBtn.addEventListener("click", async () => {
