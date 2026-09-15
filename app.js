@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.46.0";
+const APP_VERSION = "2.46.1";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2382,7 +2382,23 @@ function isPublicHoliday(iso) {
   if (h && h.publicHolidays && h.publicHolidays.includes(iso)) return true;
   return !!publicHolidayEntryFor(iso);
 }
-function isHolidayNotWeekend(iso) { return isNonSchoolDay(iso) && !isWeekend(iso); }
+// Yellow shading ("School Holiday") must mean specifically the MOE
+// calendar or a manually-added extra school holiday — not closure/HBL
+// days, which get their own blue. isNonSchoolDay's generic (no-level)
+// form deliberately treats closure/HBL as a non-school day too, which
+// is right for scheduling but wrong for telling the two shading
+// categories apart, so this checks only the school-holiday sources.
+function isSchoolHolidayOnly(iso) {
+  const year = parseInt(iso.slice(0, 4), 10);
+  const moe = computeMoeCalendar(year);
+  if (moe.singleDays.includes(iso)) return true;
+  for (const r of moe.ranges) {
+    if (iso >= r.start && iso <= r.end) return true;
+  }
+  const extraHolidays = state.schoolCalendarOverrides?.[year]?.extraHolidays || [];
+  return extraHolidays.some((e) => iso >= e.startDate && iso <= e.endDate);
+}
+function isHolidayNotWeekend(iso) { return isSchoolHolidayOnly(iso) && !isWeekend(iso); }
 function renderMiniMonth(monthKeyStr, incl) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const firstDow = weekdayOf(`${monthKeyStr}-01`);
