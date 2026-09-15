@@ -1,7 +1,7 @@
 // ---------- Firebase (loaded directly from Google's CDN, no npm/build needed) ----------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, onAuthStateChanged, signInAnonymously,
+  getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, collection, onSnapshot, addDoc, updateDoc, doc, arrayUnion, setDoc, getDoc, deleteDoc,
@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.52.5";
+const APP_VERSION = "2.54.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -624,6 +624,9 @@ function studentsOnDate(type, dateISO) {
 // ---------- App state ----------
 const state = {
   authReady: false,
+  authUser: null,
+  authError: "",
+  userList: [],
   teacherName: localStorage.getItem("dd-teacher-name") || "",
   holidays: null,
   section: "dashboard",
@@ -703,16 +706,55 @@ let unsubIncidents = null;
 let unsubSuspensions = null;
 let unsubHolidays = null;
 let unsubParentMeetings = null;
+let unsubUsers = null;
 
-signInAnonymously(auth).catch(() => { render(); });
+const ALLOWED_EMAIL_DOMAIN = "moe.edu.sg";
+async function signInWithGoogle() {
+  const provider = new GoogleAuthProvider();
+  // Pre-filters the Google account picker to the school domain — this is
+  // only a UX hint, so the hard check below (and the Firestore rules)
+  // are what actually enforce it.
+  provider.setCustomParameters({ hd: ALLOWED_EMAIL_DOMAIN });
+  state.authError = "";
+  render();
+  try {
+    await signInWithPopup(auth, provider);
+    // onAuthStateChanged below picks up from here.
+  } catch (err) {
+    if (err?.code !== "auth/popup-closed-by-user" && err?.code !== "auth/cancelled-popup-request") {
+      state.authError = "Sign-in didn't go through. Please try again.";
+    }
+    render();
+  }
+}
+async function signOutOfApp() {
+  try { await signOut(auth); } catch (e) { /* non-fatal */ }
+}
 
-onAuthStateChanged(auth, (u) => {
-  state.authReady = !!u;
+onAuthStateChanged(auth, async (u) => {
+  state.authReady = true;
   if (unsubIncidents) { unsubIncidents(); unsubIncidents = null; }
   if (unsubSuspensions) { unsubSuspensions(); unsubSuspensions = null; }
   if (unsubHolidays) { unsubHolidays(); unsubHolidays = null; }
   if (unsubParentMeetings) { unsubParentMeetings(); unsubParentMeetings = null; }
-  if (u && state.teacherName) startListening();
+  if (unsubUsers) { unsubUsers(); unsubUsers = null; }
+  if (!u) { state.authUser = null; render(); return; }
+  const email = (u.email || "").toLowerCase();
+  if (!email.endsWith(`@${ALLOWED_EMAIL_DOMAIN}`)) {
+    state.authError = `Please sign in with your @${ALLOWED_EMAIL_DOMAIN} school account.`;
+    state.authUser = null;
+    await signOutOfApp();
+    render();
+    return;
+  }
+  state.authUser = { uid: u.uid, email };
+  try {
+    const userDoc = await getDoc(doc(db, "users", u.uid));
+    state.teacherName = (userDoc.exists() && userDoc.data().name) ? userDoc.data().name : "";
+  } catch (e) {
+    state.teacherName = localStorage.getItem("dd-teacher-name") || "";
+  }
+  if (state.teacherName) startListening();
   render();
 });
 
@@ -720,6 +762,8 @@ function startListening() {
   state.dataLoaded = false;
   state.suspLoaded = false;
   state.pmLoaded = false;
+  if (unsubUsers) unsubUsers();
+  unsubUsers = onSnapshot(collection(db, "users"), (snap) => { state.userList = snap.docs.map((d) => d.data()); render(); });
   unsubIncidents = onSnapshot(
     collection(db, "incidents"),
     (snap) => {
@@ -880,6 +924,10 @@ function teacherName() { return state.teacherName || "Unnamed teacher"; }
 function saveTeacherName(name) {
   state.teacherName = name;
   localStorage.setItem("dd-teacher-name", name);
+  if (state.authUser) {
+    setDoc(doc(db, "users", state.authUser.uid), { name, email: state.authUser.email }, { merge: true })
+      .catch(() => { /* non-fatal — local state already has the name, will retry to sync on next save */ });
+  }
   if (state.authReady) startListening();
   render();
 }
@@ -897,9 +945,23 @@ function freshIncidentDraft() {
 // starting at 1st Warning with its deadline computed from that issue's
 // configured day-count. Parents are marked contacted immediately if the
 // issue's rules say so even on the first warning (e.g. Coloured Hair).
-function freshGroomingIssue(type, othersText, catchDate) {
+// A 4-calendar-day duration means "over the weekend" — these are things
+// a parent needs to sort out at home (a haircut, new shoes), so the
+// deadline is the student's next school day after the coming weekend,
+// not a flat day count. If that Monday happens to be a public holiday
+// or school holiday, it rolls forward to whichever day school actually
+// resumes. Any other duration is just added as calendar days, as before.
+function computeGroomingDeadline(cfg, stage, catchDate, level) {
+  if (cfg.days[stage - 1] === 4) {
+    let d = strictNextWeekday(catchDate, 1);
+    while (isNonSchoolDay(d, level)) d = nextSchoolDay(d, level);
+    return d;
+  }
+  return addDays(catchDate, cfg.days[stage - 1]);
+}
+function freshGroomingIssue(type, othersText, catchDate, level) {
   const cfg = GROOMING_ISSUE_CONFIG[type] || GROOMING_ISSUE_CONFIG.Others;
-  const deadline = addDays(catchDate, cfg.days[0]);
+  const deadline = computeGroomingDeadline(cfg, 1, catchDate, level);
   return {
     id: uid(), type, othersText: type === "Others" ? (othersText || "") : "",
     stage: 1, deadline, overriddenBy: null, resolved: false, resolvedAt: null,
@@ -939,7 +1001,7 @@ function escalateGroomingIssue(entryId, issueId) {
   const today = todayISO();
   const nextStage = Math.min(issue.stage + 1, 3);
   issue.stage = nextStage;
-  issue.deadline = addDays(today, cfg.days[nextStage - 1]);
+  issue.deadline = computeGroomingDeadline(cfg, nextStage, today, classLevel(entry.studentClass));
   issue.overriddenBy = null;
   if (cfg.parentFrom <= nextStage) issue.parentContacted = true;
   issue.history.push({ stage: nextStage, deadline: issue.deadline, action: `${WARNING_STAGE_LABEL[nextStage]} issued`, at: today });
@@ -1177,7 +1239,7 @@ async function submitNewIncident() {
   render();
   try {
     const now = Date.now();
-    const issues = selectedIssues.map((type) => freshGroomingIssue(type, d.othersText, date));
+    const issues = selectedIssues.map((type) => freshGroomingIssue(type, d.othersText, date, classLevel(studentClass)));
     const issueSummary = issues.map((x) => groomingIssueLabel(x)).join(", ");
     const docRef = await addDoc(collection(db, "incidents"), {
       studentName, studentClass, date, issues,
@@ -1359,7 +1421,7 @@ async function submitEditIncident() {
   const existingIssues = Array.isArray(it.issues) ? it.issues : [];
   const keptIssues = existingIssues.filter((x) => d.selectedIssues.includes(x.type));
   const newTypes = d.selectedIssues.filter((type) => !existingIssues.some((x) => x.type === type));
-  const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date));
+  const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date, classLevel(d.studentClass)));
   const finalIssues = [...keptIssues, ...newIssues].map((x) => x.type === "Others" ? { ...x, othersText: d.othersText || "" } : x);
   const now = Date.now();
   try {
@@ -1704,6 +1766,7 @@ async function deleteParentMeeting(id) {
 // ==================== RENDER ====================
 function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
+  if (!state.authUser) { root.innerHTML = renderSignInScreen(); attachSignInListeners(); return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
   if (!state.dataLoaded || !state.suspLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
   updateFollowUpBadge();
@@ -1720,19 +1783,38 @@ function updateFollowUpBadge() {
     try { n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) { /* unsupported, non-fatal */ }
   }
 }
+function renderSignInScreen() {
+  return `
+    <div class="dd-app"><div class="dd-center">
+      <div class="dd-auth-card">
+        <div class="dd-title">Discipline Diary</div>
+        <div class="dd-subtitle">Sign in with your school Google account to continue. Only @${ALLOWED_EMAIL_DOMAIN} accounts can access this app.</div>
+        ${state.authError ? `<div class="dd-error" style="margin-bottom:12px">${escapeHtml(state.authError)}</div>` : ""}
+        <button class="dd-btn-primary" type="button" id="btn-google-signin">Sign in with Google</button>
+      </div>
+    </div></div>`;
+}
+function attachSignInListeners() {
+  const btn = document.getElementById("btn-google-signin");
+  if (btn) btn.addEventListener("click", signInWithGoogle);
+}
 function renderNameScreen() {
   return `
     <div class="dd-app"><div class="dd-center">
       <form id="name-form" class="dd-auth-card">
         <div class="dd-title">Discipline Diary</div>
-        <div class="dd-subtitle">Sign the register to begin. This name is saved on this device only, and will tag every entry and follow-up you log.</div>
+        <div class="dd-subtitle">Signed in as ${escapeHtml(state.authUser?.email || "")}. What name should show on entries you log? <button type="button" class="dd-back-link" id="btn-signin-signout" style="display:inline">Not you? Sign out</button></div>
         <label class="dd-label">Your name</label>
         <input class="dd-input" name="name" placeholder="e.g. Mr. Adams" required autofocus />
         <button class="dd-btn-primary" type="submit">Enter the log</button>
       </form>
     </div></div>`;
 }
-function attachNameListeners() { document.getElementById("name-form").addEventListener("submit", handleNameSubmit); }
+function attachNameListeners() {
+  document.getElementById("name-form").addEventListener("submit", handleNameSubmit);
+  const signOutBtn = document.getElementById("btn-signin-signout");
+  if (signOutBtn) signOutBtn.addEventListener("click", signOutOfApp);
+}
 
 function renderMain() {
   let html;
@@ -2341,6 +2423,23 @@ function renderSettingsSection() {
         "edit-closure-day", `data-id="${e.id}"`,
         "request-delete-closure-day", e.id
       )).join("")}`;
+  } else if (state.settingsView === "userList") {
+    const users = (state.userList || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    body = `
+      ${backBtn("Settings", "settings-back-to-menu")}
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">User List</div>
+      ${users.length === 0 ? `<div class="dd-dash-empty">No one has signed in yet.</div>` : `
+      <div class="dd-level-breakdown">
+        <div class="dd-level-row dd-level-row-header">
+          <div class="dd-level-cell-class">Name</div>
+          <div class="dd-level-cell-term">Email</div>
+        </div>
+        ${users.map((u) => `
+        <div class="dd-level-row">
+          <div class="dd-level-cell-class">${escapeHtml(u.name || "—")}</div>
+          <div class="dd-level-cell-term" style="text-align:left">${escapeHtml(u.email || "—")}</div>
+        </div>`).join("")}
+      </div>`}`;
   } else {
     const year = new Date().getFullYear();
     const needsReview = !state.classConfig?.classesByYear?.[String(year)];
@@ -2352,7 +2451,9 @@ function renderSettingsSection() {
         ${menuRow("Annual Summary Reports", "settings-open-years")}
         ${menuRow("Classes For The Year", "settings-open-classes")}
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
-      </div>`;
+        ${menuRow("User List", "settings-open-users")}
+      </div>
+      <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
   return `
     <div class="dd-app">
@@ -3936,6 +4037,11 @@ function attachMainListeners() {
 
   document.querySelectorAll('[data-action="settings-open-holidays"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsView = "holidays"; state.saveError = false; render(); }));
+
+  document.querySelectorAll('[data-action="settings-open-users"]').forEach((el) =>
+    el.addEventListener("click", () => { state.settingsView = "userList"; render(); }));
+  const signOutBtn = document.getElementById("btn-app-sign-out");
+  if (signOutBtn) signOutBtn.addEventListener("click", signOutOfApp);
 
   const printReportBtn = document.getElementById("btn-print-report");
   if (printReportBtn) printReportBtn.addEventListener("click", () => {
