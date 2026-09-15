@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.52.4";
+const APP_VERSION = "2.52.5";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -2207,13 +2207,15 @@ function renderSettingsSection() {
     const year = state.settingsSelectedYear;
     const totals = computeYearlyCategoryTotals(year);
     body = `
-      <div class="dd-print-hide">${backBtn("Years", "settings-back-to-years")}</div>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin:10px 0">
-        <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
-        <button type="button" class="dd-print-btn dd-print-hide" id="btn-print-report">
+      <div class="dd-print-hide" style="display:flex;justify-content:space-between;align-items:flex-start">
+        ${backBtn("Years", "settings-back-to-years")}
+        <button type="button" class="dd-print-btn" id="btn-print-report">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"></path><rect x="4" y="9" width="16" height="8" rx="1.5"></rect><path d="M6 14h12v7H6z"></path></svg>
           <span>Print/<br>Export PDF</span>
         </button>
+      </div>
+      <div style="margin:10px 0">
+        <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
       </div>
       <div id="report-print-area">
       ${renderTallyGrid(["discipline", "suspension", "parentMeeting"], totals)}
@@ -3936,7 +3938,16 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.settingsView = "holidays"; state.saveError = false; render(); }));
 
   const printReportBtn = document.getElementById("btn-print-report");
-  if (printReportBtn) printReportBtn.addEventListener("click", () => window.print());
+  if (printReportBtn) printReportBtn.addEventListener("click", () => {
+    const label = printReportBtn.querySelector("span");
+    if (label) label.textContent = "Opening…";
+    printReportBtn.style.opacity = "0.5";
+    // The native print dialog can take a moment to build its preview,
+    // especially on mobile — this lets the browser paint the "Opening…"
+    // state first, so the tap feels acknowledged immediately rather
+    // than looking like nothing happened while the dialog loads.
+    setTimeout(() => window.print(), 30);
+  });
 
   const loadKnownBtn = document.getElementById("btn-load-known-holidays");
   if (loadKnownBtn) loadKnownBtn.addEventListener("click", async () => {
