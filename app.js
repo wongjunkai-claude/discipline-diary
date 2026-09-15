@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.51.2";
+const APP_VERSION = "2.52.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -985,23 +985,31 @@ function groomingEntryMaxStage(entry) {
 // earlier), across all entries — this is the actual "who needs following
 // up today" list, flattened to one row per issue rather than per entry,
 // since an entry with two issues might only need follow-up on one of them.
-function computeGroomingFollowUpList() {
+function computeGroomingFollowUpBuckets() {
   const today = todayISO();
-  const rows = [];
+  const tomorrow = addDays(today, 1);
+  const dayAfter = addDays(today, 2);
+  const buckets = { today: [], tomorrow: [], dayAfter: [] };
   state.incidents.forEach((it) => {
     if (it.deleted || !Array.isArray(it.issues)) return;
     it.issues.forEach((issue) => {
-      if (!issue.resolved && issue.deadline <= today) {
-        rows.push({
-          incidentId: it.id, issueId: issue.id,
-          name: it.studentName, studentClass: it.studentClass,
-          issueLabel: groomingIssueLabel(issue), stage: issue.stage,
-          deadline: issue.deadline, entryDate: it.date,
-        });
-      }
+      if (issue.resolved) return;
+      const row = {
+        incidentId: it.id, issueId: issue.id,
+        name: it.studentName, studentClass: it.studentClass,
+        issueLabel: groomingIssueLabel(issue), stage: issue.stage,
+        deadline: issue.deadline, entryDate: it.date,
+      };
+      // Today's bucket absorbs anything overdue too, so nothing due
+      // earlier falls through the cracks; tomorrow and the day after
+      // only show what's landing exactly on that date.
+      if (issue.deadline <= today) buckets.today.push(row);
+      else if (issue.deadline === tomorrow) buckets.tomorrow.push(row);
+      else if (issue.deadline === dayAfter) buckets.dayAfter.push(row);
     });
   });
-  return rows.sort((a, b) => a.deadline.localeCompare(b.deadline));
+  Object.values(buckets).forEach((list) => list.sort((a, b) => a.deadline.localeCompare(b.deadline)));
+  return buckets;
 }
 async function saveIncidentIssueUpdate(entry) {
   state.saving = true; render();
@@ -1706,7 +1714,7 @@ function render() {
 // tab title, and on the installed app's icon where the platform
 // supports it — so it's visible without having the app open.
 function updateFollowUpBadge() {
-  const n = computeGroomingFollowUpList().length;
+  const n = computeGroomingFollowUpBuckets().today.length;
   document.title = n > 0 ? `(${n}) Discipline Diary` : "Discipline Diary";
   if ("setAppBadge" in navigator) {
     try { n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge(); } catch (e) { /* unsupported, non-fatal */ }
@@ -1778,7 +1786,7 @@ function renderNav() {
         <div style="display:flex;gap:6px;width:100%;align-items:center">
           <button class="dd-circle-btn dd-nav-home ${state.section === "dashboard" ? "active" : ""}" style="position:relative" data-action="set-section" data-section="dashboard" title="Dashboard">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"></path><path d="M5 10v10h14V10"></path></svg>
-            ${(() => { const n = computeGroomingFollowUpList().length; return n > 0 ? `<span class="dd-nav-badge">${n > 9 ? "9+" : n}</span>` : ""; })()}
+            ${(() => { const n = computeGroomingFollowUpBuckets().today.length; return n > 0 ? `<span class="dd-nav-badge">${n > 9 ? "9+" : n}</span>` : ""; })()}
           </button>
           ${items.map((it) => `<button class="dd-pill-tab dd-pill-tab-sm ${state.section === it.key ? "active" : ""}" data-action="set-section" data-section="${it.key}">${it.label}</button>`).join("")}
         </div>
@@ -2903,28 +2911,33 @@ function computeCurrentSemesterBounds() {
   return { start: t3.start, end: t4.end };
 }
 function renderGroomingFollowUpList() {
-  const rows = computeGroomingFollowUpList();
+  const buckets = computeGroomingFollowUpBuckets();
+  const today = todayISO();
+  const renderRow = (r) => `
+    <div class="dd-followup-row-item" data-action="jump-to-incident" data-id="${r.incidentId}">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(r.name))}</span>
+        <span class="dd-issue-stage-badge ${r.deadline < today ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
+      </div>
+      <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(r.studentClass || "")} · ${escapeHtml(r.issueLabel)}</div>
+      ${(() => {
+        const daysOverdue = daysBetween(r.deadline, today);
+        return daysOverdue > 0 ? `<div class="dd-mono-muted" style="font-size:11px;color:#A3372B">Overdue for ${daysOverdue} day${daysOverdue === 1 ? "" : "s"}</div>` : "";
+      })()}
+    </div>`;
+  const renderDaySection = (label, dateIso, rows) => `
+    <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;display:flex;justify-content:space-between;align-items:baseline;margin-top:14px">
+      <span class="dd-mono-muted" style="font-size:12px;font-weight:400">${formatDate(dateIso)}</span>
+      <span>(${label})</span>
+    </div>
+    ${rows.length === 0 ? `<div class="dd-dash-empty" style="margin-top:6px">Nothing here.</div>` : `
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${rows.map(renderRow).join("")}</div>`}`;
   return `
     <div class="dd-panel" style="margin-bottom:16px">
-      <div class="dd-dash-title" style="color:#1B2A41;display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px">
-        <span>Grooming Follow-Up List</span>
-        <span class="dd-mono-muted" style="font-size:12px;font-weight:400">${formatDate(todayISO())}</span>
-      </div>
-      ${rows.length === 0 ? `<div class="dd-dash-empty" style="margin-top:8px">Nothing due for follow-up today.</div>` : `
-      <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
-        ${rows.map((r) => `
-          <div class="dd-followup-row-item" data-action="jump-to-incident" data-id="${r.incidentId}">
-            <div style="display:flex;justify-content:space-between;gap:8px">
-              <span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(r.name))}</span>
-              <span class="dd-issue-stage-badge ${r.deadline < todayISO() ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
-            </div>
-            <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(r.studentClass || "")} · ${escapeHtml(r.issueLabel)}</div>
-            ${(() => {
-              const daysOverdue = daysBetween(r.deadline, todayISO());
-              return daysOverdue > 0 ? `<div class="dd-mono-muted" style="font-size:11px;color:#A3372B">Overdue for ${daysOverdue} day${daysOverdue === 1 ? "" : "s"}</div>` : "";
-            })()}
-          </div>`).join("")}
-      </div>`}
+      <div class="dd-dash-title" style="color:#1B2A41">Grooming Follow-Up List</div>
+      ${renderDaySection("Today", today, buckets.today)}
+      ${renderDaySection("Tomorrow", addDays(today, 1), buckets.tomorrow)}
+      ${renderDaySection("2 Days Later", addDays(today, 2), buckets.dayAfter)}
     </div>`;
 }
 function renderDashboardSection() {
@@ -2974,7 +2987,7 @@ function renderDashboardSection() {
         <div class="dd-new-entry-row">
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ Grooming Issue</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ Suspension</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parents Meeting</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parent Meeting</button>
         </div>
 
         ${renderGroomingFollowUpList()}
