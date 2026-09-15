@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.43.0";
+const APP_VERSION = "2.45.0";
 const DELETE_PASSWORD = "shsm";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
@@ -241,6 +241,34 @@ const DEFAULT_HOLIDAYS_2026 = {
     "2026-08-10", "2026-11-08", "2026-11-09", "2026-12-25",
   ],
 };
+// Verified against MOM's official 2026/2027 gazetted public holiday
+// lists (data.gov.sg) — these are MOM's confirmed dates.
+const KNOWN_PUBLIC_HOLIDAYS = [
+  { name: "New Year's Day", startDate: "2026-01-01", endDate: "2026-01-01" },
+  { name: "Chinese New Year", startDate: "2026-02-17", endDate: "2026-02-18" },
+  { name: "Hari Raya Puasa", startDate: "2026-03-21", endDate: "2026-03-21" },
+  { name: "Good Friday", startDate: "2026-04-03", endDate: "2026-04-03" },
+  { name: "Labour Day", startDate: "2026-05-01", endDate: "2026-05-01" },
+  { name: "Hari Raya Haji", startDate: "2026-05-27", endDate: "2026-05-27" },
+  { name: "Vesak Day", startDate: "2026-05-31", endDate: "2026-05-31" },
+  { name: "Vesak Day (in lieu)", startDate: "2026-06-01", endDate: "2026-06-01" },
+  { name: "National Day", startDate: "2026-08-09", endDate: "2026-08-09" },
+  { name: "National Day (in lieu)", startDate: "2026-08-10", endDate: "2026-08-10" },
+  { name: "Deepavali", startDate: "2026-11-08", endDate: "2026-11-08" },
+  { name: "Deepavali (in lieu)", startDate: "2026-11-09", endDate: "2026-11-09" },
+  { name: "Christmas Day", startDate: "2026-12-25", endDate: "2026-12-25" },
+  { name: "New Year's Day", startDate: "2027-01-01", endDate: "2027-01-01" },
+  { name: "Chinese New Year", startDate: "2027-02-06", endDate: "2027-02-07" },
+  { name: "Chinese New Year (in lieu)", startDate: "2027-02-08", endDate: "2027-02-08" },
+  { name: "Hari Raya Puasa", startDate: "2027-03-10", endDate: "2027-03-10" },
+  { name: "Good Friday", startDate: "2027-03-26", endDate: "2027-03-26" },
+  { name: "Labour Day", startDate: "2027-05-01", endDate: "2027-05-01" },
+  { name: "Hari Raya Haji", startDate: "2027-05-17", endDate: "2027-05-17" },
+  { name: "Vesak Day", startDate: "2027-05-20", endDate: "2027-05-20" },
+  { name: "National Day", startDate: "2027-08-09", endDate: "2027-08-09" },
+  { name: "Deepavali", startDate: "2027-10-28", endDate: "2027-10-28" },
+  { name: "Christmas Day", startDate: "2027-12-25", endDate: "2027-12-25" },
+];
 
 function weekdayOf(iso) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -300,10 +328,10 @@ function computeMoeCalendar(year) {
       { label: "Term 4", start: term4Start, end: term4End },
     ],
     ranges: [
-      { start: marchStart, end: marchEnd, label: "March holiday" },
-      { start: juneStart, end: juneEnd, label: "June holiday" },
-      { start: sepStart, end: sepEnd, label: "September holiday" },
-      { start: yearEndStart, end: yearEndEnd, label: "Year-end holiday" },
+      { start: marchStart, end: marchEnd, label: "March Holidays" },
+      { start: juneStart, end: juneEnd, label: "June Holidays" },
+      { start: sepStart, end: sepEnd, label: "September Holidays" },
+      { start: yearEndStart, end: yearEndEnd, label: "December Holidays" },
     ],
     singleDayLabels: ["Youth Day", "Teachers' Day", "Children's Day", ...(nationalDayInLieu ? ["National Day (in lieu)"] : [])],
     singleDays: [youthDay, teachersDay, childrensDay, ...(nationalDayInLieu ? [nationalDayInLieu] : [])],
@@ -678,7 +706,7 @@ function startListening() {
     () => { state.pmLoaded = true; render(); }
   );
   ensureHolidaysSeeded();
-  syncPublicHolidaysFromDataGovSg();
+  checkAnnualPublicHolidayFetch();
   unsubHolidays = onSnapshot(
     doc(db, "holidays", "singapore"),
     (snap) => { if (snap.exists()) { state.holidays = snap.data(); render(); } },
@@ -709,6 +737,22 @@ async function ensureHolidaysSeeded() {
 }
 
 const SG_HOLIDAYS_DATASET_URL = "https://data.gov.sg/api/action/datastore_search?resource_id=d_8ef23381f9417e4d4254ee8b4dcdb176&limit=200";
+// This is data.gov.sg's "Singapore Public Holidays (consolidated)"
+// dataset — MOM keeps it updated annually (their description says
+// "around Q3"), under this same URL, so it's safe to re-check every
+// year rather than needing a new address each time. We check once a
+// year starting 31 Jul, same window MOM typically uses to publish the
+// next year's list, and only fetch if we don't already have next
+// year's dates on file.
+async function checkAnnualPublicHolidayFetch() {
+  const today = todayISO();
+  const currentYear = parseInt(today.slice(0, 4), 10);
+  if (today < `${currentYear}-07-31`) return;
+  const nextYear = currentYear + 1;
+  const haveNextYear = (state.holidays?.publicHolidayEntries || []).some((e) => e.startDate.startsWith(String(nextYear)));
+  if (haveNextYear) return;
+  await syncPublicHolidaysFromDataGovSg();
+}
 async function syncPublicHolidaysFromDataGovSg() {
   try {
     const res = await fetch(SG_HOLIDAYS_DATASET_URL);
@@ -718,22 +762,45 @@ async function syncPublicHolidaysFromDataGovSg() {
     if (!Array.isArray(records) || records.length < 50) return;
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     const dates = new Set();
+    // Named entries, keyed by date, for the new Settings display — the
+    // dataset's name field isn't 100% guaranteed by us, so anything we
+    // can't confidently name falls back to a plain "Public Holiday"
+    // label rather than silently dropping the date.
+    const named = new Map();
     for (const rec of records) {
+      let dateVal = null;
       for (const key of Object.keys(rec)) {
-        if (dateRegex.test(rec[key])) {
-          dates.add(rec[key]);
-          if (weekdayOf(rec[key]) === 0) dates.add(addDays(rec[key], 1));
-          break;
-        }
+        if (dateRegex.test(rec[key])) { dateVal = rec[key]; break; }
+      }
+      if (!dateVal) continue;
+      dates.add(dateVal);
+      const nameVal = rec.holiday || rec.day || rec.name || rec.description || "Public Holiday";
+      named.set(dateVal, nameVal);
+      // Singapore's rule: a holiday landing on a Sunday gets the
+      // following Monday off in lieu — Saturday-landing holidays do
+      // not. This mirrors the legal rule directly rather than relying
+      // on the dataset to spell out every in-lieu row itself.
+      if (weekdayOf(dateVal) === 0) {
+        const lieu = addDays(dateVal, 1);
+        dates.add(lieu);
+        named.set(lieu, `${nameVal} (in lieu)`);
       }
     }
     if (dates.size < 50) return;
     const fresh = [...dates].sort();
     const current = state.holidays?.publicHolidays || [];
-    if (JSON.stringify(fresh) !== JSON.stringify(current)) {
-      await setDoc(doc(db, "holidays", "singapore"), { publicHolidays: fresh }, { merge: true });
-    }
-  } catch (e) { /* silent */ }
+    const patch = {};
+    if (JSON.stringify(fresh) !== JSON.stringify(current)) patch.publicHolidays = fresh;
+    // Merge named entries in additively — never overwrite a date the
+    // user has already corrected or renamed by hand.
+    const existingEntries = state.holidays?.publicHolidayEntries || [];
+    const existingDates = new Set(existingEntries.map((e) => e.startDate));
+    const newEntries = [...named.entries()]
+      .filter(([d]) => !existingDates.has(d))
+      .map(([d, name]) => ({ id: uid(), name, startDate: d, endDate: d }));
+    if (newEntries.length > 0) patch.publicHolidayEntries = [...existingEntries, ...newEntries];
+    if (Object.keys(patch).length > 0) await setDoc(doc(db, "holidays", "singapore"), patch, { merge: true });
+  } catch (e) { /* silent — best-effort background sync */ }
 }
 
 let backupTimer = null;
@@ -2046,11 +2113,13 @@ function renderSettingsSection() {
         "edit-public-holiday", `data-id="${e.id}"`,
         "request-delete-public-holiday", e.id
       )).join("")}
+      <button type="button" class="dd-back-link" id="btn-load-known-holidays" style="margin-top:8px">Load known public holidays (2026 &amp; 2027)</button>
 
       ${sectionHead("School Holidays", null)}
-      ${moe.terms.map((t, i) => listRow(t.label, formatDateOrRange(t.start, t.end), "edit-school-holiday", `data-key="term${i + 1}" data-range="true" data-label="${escapeHtml(t.label)}" data-start="${t.start}" data-end="${t.end}"`, null, null)).join("")}
       ${moe.ranges.map((r, i) => listRow(r.label, formatDateOrRange(r.start, r.end), "edit-school-holiday", `data-key="${rangeKeys[i]}" data-range="true" data-label="${escapeHtml(r.label)}" data-start="${r.start}" data-end="${r.end}"`, null, null)).join("")}
-      ${moe.singleDays.map((d, i) => listRow(moe.singleDayLabels[i], formatDate(d), "edit-school-holiday", `data-key="${singleDayKeys[i]}" data-range="false" data-label="${escapeHtml(moe.singleDayLabels[i])}" data-start="${d}" data-end="${d}"`, null, null)).join("")}
+      ${moe.singleDays.map((d, i) => ({ d, label: moe.singleDayLabels[i], key: singleDayKeys[i] }))
+        .filter(({ label, d }) => label !== "National Day (in lieu)" || !publicHolidayEntryFor(d))
+        .map(({ d, label, key }) => listRow(label, formatDate(d), "edit-school-holiday", `data-key="${key}" data-range="false" data-label="${escapeHtml(label)}" data-start="${d}" data-end="${d}"`, null, null)).join("")}
 
       ${sectionHead("School Closure / HBL Days", "open-add-closure-day")}
       ${closureEntries.length === 0 ? `<div class="dd-dash-empty">None added yet.</div>` : closureEntries.map((e) => listRow(
@@ -3580,6 +3649,16 @@ function attachMainListeners() {
 
   document.querySelectorAll('[data-action="settings-open-holidays"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsView = "holidays"; state.saveError = false; render(); }));
+
+  const loadKnownBtn = document.getElementById("btn-load-known-holidays");
+  if (loadKnownBtn) loadKnownBtn.addEventListener("click", async () => {
+    const existing = state.holidays?.publicHolidayEntries || [];
+    const already = new Set(existing.map((e) => `${e.name}|${e.startDate}`));
+    const toAdd = KNOWN_PUBLIC_HOLIDAYS.filter((h) => !already.has(`${h.name}|${h.startDate}`)).map((h) => ({ ...h, id: uid() }));
+    if (toAdd.length === 0) return;
+    try { await setDoc(doc(db, "holidays", "singapore"), { publicHolidayEntries: [...existing, ...toAdd] }, { merge: true }); }
+    catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+  });
 
   // -- Public Holidays --
   document.querySelectorAll('[data-action="open-add-public-holiday"]').forEach((el) =>
