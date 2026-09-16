@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.56.0";
+const APP_VERSION = "2.56.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2169,7 +2169,7 @@ function renderStackedAreaChart(rows) {
   if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
   const totals = rows.map((r) => r.discipline + r.suspension);
   const axisMax = niceAxisMax(Math.max(1, ...totals));
-  const W = 320, H = 150, padL = 26, padB = 20, padT = 8;
+  const W = 320, H = 158, padL = 26, padB = 20, padT = 16;
   const plotW = W - padL, plotH = H - padB - padT;
   const x = (i) => rows.length === 1 ? padL + plotW / 2 : padL + (i / (rows.length - 1)) * plotW;
   const y = (v) => padT + plotH - (v / axisMax) * plotH;
@@ -2192,6 +2192,10 @@ function renderStackedAreaChart(rows) {
         <polygon points="${areaFor(totals, grooming)}" fill="${OSS_DOT_COLOR}" fill-opacity="0.85"></polygon>
         <polyline points="${lineFor(totals)}" fill="none" stroke="${OSS_DOT_COLOR}" stroke-width="1.5"></polyline>
         <polyline points="${lineFor(grooming)}" fill="none" stroke="${CHART_COLORS.discipline}" stroke-width="1.5"></polyline>
+        ${totals.map((t, i) => `<circle cx="${x(i)}" cy="${y(t)}" r="2.2" fill="#FBFAF6" stroke="${OSS_DOT_COLOR}" stroke-width="1.3"></circle>`).join("")}
+        ${totals.map((t, i) => t > 0
+          ? `<text x="${x(i)}" y="${y(t) - 6}" text-anchor="middle" font-size="9" font-weight="700" font-family="'IBM Plex Mono', monospace" fill="#1B2A41">${t}</text>`
+          : "").join("")}
         ${rows.map((r, i) => i % labelEvery === 0
           ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="'IBM Plex Mono', monospace" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
           : "").join("")}
