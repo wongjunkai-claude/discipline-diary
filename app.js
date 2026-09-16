@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.58.1";
+const APP_VERSION = "2.59.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -666,9 +666,6 @@ const state = {
   suspFormError: "",
   newIncidentFormError: "",
 
-  showNewCaseFlow: false,
-  newCaseStep: "discipline",
-  _newCaseDraft: null,
   caseFormError: "",
 
   saveError: false,
@@ -1065,131 +1062,6 @@ function findRelatedRecords(studentName) {
 }
 
 // ---------- New Case wizard: Discipline -> Suspension? -> Parent Meeting? -> Submit ----------
-function newCaseStepValid(step, d) {
-  if (step === "discipline") return !!(d.studentName.trim() && d.studentClass && d.issue.trim() && d.actionTaken.trim());
-  if (step === "ask-suspension") return d.wantsSuspension !== null;
-  if (step === "suspension") return !!(d.suspDraft.reason.trim() && d.suspDraft.totalDays && d.suspDraft.issDays + d.suspDraft.ossDays === d.suspDraft.totalDays && d.suspDraft.issDates.every((dt) => d.suspDraft.issVenues[dt]));
-  if (step === "ask-pm") return d.wantsPm !== null;
-  if (step === "pm") return !!(d.pmDraft.attendees.length && d.pmDraft.reason.trim());
-  return true;
-}
-function newCaseStepErrorMessage(step, d) {
-  if (step === "discipline") return "Fill in student name, class, issue, and action taken before continuing.";
-  if (step === "ask-suspension") return "Choose Yes or No.";
-  if (step === "suspension") {
-    if (!d.suspDraft.reason.trim()) return "Enter a reason before continuing.";
-    if (!d.suspDraft.totalDays) return "Choose the total number of days.";
-    if (d.suspDraft.issDays + d.suspDraft.ossDays !== d.suspDraft.totalDays) return "In-school and out-of-school days must add up to the total.";
-    return `Book a location for all ${d.suspDraft.issDays} in-school day${d.suspDraft.issDays === 1 ? "" : "s"} before continuing (${d.suspDraft.issDates.filter((dt) => d.suspDraft.issVenues[dt]).length} booked so far).`;
-  }
-  if (step === "ask-pm") return "Choose Yes or No.";
-  if (step === "pm") {
-    if (!d.pmDraft.attendees.length) return "Select at least one attendee before continuing.";
-    return "Enter a reason for the meeting before continuing.";
-  }
-  return "";
-}
-function newCaseNextStep(step, d) {
-  if (step === "discipline") return "ask-suspension";
-  if (step === "ask-suspension") return d.wantsSuspension ? "suspension" : "ask-pm";
-  if (step === "suspension") return "ask-pm";
-  if (step === "ask-pm") return d.wantsPm ? "pm" : "submit";
-  if (step === "pm") return "submit";
-  return "submit";
-}
-function newCasePrevStep(step, d) {
-  if (step === "ask-suspension") return "discipline";
-  if (step === "suspension") return "ask-suspension";
-  if (step === "ask-pm") return d.wantsSuspension ? "suspension" : "ask-suspension";
-  if (step === "pm") return "ask-pm";
-  if (step === "submit") return d.wantsPm ? "pm" : "ask-pm";
-  return "discipline";
-}
-async function submitNewCase() {
-  const d = state._newCaseDraft;
-  if (!newCaseStepValid("discipline", d)) {
-    state.newCaseStep = "discipline"; state.caseFormError = newCaseStepErrorMessage("discipline", d); render(); return;
-  }
-  if (d.wantsSuspension && !newCaseStepValid("suspension", d)) {
-    state.newCaseStep = "suspension"; state.caseFormError = newCaseStepErrorMessage("suspension", d); render(); return;
-  }
-  if (d.wantsPm && !newCaseStepValid("pm", d)) {
-    state.newCaseStep = "pm"; state.caseFormError = newCaseStepErrorMessage("pm", d); render(); return;
-  }
-  state.caseFormError = "";
-  state.saveError = false;
-  state.saving = true;
-  render();
-  try {
-    const now = Date.now();
-    const incidentPayload = {
-      studentName: d.studentName.trim(), studentClass: d.studentClass, date: d.date,
-      issue: d.issue.trim(), actionTaken: d.actionTaken.trim(), status: d.status,
-      linkedSuspensionIds: [], linkedPmIds: [],
-      loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-      followUps: [],
-      history: [{ id: uid(), type: "created", detail: `Entry created — status set to ${STATUS_TEXT[d.status]}`, by: teacherName(), at: now }],
-    };
-    let suspId = null, pmId = null;
-
-    if (d.wantsSuspension) {
-      const sd = d.suspDraft;
-      const ossEntries = sd.ossDates.map((date) => ({ date, type: "OSS" }));
-      const issEntries = sd.issDates.map((date) => ({ date, type: "ISS", venue: sd.issVenues[date] || "" }));
-      const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
-      const suspRef = await addDoc(collection(db, "suspensions"), {
-        studentName: d.studentName.trim(), studentClass: d.studentClass, reason: sd.reason.trim(), startDate: sd.startDate,
-        totalDays: sd.totalDays, issDays: sd.issDays, ossDays: sd.ossDays, days,
-        loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-        history: [{ id: uid(), type: "created", detail: `Suspension created — ${sd.totalDays} day${sd.totalDays > 1 ? "s" : ""} total (${sd.ossDays} out-of-school, ${sd.issDays} in-school)`, by: teacherName(), at: now }],
-      });
-      suspId = suspRef.id;
-      incidentPayload.linkedSuspensionIds = [suspId];
-      syncSuspensionToSheet({ id: suspId, studentName: d.studentName.trim(), studentClass: d.studentClass, reason: sd.reason.trim(), startDate: sd.startDate, totalDays: sd.totalDays, issDays: sd.issDays, ossDays: sd.ossDays, days, loggedBy: teacherName() });
-    }
-
-    if (d.wantsPm) {
-      const pd = d.pmDraft;
-      const pmRef = await addDoc(collection(db, "parentMeetings"), {
-        studentName: d.studentName.trim(), studentClass: d.studentClass, date: d.date,
-        reason: pd.reason.trim(), attendees: pd.attendees.slice(), othersText: pd.othersText.trim(),
-        loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${formatAttendeesForSheet(pd.attendees, pd.othersText)}`, by: teacherName(), at: now }],
-      });
-      pmId = pmRef.id;
-      incidentPayload.linkedPmIds = [pmId];
-      syncParentMeetingToSheet({ id: pmId, studentName: d.studentName.trim(), studentClass: d.studentClass, date: d.date, reason: pd.reason.trim(), attendees: pd.attendees, othersText: pd.othersText, loggedBy: teacherName() });
-    }
-
-    const incidentRef = await addDoc(collection(db, "incidents"), incidentPayload);
-
-    if (suspId) {
-      await updateDoc(doc(db, "suspensions", suspId), {
-        linkedIncidentIds: arrayUnion(incidentRef.id),
-        history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to discipline entry: "${d.issue.trim()}"`, by: teacherName(), at: now }),
-      });
-    }
-    if (pmId) {
-      await updateDoc(doc(db, "parentMeetings", pmId), {
-        linkedIncidentIds: arrayUnion(incidentRef.id),
-        history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to discipline entry: "${d.issue.trim()}"`, by: teacherName(), at: now }),
-      });
-    }
-
-    syncIncidentToSheet({ id: incidentRef.id, ...incidentPayload });
-    state.showNewCaseFlow = false;
-    state._newCaseDraft = null;
-    state.newCaseStep = "discipline";
-    state.section = "log";
-    state.selectedIncidentId = incidentRef.id;
-  } catch (err) {
-    state.saveError = true;
-    state.saveErrorDetail = err?.message || String(err);
-  } finally {
-    state.saving = false;
-    render();
-  }
-}
 async function submitNewIncident() {
   const container = document.getElementById("new-form");
   const d = state._newIncidentDraft;
@@ -4089,7 +3961,8 @@ function attachMainListeners() {
       renderKeepingPageScroll();
     }));
 
-  document.getElementById("btn-backup").addEventListener("click", downloadBackupFile);
+  const backupBtn = document.getElementById("btn-backup");
+  if (backupBtn) backupBtn.addEventListener("click", downloadBackupFile);
 
   const settingsBtn = document.getElementById("btn-settings");
   if (settingsBtn) settingsBtn.addEventListener("click", () => { state.section = "settings"; state.settingsView = "menu"; render(); });
@@ -4526,84 +4399,10 @@ function attachDashboardListeners() {
     render();
   });
 
-  if (state.showNewCaseFlow) attachNewCaseListeners();
   attachSuspFormModalListeners();
   attachPmFormModalListeners();
 }
 
-function attachNewCaseListeners() {
-  const d = state._newCaseDraft;
-  const form = document.getElementById("case-form");
-  form.addEventListener("submit", (e) => e.preventDefault());
-  const closeFlow = () => { state.showNewCaseFlow = false; state._newCaseDraft = null; state.newCaseStep = "discipline"; render(); };
-  document.getElementById("case-modal-close").addEventListener("click", closeFlow);
-  document.getElementById("case-modal-backdrop").addEventListener("click", (e) => { if (e.target.id === "case-modal-backdrop") closeFlow(); });
-
-  const goNext = () => {
-    if (!newCaseStepValid(state.newCaseStep, d)) {
-      state.caseFormError = newCaseStepErrorMessage(state.newCaseStep, d);
-      render();
-      return;
-    }
-    state.caseFormError = "";
-    state.newCaseStep = newCaseNextStep(state.newCaseStep, d);
-    render();
-  };
-  const goBack = () => { state.newCaseStep = newCasePrevStep(state.newCaseStep, d); render(); };
-  document.querySelectorAll('[data-action="case-next"]').forEach((el) => el.addEventListener("click", goNext));
-  document.querySelectorAll('[data-action="case-back"]').forEach((el) => el.addEventListener("click", goBack));
-  const submitBtn = document.getElementById("case-submit-btn");
-  if (submitBtn) submitBtn.addEventListener("click", submitNewCase);
-
-  const step = state.newCaseStep;
-
-  if (step === "discipline") {
-    const sync = (id, field) => { const el = document.getElementById(id); if (el) el.addEventListener("input", () => { d[field] = el.value; }); };
-    sync("case-student-name", "studentName");
-    sync("case-date", "date");
-    sync("case-issue", "issue");
-    sync("case-action-taken", "actionTaken");
-    const classEl = document.getElementById("case-student-class");
-    if (classEl) classEl.addEventListener("change", () => { d.studentClass = classEl.value; });
-    document.querySelectorAll('[data-action="case-pick-status"]').forEach((el) =>
-      el.addEventListener("click", () => { d.status = el.dataset.status; render(); }));
-  }
-
-  if (step === "ask-suspension") {
-    document.querySelectorAll('[data-action="case-set-wants-susp"]').forEach((el) =>
-      el.addEventListener("click", () => {
-        d.wantsSuspension = el.dataset.value === "true";
-        if (d.wantsSuspension && !d.suspDraft.startDate) d.suspDraft.startDate = d.date || todayISO();
-        render();
-      }));
-  }
-
-  if (step === "suspension") {
-    const reasonEl = form.elements["reason"];
-    if (reasonEl) reasonEl.addEventListener("input", () => { d.suspDraft.reason = reasonEl.value; });
-    attachSuspFieldListeners(form, "case-susp", d.suspDraft, render);
-  }
-
-  if (step === "ask-pm") {
-    document.querySelectorAll('[data-action="case-set-wants-pm"]').forEach((el) =>
-      el.addEventListener("click", () => { d.wantsPm = el.dataset.value === "true"; render(); }));
-  }
-
-  if (step === "pm") {
-    form.querySelectorAll(".dd-case-pm-attendee-cb").forEach((cb) =>
-      cb.addEventListener("change", () => {
-        const ids = d.pmDraft.attendees;
-        if (cb.checked) { if (!ids.includes(cb.value)) ids.push(cb.value); }
-        else { d.pmDraft.attendees = ids.filter((x) => x !== cb.value); }
-        if (d.pmDraft.attendees.length > 0) state.caseFormError = "";
-        render();
-      }));
-    const othersEl = document.getElementById("case-pm-others-text");
-    if (othersEl) othersEl.addEventListener("input", () => { d.pmDraft.othersText = othersEl.value; });
-    const reasonEl = document.getElementById("case-pm-reason");
-    if (reasonEl) reasonEl.addEventListener("input", () => { d.pmDraft.reason = reasonEl.value; });
-  }
-}
 
 
 function attachSuspListeners() {
