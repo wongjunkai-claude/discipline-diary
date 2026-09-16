@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.59.0";
+const APP_VERSION = "2.59.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -161,7 +161,7 @@ const REASON_OPTIONS = [
 const GROOMING_ISSUE_TYPES = [
   "Long Hair", "Coloured Hair", "Dirtied Uniform", "Missing Name Tag",
   "Improper Socks", "Improper Shoes", "Smartwatch/Handphone",
-  "Improper Earrings/Hair Accessories", "Wearing Make Up/Improper Facial Patches",
+  "Improper Earrings/Hair Accessories", "Make Up/Improper Facial Patches",
   "Religious Items", "Others",
 ];
 const GROOMING_ISSUE_CONFIG = {
@@ -180,10 +180,14 @@ const GROOMING_ISSUE_CONFIG = {
   "Improper Shoes": { days: [4, 4, 1], parentFrom: 2, finalAction: "facilitated" },
   "Smartwatch/Handphone": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Keep/Remove Immediately" },
   "Improper Earrings/Hair Accessories": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
-  "Wearing Make Up/Improper Facial Patches": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
+  "Make Up/Improper Facial Patches": { days: [1, 1, 1], parentFrom: 2, finalAction: "facilitated", note: "Student To Remove Immediately" },
   "Religious Items": { days: [1, 1, 1], parentFrom: 1, finalAction: "shsm-only" },
   "Others": { days: [3, 3, 1], parentFrom: 2, finalAction: "facilitated" },
 };
+// Existing saved issues may still carry the old type string from before
+// this was renamed — keep it pointing at the same config so their
+// day-counts and parent-contact rules don't silently change underfoot.
+GROOMING_ISSUE_CONFIG["Wearing Make Up/Improper Facial Patches"] = GROOMING_ISSUE_CONFIG["Make Up/Improper Facial Patches"];
 const WARNING_STAGE_LABEL = { 1: "1st Warning", 2: "2nd Warning", 3: "Final Warning" };
 function buildClassOptions() {
   const out = [];
@@ -942,7 +946,10 @@ function freshGroomingIssue(type, othersText, catchDate, level) {
   };
 }
 function groomingIssueLabel(issue) {
-  return issue.type === "Others" && issue.othersText ? `Others — ${issue.othersText}` : issue.type;
+  if (issue.type === "Others" && issue.othersText) return `Others — ${issue.othersText}`;
+  // Older saved issues may still carry the pre-rename type string —
+  // display the current name without needing to migrate stored data.
+  return issue.type === "Wearing Make Up/Improper Facial Patches" ? "Make Up/Improper Facial Patches" : issue.type;
 }
 // A short display label for any incident, old-shape or new — used
 // wherever a linked grooming entry needs to show a one-line summary.
@@ -1970,7 +1977,10 @@ function computeTopGroomingIssueType(year) {
   const tally = {};
   state.incidents.forEach((it) => {
     if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
-    it.issues.forEach((issue) => { tally[issue.type] = (tally[issue.type] || 0) + 1; });
+    it.issues.forEach((issue) => {
+      const label = issue.type === "Wearing Make Up/Improper Facial Patches" ? "Make Up/Improper Facial Patches" : issue.type;
+      tally[label] = (tally[label] || 0) + 1;
+    });
   });
   const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
   return sorted.length ? { type: sorted[0][0], count: sorted[0][1] } : null;
