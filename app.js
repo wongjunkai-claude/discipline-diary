@@ -20,8 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.54.3";
-const DELETE_PASSWORD = "shsm";
+const APP_VERSION = "2.55.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -95,7 +94,6 @@ function syncParentMeetingToSheet(m) {
 // "In Progress" (internally "Monitoring", kept for backward compatibility
 // with existing data). STATUS_STYLE/STATUS_TEXT still map Open for display,
 // so any pre-existing "Open" entries keep rendering correctly.
-const STATUSES = ["Monitoring", "Resolved"];
 const STATUS_STYLE = {
   Open: { ink: "#A3372B", label: "OPEN" },
   Monitoring: { ink: "#B8863B", label: "IN PROGRESS" },
@@ -601,25 +599,6 @@ function suspensionStatus(s) {
   if (today <= last) return "Active";
   return "Completed";
 }
-function suspensionTypeSummary(s) {
-  const entries = suspensionDayEntries(s);
-  const hasIss = entries.some((e) => e.type === "ISS");
-  const hasOss = entries.some((e) => e.type === "OSS");
-  if (hasIss && hasOss) return "Mixed";
-  if (hasIss) return "ISS";
-  if (hasOss) return "OSS";
-  return "ISS";
-}
-function studentsOnDate(type, dateISO) {
-  const out = [];
-  state.suspensions.forEach((s) => {
-    if (s.deleted) return;
-    suspensionDayEntries(s).forEach((e) => {
-      if (e.date === dateISO && e.type === type) out.push({ ...s, _venue: e.venue });
-    });
-  });
-  return out;
-}
 
 // ---------- App state ----------
 const state = {
@@ -638,7 +617,6 @@ const state = {
   classConfig: null,
   schoolClosureDays: null,
   schoolCalendarOverrides: null,
-  holidaysAddModal: null, // null | "publicHoliday" | "schoolClosure"
   confirmDeleteTarget: null,
   undoToast: null,
   studentViewName: null,
@@ -657,7 +635,6 @@ const state = {
   incidents: [],
   dataLoaded: false,
   query: "",
-  incidentSortBy: "date",
   disciplineFilter: "all", // 'all' | 'Monitoring' | 'Resolved'
   selectedIncidentId: null,
   showNewForm: false,
@@ -671,7 +648,6 @@ const state = {
   suspensions: [],
   suspLoaded: false,
   suspTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed' | 'Deleted'
-  suspSortBy: "date",
   suspQuery: "",
   selectedSuspId: null,
   showNewSuspForm: false,
@@ -681,7 +657,6 @@ const state = {
   parentMeetings: [],
   pmLoaded: false,
   pmTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed' | 'Deleted'
-  pmSortBy: "date",
   pmQuery: "",
   selectedPmId: null,
   showNewPmForm: false,
@@ -1090,13 +1065,6 @@ function findRelatedRecords(studentName) {
 }
 
 // ---------- New Case wizard: Discipline -> Suspension? -> Parent Meeting? -> Submit ----------
-function freshNewCaseDraft() {
-  return {
-    studentName: "", studentClass: "", date: todayISO(), issue: "", actionTaken: "", status: "Monitoring",
-    wantsSuspension: null, suspDraft: freshSuspDraft(),
-    wantsPm: null, pmDraft: freshPmDraft(),
-  };
-}
 function newCaseStepValid(step, d) {
   if (step === "discipline") return !!(d.studentName.trim() && d.studentClass && d.issue.trim() && d.actionTaken.trim());
   if (step === "ask-suspension") return d.wantsSuspension !== null;
@@ -1280,18 +1248,6 @@ async function submitNewIncident() {
     state.saving = false;
     render();
   }
-}
-async function updateStatus(id, newStatus, currentStatus) {
-  if (newStatus === currentStatus) return;
-  const now = Date.now();
-  const it = state.incidents.find((i) => i.id === id);
-  try {
-    await updateDoc(doc(db, "incidents", id), {
-      status: newStatus,
-      history: arrayUnion({ id: uid(), type: "status", detail: `Status changed from ${STATUS_TEXT[currentStatus]} to ${STATUS_TEXT[newStatus]}`, by: teacherName(), at: now }),
-    });
-    if (it) syncIncidentToSheet({ ...it, status: newStatus });
-  } catch (err) { state.saveError = true; render(); }
 }
 async function addFollowUp(id) {
   const note = (state.followDraft[id] || "").trim();
@@ -1987,15 +1943,6 @@ function monthKeysInRange(fromKey, toKey) {
 }
 // Options for the custom range's From/To dropdowns — 24 months back to 12
 // months ahead of today, a generous span without being unbounded.
-function chartMonthOptionKeys() {
-  const out = [];
-  const now = new Date();
-  for (let i = -24; i <= 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  }
-  return out;
-}
 function dateDiffDays(fromISO, toISO) {
   const [fy, fm, fd] = fromISO.split("-").map(Number);
   const [ty, tm, td] = toISO.split("-").map(Number);
@@ -2066,7 +2013,6 @@ const CHART_RANGE_OPTIONS_SECONDARY = [
   { key: "term4", label: "Term 4" },
   { key: "custom", label: "Custom" },
 ];
-const CHART_RANGE_OPTIONS = [...CHART_RANGE_OPTIONS_PRIMARY, ...CHART_RANGE_OPTIONS_SECONDARY];
 const CATEGORY_META = {
   discipline: { label: "Grooming", checkboxLabel: "Grooming" },
   suspension: { label: "Suspension", checkboxLabel: "Suspension" },
@@ -2906,104 +2852,6 @@ function renderMonthlyChart() {
 }
 
 // ---------- New Case wizard rendering ----------
-function renderNewCaseModal() {
-  const d = state._newCaseDraft;
-  const step = state.newCaseStep;
-  const stepTitles = { discipline: "Discipline", "ask-suspension": "Suspension?", suspension: "Suspension details", "ask-pm": "Parent Meeting?", pm: "Parent Meeting details", submit: "Review & submit" };
-  return `
-    <div class="dd-modal-backdrop" id="case-modal-backdrop">
-      <form class="dd-modal" id="case-form">
-        <div class="dd-modal-head">
-          <div class="dd-modal-title">New Case — ${stepTitles[step]}</div>
-          <button type="button" class="dd-modal-close" id="case-modal-close">✕</button>
-        </div>
-        ${renderNewCaseStepBody(step, d)}
-      </form>
-    </div>`;
-}
-function renderNewCaseStepBody(step, d) {
-  if (step === "discipline") {
-    return `
-      <label class="dd-label">Student name</label>
-      <input class="dd-input" id="case-student-name" required value="${escapeHtml(d.studentName)}" />
-      <label class="dd-label">Class</label>
-      <select class="dd-input" id="case-student-class" required>${classOptionsHtml(d.studentClass)}</select>
-      <label class="dd-label">Date</label>
-      <input class="dd-input" type="date" id="case-date" required value="${d.date}" />
-      <label class="dd-label">Issue</label>
-      <textarea class="dd-textarea dd-input" id="case-issue" rows="3" required placeholder="What happened?">${escapeHtml(d.issue)}</textarea>
-      <label class="dd-label">Action taken</label>
-      <textarea class="dd-textarea dd-input" id="case-action-taken" rows="2" required placeholder="What was done in response?">${escapeHtml(d.actionTaken)}</textarea>
-      <label class="dd-label">Status</label>
-      <div class="dd-status-row">
-        ${STATUSES.map((s) => `<button type="button" class="dd-stamp" data-action="case-pick-status" data-status="${s}" style="color:${STATUS_STYLE[s].ink};opacity:${d.status === s ? 1 : 0.35}">${STATUS_STYLE[s].label}</button>`).join("")}
-      </div>
-      ${renderNewCaseNav("discipline", d)}`;
-  }
-  if (step === "ask-suspension") {
-    return `
-      <div class="dd-case-prompt">Is there an In-School or Out-of-School Suspension linked to this?</div>
-      <div class="dd-case-yesno">
-        <button type="button" class="dd-stamp" data-action="case-set-wants-susp" data-value="true" style="color:#3C6E47;opacity:${d.wantsSuspension === true ? 1 : 0.35}">YES</button>
-        <button type="button" class="dd-stamp" data-action="case-set-wants-susp" data-value="false" style="color:#A3372B;opacity:${d.wantsSuspension === false ? 1 : 0.35}">NO</button>
-      </div>
-      ${renderNewCaseNav("ask-suspension", d)}`;
-  }
-  if (step === "suspension") {
-    return `
-      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">For ${escapeHtml(d.studentName)}, Class ${escapeHtml(d.studentClass)}</div>
-      ${renderSuspFieldsBody(d.suspDraft, "case-susp", null)}
-      ${renderNewCaseNav("suspension", d)}`;
-  }
-  if (step === "ask-pm") {
-    return `
-      <div class="dd-case-prompt">Is there a Parent's Meeting linked to this?</div>
-      <div class="dd-case-yesno">
-        <button type="button" class="dd-stamp" data-action="case-set-wants-pm" data-value="true" style="color:#3C6E47;opacity:${d.wantsPm === true ? 1 : 0.35}">YES</button>
-        <button type="button" class="dd-stamp" data-action="case-set-wants-pm" data-value="false" style="color:#A3372B;opacity:${d.wantsPm === false ? 1 : 0.35}">NO</button>
-      </div>
-      ${renderNewCaseNav("ask-pm", d)}`;
-  }
-  if (step === "pm") {
-    return `
-      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">For ${escapeHtml(d.studentName)}, Class ${escapeHtml(d.studentClass)}</div>
-      <label class="dd-label">Who is attending?</label>
-      <div class="dd-checkbox-group">
-        ${ATTENDEE_OPTIONS.map((a) => `
-          <label class="dd-checkbox-pill">
-            <input type="checkbox" class="dd-case-pm-attendee-cb" value="${a}" ${d.pmDraft.attendees.includes(a) ? "checked" : ""} />
-            <span>${a}</span>
-          </label>`).join("")}
-      </div>
-      ${d.pmDraft.attendees.includes("Others") ? `
-      <label class="dd-label">Specify "Others"</label>
-      <input class="dd-input" id="case-pm-others-text" value="${escapeHtml(d.pmDraft.othersText)}" placeholder="e.g. Aunt" />` : ""}
-      <label class="dd-label">Reason for meeting</label>
-      <textarea class="dd-textarea dd-input" id="case-pm-reason" rows="3" required>${escapeHtml(d.pmDraft.reason)}</textarea>
-      ${renderNewCaseNav("pm", d)}`;
-  }
-  // submit
-  return `
-    <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">Ready to save for ${escapeHtml(d.studentName)}, Class ${escapeHtml(d.studentClass)}:</div>
-    <ul style="margin:0 0 16px;padding-left:20px;font-family:'IBM Plex Sans',sans-serif;font-size:14px;color:#1B2A41">
-      <li>Discipline entry — ${escapeHtml(truncateName(d.issue, 40))}</li>
-      ${d.wantsSuspension ? `<li>Suspension — ${d.suspDraft.totalDays} day${d.suspDraft.totalDays > 1 ? "s" : ""} (${d.suspDraft.ossDays} out-of-school, ${d.suspDraft.issDays} in-school)</li>` : ""}
-      ${d.wantsPm ? `<li>Parent Meeting — ${escapeHtml(formatAttendeesForSheet(d.pmDraft.attendees, d.pmDraft.othersText))}</li>` : ""}
-    </ul>
-    ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
-    ${renderNewCaseNav("submit", d)}`;
-}
-function renderNewCaseNav(step, d) {
-  const isLast = step === "submit";
-  return `
-    ${state.caseFormError ? `<div class="dd-error" style="margin-top:12px">${escapeHtml(state.caseFormError)}</div>` : ""}
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
-      ${step !== "discipline" ? `<button type="button" class="dd-case-back-btn" data-action="case-back">← Back</button>` : `<span></span>`}
-      ${isLast
-        ? `<button type="button" class="dd-btn-primary" style="width:auto;margin-top:0" id="case-submit-btn" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Submit"}</button>`
-        : `<button type="button" class="dd-btn-primary" style="width:auto;margin-top:0" data-action="case-next">Continue →</button>`}
-    </div>`;
-}
 
 // A "semester" is 2 terms — Term1+2, or Term3+4 — whichever contains
 // today (falling back to whichever half of the year today is closer to,
@@ -3137,51 +2985,6 @@ function renderDashboardSection() {
     </div>`;
 }
 
-function renderDashboardBox(type, title, color) {
-  const today = todayISO();
-  const tomorrow = addDays(today, 1);
-  const dayAfter = addDays(today, 2);
-  const todayList = studentsOnDate(type, today);
-  const nextDays = [
-    { date: tomorrow, students: studentsOnDate(type, tomorrow) },
-    { date: dayAfter, students: studentsOnDate(type, dayAfter) },
-  ];
-  const studentRowHtml = (s) => `
-    <div class="dd-dash-row">
-      <span class="dd-dash-name">${escapeHtml(truncateName(s.studentName))}</span>
-      <span class="dd-dash-class">${escapeHtml(s.studentClass || "")}</span>
-    </div>`;
-  const dayGroupHtml = (students) => {
-    if (students.length === 0) return "";
-    if (type !== "ISS") return students.map(studentRowHtml).join("");
-    const groups = {};
-    students.forEach((s) => { const loc = s._venue || "(no location set)"; (groups[loc] = groups[loc] || []).push(s); });
-    return Object.keys(groups).sort((a, b) => a.localeCompare(b)).map((loc) => `
-      <div class="dd-dash-location">${escapeHtml(truncateName(loc, 20))}</div>
-      ${groups[loc].map(studentRowHtml).join("")}
-    `).join("");
-  };
-  return `
-    <div class="dd-panel dd-dash-box">
-      <div class="dd-dash-title" style="color:${color}">${title}</div>
-      <div class="dd-dash-cols">
-        <div class="dd-dash-col">
-          <div class="dd-mono-muted dd-dash-col-label">Today</div>
-          <div class="dd-serif dd-dash-count" style="color:${color}">${todayList.length}</div>
-          <div class="dd-dash-list">${todayList.length === 0 ? `<div class="dd-dash-empty">None</div>` : dayGroupHtml(todayList)}</div>
-        </div>
-        <div class="dd-dash-col">
-          <div class="dd-mono-muted dd-dash-col-label">Next 2 Days</div>
-          <div class="dd-dash-list">
-            ${nextDays.every((d) => d.students.length === 0) ? `<div class="dd-dash-empty">None</div>` : nextDays.map((d) => d.students.length === 0 ? "" : `
-              <div class="dd-dash-date">${formatDate(d.date)}</div>
-              ${dayGroupHtml(d.students)}
-            `).join("")}
-          </div>
-        </div>
-      </div>
-    </div>`;
-}
 
 // ---------- Discipline Log ----------
 function classLevel(cls) {
@@ -3399,20 +3202,6 @@ function renderIncidentDetail(it) {
     </div>`;
 }
 
-function recycleBinButton(id, active, count) {
-  return `<button class="dd-circle-btn ${active ? "dd-recycle-active" : ""}" id="${id}" title="Deleted (${count})">
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4.5 7.5h15l-1.4 13.2a1 1 0 0 1-1 .9H6.9a1 1 0 0 1-1-.9L4.5 7.5z"></path>
-      <path d="M9 7.5V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2.5"></path>
-      <path d="M11.45 12.26L9.92 14.90"></path>
-      <path d="M9.92 14.90l1.2.3M9.92 14.90l.3-1.2"></path>
-      <path d="M10.34 16.10L13.39 16.10"></path>
-      <path d="M13.39 16.10l-.9.85M13.39 16.10l-1.15-.5"></path>
-      <path d="M14.22 15.14L12.69 12.50"></path>
-      <path d="M12.69 12.50l1.25-.15M12.69 12.50l-.6 1.1"></path>
-    </svg>
-  </button>`;
-}
 // The classes actually available this year, if configured under Settings
 // → Classes For The Year — falls back to the full roster if nothing has
 // been set for this year yet (e.g. before the feature was ever used).
