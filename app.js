@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.56.1";
+const APP_VERSION = "2.57.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2206,6 +2206,38 @@ function renderStackedAreaChart(rows) {
       </div>
     </div>`;
 }
+// Exact per-month figures to accompany the trend chart. Parent meetings
+// appear here as their own column — they're excluded from the chart
+// (where stacking them would overstate the incident count) but in a
+// table nothing is being summed, so showing follow-up volume alongside
+// the load is useful rather than misleading.
+function renderMonthlyBreakdownTable(rows) {
+  const withData = rows.filter((r) => r.discipline + r.suspension + r.parentMeeting > 0);
+  if (!withData.length) return `<div class="dd-dash-empty">Nothing logged this year yet.</div>`;
+  const sum = (k) => rows.reduce((s, r) => s + r[k], 0);
+  return `
+    <div class="dd-level-breakdown" style="margin-top:10px">
+      <div class="dd-level-row dd-level-row-header">
+        <div class="dd-level-cell-class" style="width:auto;flex:1.2 1 0">Month</div>
+        <div class="dd-level-cell-term">Grooming</div>
+        <div class="dd-level-cell-term">Susp.</div>
+        <div class="dd-level-cell-term">Meetings</div>
+      </div>
+      ${withData.map((r) => `
+      <div class="dd-level-row">
+        <div class="dd-level-cell-class" style="width:auto;flex:1.2 1 0">${escapeHtml(r.label)}</div>
+        <div class="dd-level-cell-term">${r.discipline}</div>
+        <div class="dd-level-cell-term">${r.suspension}</div>
+        <div class="dd-level-cell-term">${r.parentMeeting}</div>
+      </div>`).join("")}
+      <div class="dd-level-row dd-level-row-total">
+        <div class="dd-level-cell-class" style="width:auto;flex:1.2 1 0">Total</div>
+        <div class="dd-level-cell-term">${sum("discipline")}</div>
+        <div class="dd-level-cell-term">${sum("suspension")}</div>
+        <div class="dd-level-cell-term">${sum("parentMeeting")}</div>
+      </div>
+    </div>`;
+}
 function renderReportBarRows(rows) {
   const cats = [
     { key: "discipline", label: "Grooming Issue" },
@@ -2307,7 +2339,10 @@ function renderSettingsSection() {
           </div>`).join("")}
       </div>
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Discipline load by month</div>
-      ${renderStackedAreaChart(computeYearMonthlyTrend(year))}
+      ${(() => {
+        const monthly = computeYearMonthlyTrend(year);
+        return renderStackedAreaChart(monthly) + renderMonthlyBreakdownTable(monthly);
+      })()}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term (chart)</div>
       ${renderReportBarRows(computeYearTermTrend(year))}
       ${(() => {
