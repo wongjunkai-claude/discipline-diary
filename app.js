@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.57.0";
+const APP_VERSION = "2.58.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2159,7 +2159,122 @@ function computeYearSuspensionRoster(year) {
   });
   return Object.values(rows).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
-// Stacked area chart of discipline load over time: grooming sits at the
+// How much of this year's load is a few repeat students versus many
+// different students hitting the log once — a school-culture problem
+// and a small-group-needs-support problem look identical in a raw
+// total, but very different once split this way.
+function computeRepeatVsUnique(year) {
+  const suspRoster = computeYearSuspensionRoster(year);
+  const groomingCounts = {};
+  state.incidents.forEach((it) => {
+    if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
+    groomingCounts[it.studentName] = (groomingCounts[it.studentName] || 0) + it.issues.length;
+  });
+  const groomingStudents = Object.values(groomingCounts);
+  return {
+    suspension: {
+      totalCount: suspRoster.reduce((s, r) => s + r.count, 0),
+      uniqueStudents: suspRoster.length,
+      repeatStudents: suspRoster.filter((r) => r.count > 1).length,
+    },
+    grooming: {
+      totalCount: groomingStudents.reduce((s, c) => s + c, 0),
+      uniqueStudents: groomingStudents.length,
+      repeatStudents: groomingStudents.filter((c) => c > 1).length,
+    },
+  };
+}
+// How far grooming issues actually get before they stop moving — a
+// direct read on whether 1st Warning alone is doing its job. Uses each
+// issue's current stage (its highest reached so far), regardless of
+// whether it's since resolved, since that's the honest answer to "did
+// this need to escalate."
+function computeEscalationRate(year) {
+  const counts = { 1: 0, 2: 0, 3: 0 };
+  let total = 0;
+  state.incidents.forEach((it) => {
+    if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
+    it.issues.forEach((issue) => { counts[issue.stage] = (counts[issue.stage] || 0) + 1; total++; });
+  });
+  if (total === 0) return null;
+  return {
+    total,
+    stayedAt1st: counts[1], pct1st: Math.round((counts[1] / total) * 100),
+    reached2nd: counts[2], pct2nd: Math.round((counts[2] / total) * 100),
+    reachedFinal: counts[3], pctFinal: Math.round((counts[3] / total) * 100),
+  };
+}
+// For students suspended more than once, how many days sit between
+// consecutive suspensions — a shrinking gap is a real warning sign that
+// whatever's being done between suspensions isn't holding. Uses each
+// student's full suspension history (not just this report year), since
+// a Dec-to-Jan gap shouldn't be invisible just because it crosses a
+// year boundary, but only surfaces students with a suspension that
+// actually falls in this report year.
+function computeRepeatSuspensionIntervals(year) {
+  const byStudent = {};
+  state.suspensions.forEach((s) => {
+    if (s.deleted || !s.startDate) return;
+    (byStudent[s.studentName] = byStudent[s.studentName] || []).push(s);
+  });
+  const results = [];
+  Object.entries(byStudent).forEach(([name, list]) => {
+    if (list.length < 2) return;
+    const inThisYear = list.some((s) => s.startDate.startsWith(`${year}-`));
+    if (!inThisYear) return;
+    const sorted = list.slice().sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const gaps = [];
+    for (let i = 1; i < sorted.length; i++) gaps.push(daysBetween(sorted[i - 1].startDate, sorted[i].startDate));
+    results.push({
+      name, studentClass: sorted[sorted.length - 1].studentClass,
+      count: sorted.length, shortestGap: Math.min(...gaps), averageGap: Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length),
+    });
+  });
+  return results.sort((a, b) => a.shortestGap - b.shortestGap);
+}
+// When during the week discipline incidents cluster — combines grooming
+// entries and suspension start dates, since both are "an incident
+// happened on this date." Weekends are included for completeness but
+// should normally sit at zero, since scheduling already avoids them.
+function computeDayOfWeekPattern(year) {
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const counts = [0, 0, 0, 0, 0, 0, 0];
+  state.incidents.forEach((it) => {
+    if (!it.deleted && Array.isArray(it.issues) && it.date && it.date.startsWith(`${year}-`)) counts[weekdayOf(it.date)]++;
+  });
+  state.suspensions.forEach((s) => {
+    if (!s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)) counts[weekdayOf(s.startDate)]++;
+  });
+  return dayNames.map((day, i) => ({ day, count: counts[i] }));
+}
+// Where in each term incidents cluster — every term is split into
+// thirds (Early / Mid / Late) by calendar position, then combined
+// across all 4 terms, to spot whether issues bunch up as a term wears
+// on (e.g. near exams) rather than being evenly spread.
+function computeTermPositionPattern(year) {
+  const moe = computeMoeCalendar(year);
+  const buckets = { Early: 0, Mid: 0, Late: 0 };
+  const classify = (iso) => {
+    for (const term of moe.terms) {
+      if (iso >= term.start && iso <= term.end) {
+        const termLen = daysBetween(term.start, term.end) || 1;
+        const pos = daysBetween(term.start, iso) / termLen;
+        if (pos < 1 / 3) buckets.Early++;
+        else if (pos < 2 / 3) buckets.Mid++;
+        else buckets.Late++;
+        return;
+      }
+    }
+  };
+  state.incidents.forEach((it) => {
+    if (!it.deleted && Array.isArray(it.issues) && it.date && it.date.startsWith(`${year}-`)) classify(it.date);
+  });
+  state.suspensions.forEach((s) => {
+    if (!s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)) classify(s.startDate);
+  });
+  return buckets;
+}
+// Stacked area chart of discipline load over time:
 // bottom, suspensions stack on top, so the filled height is total
 // incidents and the upper band shows how much of that was serious.
 // Parent meetings are deliberately excluded — they're a response to
@@ -2218,20 +2333,20 @@ function renderMonthlyBreakdownTable(rows) {
   return `
     <div class="dd-level-breakdown" style="margin-top:10px">
       <div class="dd-level-row dd-level-row-header">
-        <div class="dd-level-cell-class" style="width:auto;flex:1.2 1 0">Month</div>
+        <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">Month</div>
         <div class="dd-level-cell-term">Grooming</div>
-        <div class="dd-level-cell-term">Susp.</div>
+        <div class="dd-level-cell-term">Suspension</div>
         <div class="dd-level-cell-term">Meetings</div>
       </div>
       ${withData.map((r) => `
       <div class="dd-level-row">
-        <div class="dd-level-cell-class" style="width:auto;flex:1.2 1 0">${escapeHtml(r.label)}</div>
+        <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">${escapeHtml(r.label)}</div>
         <div class="dd-level-cell-term">${r.discipline}</div>
         <div class="dd-level-cell-term">${r.suspension}</div>
         <div class="dd-level-cell-term">${r.parentMeeting}</div>
       </div>`).join("")}
       <div class="dd-level-row dd-level-row-total">
-        <div class="dd-level-cell-class" style="width:auto;flex:1.2 1 0">Total</div>
+        <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">Total</div>
         <div class="dd-level-cell-term">${sum("discipline")}</div>
         <div class="dd-level-cell-term">${sum("suspension")}</div>
         <div class="dd-level-cell-term">${sum("parentMeeting")}</div>
@@ -2354,6 +2469,72 @@ function renderSettingsSection() {
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${n.acrossYears}</p>
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 8px"><b>${n.improvementsPara}</b></p>
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">${n.concernsPara}</p>
+      </div>`;
+      })()}
+      ${(() => {
+        const ru = computeRepeatVsUnique(year);
+        const esc = computeEscalationRate(year);
+        const intervals = computeRepeatSuspensionIntervals(year);
+        const dow = computeDayOfWeekPattern(year);
+        const termPos = computeTermPositionPattern(year);
+        const maxDow = Math.max(1, ...dow.map((d) => d.count));
+        const maxTermPos = Math.max(1, termPos.Early, termPos.Mid, termPos.Late);
+        const barRow = (label, count, max, color) => `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <div class="dd-mono-muted" style="font-size:11px;width:34px;flex-shrink:0">${label}</div>
+            <div style="flex:1;background:#F2EFE6;border-radius:2px;overflow:hidden;height:14px">
+              <div style="width:${Math.max(count > 0 ? 4 : 0, (count / max) * 100)}%;height:100%;background:${color}"></div>
+            </div>
+            <div class="dd-mono-muted" style="font-size:11px;width:18px;text-align:right;flex-shrink:0">${count}</div>
+          </div>`;
+        return `
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat vs. unique students</div>
+      <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 6px">
+          <b>Suspensions:</b> ${ru.suspension.totalCount} suspension${ru.suspension.totalCount === 1 ? "" : "s"} across ${ru.suspension.uniqueStudents} student${ru.suspension.uniqueStudents === 1 ? "" : "s"}${ru.suspension.repeatStudents > 0 ? ` — ${ru.suspension.repeatStudents} of them suspended more than once` : ""}.
+        </p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">
+          <b>Grooming:</b> ${ru.grooming.totalCount} issue${ru.grooming.totalCount === 1 ? "" : "s"} across ${ru.grooming.uniqueStudents} student${ru.grooming.uniqueStudents === 1 ? "" : "s"}${ru.grooming.repeatStudents > 0 ? ` — ${ru.grooming.repeatStudents} flagged more than once` : ""}.
+        </p>
+      </div>
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Grooming escalation rate</div>
+      ${!esc ? `<div class="dd-dash-empty">No grooming issues logged this year.</div>` : `
+      <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">
+          Of ${esc.total} issue${esc.total === 1 ? "" : "s"} logged this year: <b>${esc.pct1st}%</b> never went past 1st Warning, <b>${esc.pct2nd}%</b> reached 2nd Warning, and <b>${esc.pctFinal}%</b> reached Final Warning.
+        </p>
+      </div>`}
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat suspension intervals</div>
+      ${intervals.length === 0 ? `<div class="dd-dash-empty">No student was suspended more than once.</div>` : `
+      <div class="dd-level-breakdown">
+        <div class="dd-level-row dd-level-row-header">
+          <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">Student</div>
+          <div class="dd-level-cell-term">Times</div>
+          <div class="dd-level-cell-term">Shortest gap</div>
+          <div class="dd-level-cell-term">Average gap</div>
+        </div>
+        ${intervals.map((r) => `
+        <div class="dd-level-row">
+          <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">${escapeHtml(r.name)} <span class="dd-mono-muted" style="font-size:10px">${escapeHtml(r.studentClass || "")}</span></div>
+          <div class="dd-level-cell-term">${r.count}</div>
+          <div class="dd-level-cell-term">${r.shortestGap}d</div>
+          <div class="dd-level-cell-term">${r.averageGap}d</div>
+        </div>`).join("")}
+      </div>`}
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By day of week</div>
+      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
+        ${dow.filter((d) => d.day !== "Sun" && d.day !== "Sat").map((d) => barRow(d.day, d.count, maxDow, CHART_COLORS.discipline)).join("")}
+        ${(dow[0].count + dow[6].count) > 0 ? barRow("Wknd", dow[0].count + dow[6].count, maxDow, "#8A8571") : ""}
+      </div>
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By position within term</div>
+      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
+        ${barRow("Early", termPos.Early, maxTermPos, CHART_COLORS.discipline)}
+        ${barRow("Mid", termPos.Mid, maxTermPos, CHART_COLORS.discipline)}
+        ${barRow("Late", termPos.Late, maxTermPos, CHART_COLORS.discipline)}
       </div>`;
       })()}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Most challenging levels</div>
@@ -2949,17 +3130,36 @@ function computeCurrentSemesterBounds() {
 function renderGroomingFollowUpList() {
   const buckets = computeGroomingFollowUpBuckets();
   const today = todayISO();
-  const renderRow = (r) => `
-    <div class="dd-followup-row-item" data-action="jump-to-incident" data-id="${r.incidentId}">
-      <div style="display:flex;justify-content:space-between;gap:8px">
-        <span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(r.name))}</span>
-        <span class="dd-issue-stage-badge ${r.deadline < today ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
+  // Multiple issues due the same day for the same student become one
+  // card (name shown once) with each issue listed underneath, rather
+  // than repeating the name in a separate card per issue.
+  const groupByStudent = (rows) => {
+    const groups = [];
+    const byKey = {};
+    rows.forEach((r) => {
+      const key = `${r.name}|${r.studentClass || ""}`;
+      if (!byKey[key]) { byKey[key] = { name: r.name, studentClass: r.studentClass, incidentId: r.incidentId, items: [] }; groups.push(byKey[key]); }
+      byKey[key].items.push(r);
+    });
+    return groups;
+  };
+  const renderGroup = (g) => `
+    <div class="dd-followup-row-item" data-action="jump-to-incident" data-id="${g.incidentId}">
+      <span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(g.name))}</span>
+      ${g.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:1px">${escapeHtml(g.studentClass)}</div>` : ""}
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        ${g.items.map((r) => `
+        <div style="border-top:1px solid #E4E1D4;padding-top:6px">
+          <div style="display:flex;justify-content:space-between;gap:8px">
+            <span class="dd-sans" style="font-size:12px">${escapeHtml(r.issueLabel)}</span>
+            <span class="dd-issue-stage-badge ${r.deadline < today ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
+          </div>
+          ${(() => {
+            const daysOverdue = daysBetween(r.deadline, today);
+            return daysOverdue > 0 ? `<div class="dd-mono-muted" style="font-size:11px;color:#A3372B">Overdue for ${daysOverdue} day${daysOverdue === 1 ? "" : "s"}</div>` : "";
+          })()}
+        </div>`).join("")}
       </div>
-      <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(r.studentClass || "")} · ${escapeHtml(r.issueLabel)}</div>
-      ${(() => {
-        const daysOverdue = daysBetween(r.deadline, today);
-        return daysOverdue > 0 ? `<div class="dd-mono-muted" style="font-size:11px;color:#A3372B">Overdue for ${daysOverdue} day${daysOverdue === 1 ? "" : "s"}</div>` : "";
-      })()}
     </div>`;
   const renderDaySection = (label, dateIso, rows) => `
     <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;display:flex;justify-content:space-between;align-items:baseline;margin-top:14px">
@@ -2967,7 +3167,7 @@ function renderGroomingFollowUpList() {
       <span>(${label})</span>
     </div>
     ${rows.length === 0 ? `<div class="dd-dash-empty" style="margin-top:6px">Nothing here.</div>` : `
-    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${rows.map(renderRow).join("")}</div>`}`;
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${groupByStudent(rows).map(renderGroup).join("")}</div>`}`;
   return `
     <div class="dd-panel" style="margin-bottom:16px">
       <div class="dd-dash-title" style="color:#1B2A41">Grooming Follow-Up List</div>
