@@ -430,3 +430,6 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   .dd-header-inner, .dd-main { max-width: 1320px; }
   body { zoom: 1.25; }
 }
+
+.dd-area-chart-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px; }
+.dd-area-chart { width: 100%; height: auto; display: block; }

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.55.0";
+const APP_VERSION = "2.56.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2159,6 +2159,49 @@ function computeYearSuspensionRoster(year) {
   });
   return Object.values(rows).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
+// Stacked area chart of discipline load over time: grooming sits at the
+// bottom, suspensions stack on top, so the filled height is total
+// incidents and the upper band shows how much of that was serious.
+// Parent meetings are deliberately excluded — they're a response to
+// issues rather than an issue themselves, so mixing them in would
+// overstate the incident count.
+function renderStackedAreaChart(rows) {
+  if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
+  const totals = rows.map((r) => r.discipline + r.suspension);
+  const axisMax = niceAxisMax(Math.max(1, ...totals));
+  const W = 320, H = 150, padL = 26, padB = 20, padT = 8;
+  const plotW = W - padL, plotH = H - padB - padT;
+  const x = (i) => rows.length === 1 ? padL + plotW / 2 : padL + (i / (rows.length - 1)) * plotW;
+  const y = (v) => padT + plotH - (v / axisMax) * plotH;
+  const lineFor = (vals) => vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  const areaFor = (upper, lower) =>
+    `${upper.map((v, i) => `${x(i)},${y(v)}`).join(" ")} ` +
+    `${lower.map((v, i) => `${x(i)},${y(v)}`).reverse().join(" ")}`;
+  const zeros = rows.map(() => 0);
+  const grooming = rows.map((r) => r.discipline);
+  const ticks = [0, axisMax * 0.5, axisMax].map((n) => Math.round(n));
+  // Only label every Nth point when there are many, so they don't collide.
+  const labelEvery = rows.length > 6 ? Math.ceil(rows.length / 6) : 1;
+  return `
+    <div class="dd-area-chart-wrap">
+      <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">
+        ${ticks.map((t) => `
+          <line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="#E4E1D4" stroke-width="1"></line>
+          <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" font-family="'IBM Plex Mono', monospace" fill="#8A8571">${t}</text>`).join("")}
+        <polygon points="${areaFor(grooming, zeros)}" fill="${CHART_COLORS.discipline}" fill-opacity="0.75"></polygon>
+        <polygon points="${areaFor(totals, grooming)}" fill="${OSS_DOT_COLOR}" fill-opacity="0.85"></polygon>
+        <polyline points="${lineFor(totals)}" fill="none" stroke="${OSS_DOT_COLOR}" stroke-width="1.5"></polyline>
+        <polyline points="${lineFor(grooming)}" fill="none" stroke="${CHART_COLORS.discipline}" stroke-width="1.5"></polyline>
+        ${rows.map((r, i) => i % labelEvery === 0
+          ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="'IBM Plex Mono', monospace" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
+          : "").join("")}
+      </svg>
+      <div class="dd-cal-legend dd-daytype-legend" style="margin-top:8px;padding-top:8px">
+        <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${CHART_COLORS.discipline}"></span>Grooming Issue</div>
+        <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${OSS_DOT_COLOR}"></span>Suspension</div>
+      </div>
+    </div>`;
+}
 function renderReportBarRows(rows) {
   const cats = [
     { key: "discipline", label: "Grooming Issue" },
@@ -2259,8 +2302,8 @@ function renderSettingsSection() {
             <div class="dd-level-cell-term">${t.discipline}</div><div class="dd-level-cell-term">${t.suspension}</div><div class="dd-level-cell-term">${t.parentMeeting}</div>
           </div>`).join("")}
       </div>
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By month</div>
-      ${renderReportBarRows(computeYearMonthlyTrend(year))}
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Discipline load by month</div>
+      ${renderStackedAreaChart(computeYearMonthlyTrend(year))}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term (chart)</div>
       ${renderReportBarRows(computeYearTermTrend(year))}
       ${(() => {
