@@ -424,11 +424,15 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 }
 @media (min-width: 1300px) {
   .dd-header-inner, .dd-main { max-width: 1200px; }
-  body { zoom: 1.15; }
+  body { zoom: 1.5; }
 }
 @media (min-width: 1700px) {
-  .dd-header-inner, .dd-main { max-width: 1320px; }
-  body { zoom: 1.25; }
+  .dd-header-inner, .dd-main { max-width: 1500px; }
+  body { zoom: 1.75; }
+}
+@media (min-width: 2000px) {
+  .dd-header-inner, .dd-main { max-width: 1700px; }
+  body { zoom: 2; }
 }
 
 .dd-area-chart-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px; }
