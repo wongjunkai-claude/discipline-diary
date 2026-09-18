@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.59.3";
+const APP_VERSION = "2.60.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -624,6 +624,7 @@ const state = {
   confirmDeleteTarget: null,
   undoToast: null,
   studentViewName: null,
+  studentViewClass: null,
   studentViewFromSection: "dashboard",
   showWatchlistInfo: false,
   _classDraft: null,
@@ -1056,15 +1057,16 @@ async function saveIncidentIssueUpdate(entry) {
   state.saving = true; render();
   try {
     await updateDoc(doc(db, "incidents", entry.id), { issues: entry.issues });
+    syncIncidentToSheet(entry);
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   finally { state.saving = false; render(); }
 }
 function findRelatedRecords(studentName) {
-  const name = (studentName || "").trim().toLowerCase();
+  const name = normalizeName(studentName);
   if (!name) return { suspensions: [], parentMeetings: [] };
   return {
-    suspensions: state.suspensions.filter((s) => !s.deleted && s.studentName.trim().toLowerCase() === name),
-    parentMeetings: state.parentMeetings.filter((m) => !m.deleted && m.studentName.trim().toLowerCase() === name),
+    suspensions: state.suspensions.filter((s) => !s.deleted && normalizeName(s.studentName) === name),
+    parentMeetings: state.parentMeetings.filter((m) => !m.deleted && normalizeName(m.studentName) === name),
   };
 }
 
@@ -1072,7 +1074,7 @@ function findRelatedRecords(studentName) {
 async function submitNewIncident() {
   const container = document.getElementById("new-form");
   const d = state._newIncidentDraft;
-  const studentName = (container.querySelector('[name="studentName"]')?.value || "").trim();
+  const studentName = (container.querySelector('[name="studentName"]')?.value || "").trim().replace(/\s+/g, " ");
   const studentClass = container.querySelector('[name="studentClass"]')?.value || "";
   const date = container.querySelector('[name="date"]')?.value || d.date;
   const selectedIssues = d.selectedIssues || [];
@@ -1214,7 +1216,13 @@ async function undoLastDelete() {
   if (!t) return;
   clearUndoToastTimer();
   state.undoToast = null;
-  try { await setDoc(doc(db, t.collectionName, t.id), t.data); }
+  try {
+    await setDoc(doc(db, t.collectionName, t.id), t.data);
+    const restored = { ...t.data, id: t.id, deleted: false };
+    if (t.collectionName === "incidents") syncIncidentToSheet(restored);
+    else if (t.collectionName === "suspensions") syncSuspensionToSheet(restored);
+    else if (t.collectionName === "parentMeetings") syncParentMeetingToSheet(restored);
+  }
   catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
@@ -1222,7 +1230,11 @@ async function deleteIncident(id) {
   const entry = state.incidents.find((i) => i.id === id);
   try {
     await deleteDoc(doc(db, "incidents", id));
-    if (entry) { const { id: _drop, ...data } = entry; showUndoToast("incidents", id, data); }
+    if (entry) {
+      const { id: _drop, ...data } = entry;
+      showUndoToast("incidents", id, data);
+      syncIncidentToSheet({ ...entry, deleted: true });
+    }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 function openEditIncident(id) {
@@ -1260,10 +1272,12 @@ async function submitEditIncident() {
   const finalIssues = [...keptIssues, ...newIssues].map((x) => x.type === "Others" ? { ...x, othersText: d.othersText || "" } : x);
   const now = Date.now();
   try {
+    const trimmedName = d.studentName.trim().replace(/\s+/g, " ");
     await updateDoc(doc(db, "incidents", it.id), {
-      studentName: d.studentName.trim(), studentClass: d.studentClass, date: d.date, issues: finalIssues,
+      studentName: trimmedName, studentClass: d.studentClass, date: d.date, issues: finalIssues,
       history: arrayUnion({ id: uid(), type: "edited", detail: `Entry edited — issues now: ${finalIssues.map(groomingIssueLabel).join(", ")}`, by: teacherName(), at: now }),
     });
+    syncIncidentToSheet({ ...it, studentName: trimmedName, studentClass: d.studentClass, date: d.date, issues: finalIssues });
     state.editingIncidentId = null;
     state._editIncidentDraft = null;
     state.saving = false;
@@ -1363,7 +1377,7 @@ async function submitNewSuspension(e) {
   e.preventDefault();
   const f = e.target;
   const d = state._suspDraft;
-  const studentName = f.studentName.value.trim();
+  const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
   const reason = composeReasonValue(f, d);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
@@ -1427,7 +1441,11 @@ async function deleteSuspension(id) {
   const entry = state.suspensions.find((i) => i.id === id);
   try {
     await deleteDoc(doc(db, "suspensions", id));
-    if (entry) { const { id: _drop, ...data } = entry; showUndoToast("suspensions", id, data); }
+    if (entry) {
+      const { id: _drop, ...data } = entry;
+      showUndoToast("suspensions", id, data);
+      syncSuspensionToSheet({ ...entry, deleted: true });
+    }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 function openEditSuspension(id) {
@@ -1457,7 +1475,7 @@ async function submitEditSuspension(e) {
   const s = state.suspensions.find((i) => i.id === id);
   if (!s) return;
   const d = state._suspDraft;
-  const studentName = f.studentName.value.trim();
+  const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
   const reason = composeReasonValue(f, d);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
@@ -1513,7 +1531,7 @@ function freshPmDraft(m) {
 async function submitNewParentMeeting(e) {
   e.preventDefault();
   const f = e.target;
-  const studentName = f.studentName.value.trim();
+  const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
   const date = f.date.value;
   const reason = composeReasonValue(f, state._pmDraft);
@@ -1560,7 +1578,7 @@ async function submitEditParentMeeting(e) {
   const m = state.parentMeetings.find((i) => i.id === id);
   if (!m) return;
   const updated = {
-    studentName: f.studentName.value.trim(), studentClass: f.studentClass.value,
+    studentName: f.studentName.value.trim().replace(/\s+/g, " "), studentClass: f.studentClass.value,
     date: f.date.value, reason: composeReasonValue(f, state._pmDraft),
     attendees: state._pmDraft.attendees.slice(), othersText: state._pmDraft.othersText.trim(),
   };
@@ -1594,7 +1612,11 @@ async function deleteParentMeeting(id) {
   const entry = state.parentMeetings.find((i) => i.id === id);
   try {
     await deleteDoc(doc(db, "parentMeetings", id));
-    if (entry) { const { id: _drop, ...data } = entry; showUndoToast("parentMeetings", id, data); }
+    if (entry) {
+      const { id: _drop, ...data } = entry;
+      showUndoToast("parentMeetings", id, data);
+      syncParentMeetingToSheet({ ...entry, deleted: true });
+    }
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 
@@ -1665,7 +1687,7 @@ function renderMain() {
   if (state._closureModalDraft) html += renderClosureDayModal();
   html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
   html += state.undoToast ? renderUndoToast() : "";
-  return html;
+  return html + renderKnownStudentsDatalist();
 }
 function renderUndoToast() {
   const secs = state.undoToast?.secondsLeft ?? 5;
@@ -2035,9 +2057,9 @@ function computeYearSuspensionRoster(year) {
   const rows = {};
   state.suspensions.forEach((s) => {
     if (s.deleted || !s.startDate || !s.startDate.startsWith(`${year}-`)) return;
-    rows[s.studentName] = rows[s.studentName] || { name: s.studentName, cls: s.studentClass, count: 0 };
-    rows[s.studentName].count++;
-    rows[s.studentName].cls = s.studentClass || rows[s.studentName].cls;
+    const key = studentKey(s.studentName, s.studentClass);
+    rows[key] = rows[key] || { name: s.studentName, cls: s.studentClass, count: 0 };
+    rows[key].count++;
   });
   return Object.values(rows).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
@@ -2050,7 +2072,8 @@ function computeRepeatVsUnique(year) {
   const groomingCounts = {};
   state.incidents.forEach((it) => {
     if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
-    groomingCounts[it.studentName] = (groomingCounts[it.studentName] || 0) + it.issues.length;
+    const key = studentKey(it.studentName, it.studentClass);
+    groomingCounts[key] = (groomingCounts[key] || 0) + it.issues.length;
   });
   const groomingStudents = Object.values(groomingCounts);
   return {
@@ -2097,10 +2120,14 @@ function computeRepeatSuspensionIntervals(year) {
   const byStudent = {};
   state.suspensions.forEach((s) => {
     if (s.deleted || !s.startDate) return;
-    (byStudent[s.studentName] = byStudent[s.studentName] || []).push(s);
+    // Deliberately name-only (not name+class) — this tracks a student
+    // across their full history, and their class will legitimately
+    // differ between suspensions a year or more apart.
+    const key = normalizeName(s.studentName);
+    (byStudent[key] = byStudent[key] || []).push(s);
   });
   const results = [];
-  Object.entries(byStudent).forEach(([name, list]) => {
+  Object.values(byStudent).forEach((list) => {
     if (list.length < 2) return;
     const inThisYear = list.some((s) => s.startDate.startsWith(`${year}-`));
     if (!inThisYear) return;
@@ -2108,7 +2135,7 @@ function computeRepeatSuspensionIntervals(year) {
     const gaps = [];
     for (let i = 1; i < sorted.length; i++) gaps.push(daysBetween(sorted[i - 1].startDate, sorted[i].startDate));
     results.push({
-      name, studentClass: sorted[sorted.length - 1].studentClass,
+      name: sorted[sorted.length - 1].studentName, studentClass: sorted[sorted.length - 1].studentClass,
       count: sorted.length, shortestGap: Math.min(...gaps), averageGap: Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length),
     });
   });
@@ -3066,20 +3093,25 @@ function renderDashboardSection() {
   const semester = computeCurrentSemesterBounds();
   const watchCounts = {};
   const watchClass = {};
+  const watchName = {};
   activeIncidents.forEach((i) => {
     if (i.date < semester.start || i.date > semester.end) return;
     const isLegacy = !Array.isArray(i.issues);
     const maxStage = isLegacy ? 0 : groomingEntryMaxStage(i);
-    watchCounts[i.studentName] = watchCounts[i.studentName] || { suspension: 0, second: 0, third: 0 };
-    if (maxStage >= 3) watchCounts[i.studentName].third++;
-    else if (maxStage >= 2) watchCounts[i.studentName].second++;
-    watchClass[i.studentName] = i.studentClass || watchClass[i.studentName];
+    const key = studentKey(i.studentName, i.studentClass);
+    watchCounts[key] = watchCounts[key] || { suspension: 0, second: 0, third: 0 };
+    if (maxStage >= 3) watchCounts[key].third++;
+    else if (maxStage >= 2) watchCounts[key].second++;
+    watchClass[key] = i.studentClass || watchClass[key];
+    watchName[key] = i.studentName || watchName[key];
   });
   activeSusp.forEach((s) => {
     if (s.startDate < semester.start || s.startDate > semester.end) return;
-    watchCounts[s.studentName] = watchCounts[s.studentName] || { suspension: 0, second: 0, third: 0 };
-    watchCounts[s.studentName].suspension++;
-    watchClass[s.studentName] = s.studentClass || watchClass[s.studentName];
+    const key = studentKey(s.studentName, s.studentClass);
+    watchCounts[key] = watchCounts[key] || { suspension: 0, second: 0, third: 0 };
+    watchCounts[key].suspension++;
+    watchClass[key] = s.studentClass || watchClass[key];
+    watchName[key] = s.studentName || watchName[key];
   });
   // Risk tiers (per semester, counted by entry not by issue), checked in
   // priority order so someone qualifying for a higher tier is never also
@@ -3092,7 +3124,7 @@ function renderDashboardSection() {
   };
   const watchTier = state.watchTier || "high";
   let watchlist = Object.entries(watchCounts)
-    .map(([name, c]) => ({ name, studentClass: watchClass[name] || "", ...c, tier: riskTierFor(c) }))
+    .map(([key, c]) => ({ name: watchName[key] || key, studentClass: watchClass[key] || "", ...c, tier: riskTierFor(c) }))
     .filter((t) => t.tier === watchTier);
   watchlist = watchlist.sort((a, b) => b.suspension - a.suspension || b.third - a.third || b.second - a.second);
 
@@ -3135,7 +3167,7 @@ function renderDashboardSection() {
               if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
               return `
               <div style="border-bottom:1px solid #E4E1D4;padding-bottom:8px">
-                <div class="dd-sans dd-card-student-link" style="font-size:14px" data-action="view-student" data-name="${escapeHtml(t.name)}">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
+                <div class="dd-sans dd-card-student-link" style="font-size:14px" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
                 ${stats.map((s) => `<div class="dd-mono-muted" style="font-size:12px;margin-top:2px">${s}</div>`).join("")}
               </div>`;
             }).join("")}
@@ -3151,6 +3183,20 @@ function renderDashboardSection() {
 
 
 // ---------- Discipline Log ----------
+// Student identity is name-only in this app (no student ID system), so
+// the same student can otherwise appear as several different "people"
+// just from typos in casing or stray whitespace — this is the single
+// source of truth for turning a raw name into a comparable key.
+function normalizeName(name) {
+  return (name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+// For matching within a single time period (a semester, a report year)
+// where a student's class shouldn't change — name+class together are
+// far less likely to collide than name alone (two students can share a
+// first name; they're very unlikely to also share a class).
+function studentKey(name, studentClass) {
+  return `${normalizeName(name)}|${(studentClass || "").trim().toUpperCase()}`;
+}
 function classLevel(cls) {
   const m = /^P(\d+)/.exec(cls || "");
   return m ? parseInt(m[1], 10) : 999;
@@ -3218,10 +3264,12 @@ function renderLogSection() {
 
 function renderStudentView() {
   const name = state.studentViewName || "";
-  const grooming = state.incidents.filter((i) => !i.deleted && i.studentName === name).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const suspensions = state.suspensions.filter((s) => !s.deleted && s.studentName === name).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
-  const meetings = state.parentMeetings.filter((m) => !m.deleted && m.studentName === name).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const latestClass = (grooming[0]?.studentClass) || (suspensions[0]?.studentClass) || (meetings[0]?.studentClass) || "";
+  const cls = state.studentViewClass || "";
+  const matches = (rec) => studentKey(rec.studentName, rec.studentClass) === studentKey(name, cls);
+  const grooming = state.incidents.filter((i) => !i.deleted && matches(i)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const suspensions = state.suspensions.filter((s) => !s.deleted && matches(s)).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const meetings = state.parentMeetings.filter((m) => !m.deleted && matches(m)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const latestClass = (grooming[0]?.studentClass) || (suspensions[0]?.studentClass) || (meetings[0]?.studentClass) || cls;
   const sectionBlock = (title, count, items, renderFn) => `
     <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:20px 0 8px">${title} (${count})</div>
     ${count === 0 ? `<div class="dd-dash-empty">Nothing on file.</div>` : `<div style="display:flex;flex-direction:column;gap:12px">${items.map(renderFn).join("")}</div>`}`;
@@ -3258,7 +3306,7 @@ function renderIncidentDetail(it) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(it.studentName)}">${escapeHtml(it.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(it.studentName)}" data-class="${escapeHtml(it.studentClass || "")}">${escapeHtml(it.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${formatDate(it.date)}${it.studentClass ? ` · ${escapeHtml(it.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(it.loggedBy)}</div>
           ${isLegacy ? `<div class="dd-card-summary-issue">${escapeHtml(summaryLabel)} (legacy entry)</div>` : ""}
@@ -3374,6 +3422,27 @@ function classOptionsForCurrentYear() {
   const configured = state.classConfig?.classesByYear?.[year];
   return Array.isArray(configured) && configured.length ? configured : CLASS_OPTIONS;
 }
+// A single shared <datalist> of every student name seen across all
+// three logs, for the "Student name" fields to offer as suggestions —
+// this is what actually prevents new typos/casing variants from being
+// introduced in the first place, rather than just cleaning them up
+// after the fact in the analysis functions.
+function renderKnownStudentsDatalist() {
+  const seen = new Set();
+  const names = [];
+  const addAll = (list) => list.forEach((r) => {
+    if (r.deleted || !r.studentName) return;
+    const key = normalizeName(r.studentName);
+    if (seen.has(key)) return;
+    seen.add(key);
+    names.push(r.studentName.trim());
+  });
+  addAll(state.incidents);
+  addAll(state.suspensions);
+  addAll(state.parentMeetings);
+  names.sort((a, b) => a.localeCompare(b));
+  return `<datalist id="known-students">${names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("")}</datalist>`;
+}
 function classOptionsHtml(selected) {
   const options = classOptionsForCurrentYear();
   // If an entry's saved class isn't in this year's active list (e.g. an
@@ -3392,7 +3461,7 @@ function renderNewForm() {
       <div class="dd-modal" id="new-form">
         <div class="dd-modal-head"><div class="dd-modal-title">New grooming issue</div><button type="button" class="dd-modal-close" id="modal-close">✕</button></div>
         <label class="dd-label">Student name</label>
-        <input class="dd-input" name="studentName" id="new-incident-student-name" required value="${escapeHtml(d.studentName)}" />
+        <input class="dd-input" name="studentName" id="new-incident-student-name" required value="${escapeHtml(d.studentName)}" list="known-students" autocomplete="off" />
         ${hasRelated ? `
         <div class="dd-related-box">
           <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:6px">Related records found for ${escapeHtml(d.studentName)} — tick any to link</div>
@@ -3447,7 +3516,7 @@ function renderEditIncidentForm() {
       <div class="dd-modal" id="edit-form">
         <div class="dd-modal-head"><div class="dd-modal-title">Edit entry</div><button type="button" class="dd-modal-close" id="edit-modal-close">✕</button></div>
         <label class="dd-label" style="margin-top:0">Student name</label>
-        <input class="dd-input" id="edit-incident-student-name" value="${escapeHtml(d.studentName)}" />
+        <input class="dd-input" id="edit-incident-student-name" value="${escapeHtml(d.studentName)}" list="known-students" autocomplete="off" />
         <label class="dd-label">Class</label>
         <select class="dd-input" id="edit-incident-class">${classOptionsHtml(d.studentClass)}</select>
         <label class="dd-label">Date</label>
@@ -3544,7 +3613,7 @@ function renderSuspensionDetail(s) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(s.studentName)}">${escapeHtml(s.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(s.studentName)}" data-class="${escapeHtml(s.studentClass || "")}">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · ${escapeHtml(s.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
         </div>
@@ -3761,7 +3830,7 @@ function renderSuspForm(isEdit) {
           <button type="button" class="dd-modal-close" id="susp-modal-close">✕</button>
         </div>
         <label class="dd-label">Student name</label>
-        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
+        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" list="known-students" autocomplete="off" />
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
         ${renderSuspFieldsBody(d, "susp", state.editingSuspensionId)}
@@ -3860,7 +3929,7 @@ function renderParentMeetingDetail(m) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}">${escapeHtml(m.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(m.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
         </div>
@@ -3898,7 +3967,7 @@ function renderPmForm(isEdit) {
           <button type="button" class="dd-modal-close" id="pm-modal-close">✕</button>
         </div>
         <label class="dd-label">Student name</label>
-        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" />
+        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" list="known-students" autocomplete="off" />
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
         <label class="dd-label">Date</label>
@@ -3937,6 +4006,7 @@ function attachMainListeners() {
     el.addEventListener("click", () => {
       state.studentViewFromSection = state.section;
       state.studentViewName = el.dataset.name;
+      state.studentViewClass = el.dataset.class || "";
       state.section = "studentView";
       window.scrollTo(0, 0);
       render();

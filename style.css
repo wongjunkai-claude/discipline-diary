@@ -245,8 +245,8 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-cal-nav-sublabel { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 400; color: #8A8571; margin-top: 2px; }
 .dd-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 4px; }
 .dd-cal-weekdays div { text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8A8571; }
-.dd-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-.dd-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dd-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; max-width: 560px; margin: 0 auto; }
+.dd-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; max-width: 560px; margin: 0 auto; }
 .dd-week-cell {
   aspect-ratio: 0.8; border: 1px solid #E4E1D4; border-radius: 4px; background: #fff; font-family: inherit;
   display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 2px; min-width: 0; cursor: pointer; gap: 2px;
@@ -276,7 +276,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #4A4536; }
 .dd-cal-legend-item .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
 
-.dd-mini-year-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dd-mini-year-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 640px; margin: 0 auto; }
 .dd-mini-month { border: 1px solid #E4E1D4; border-radius: 4px; padding: 6px; }
 .dd-mini-month-title { font-family: 'Zilla Slab', serif; font-size: 12px; font-weight: 600; color: #1B2A41; text-align: center; margin-bottom: 4px; }
 .dd-mini-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 2px; }
@@ -392,10 +392,17 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-card-student-link { cursor: pointer; text-decoration: underline; text-decoration-color: #C9C4B4; text-underline-offset: 3px; }
 
 @media print {
+  /* Without this, browsers strip background colors and images by
+     default when printing — the stacked area chart in the Annual
+     Report relies entirely on colored fills to show data, so without
+     this override the printed/PDF version of the chart would show as
+     blank rather than the actual trend. */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .dd-header, .dd-print-hide, .dd-undo-toast { display: none !important; }
   body, .dd-app, .dd-main { background: #fff !important; }
   #report-print-area { padding: 0; }
-  .dd-panel, .dd-level-breakdown { break-inside: avoid; }
+  .dd-panel, .dd-level-breakdown, .dd-area-chart-wrap { break-inside: avoid; }
+  .dd-dash-title { break-after: avoid; }
 }
 
 .dd-nav-badge {
@@ -421,6 +428,14 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
    wide screen instead of just growing a narrow column bigger. */
 @media (min-width: 900px) {
   .dd-header-inner, .dd-main { max-width: 1000px; }
+  /* The calendar's day numbers were sized for a cramped phone grid
+     (8-11px) — much smaller than the rest of the UI's base sizes, so
+     even with the zoom scaling below they stayed proportionally tiny.
+     These bring them in line with a normal desktop's 13-16px range;
+     zoom still scales further on top of this at wider breakpoints. */
+  .dd-mini-daynum { font-size: 11px; }
+  .dd-cal-daynum { font-size: 15px; }
+  .dd-cal-weekday-label { font-size: 12px; }
 }
 @media (min-width: 1300px) {
   .dd-header-inner, .dd-main { max-width: 1200px; }
