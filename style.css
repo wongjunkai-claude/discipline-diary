@@ -345,12 +345,12 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
    scrollable checklist rather than a pill grid, since the offence list
    runs to ~29 options. */
 .dd-pm-reason-list {
-  display: flex; flex-direction: column; max-height: 230px; overflow-y: auto;
+  display: flex; flex-direction: column; max-height: 165px; overflow-y: auto;
   border: 1px solid #C9C4B4; border-radius: 3px; padding: 4px 10px; background: #fff; margin-bottom: 4px;
 }
 .dd-pm-reason-row { padding: 6px 0; border-bottom: 1px dashed #E4E1D4; }
 .dd-pm-reason-row:last-child { border-bottom: none; }
-.dd-pm-reason-check { display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: #1B2A41; cursor: pointer; }
+.dd-pm-reason-check { display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Sans', sans-serif; font-size: 16px; color: #1B2A41; cursor: pointer; }
 .dd-pm-reason-check input { margin: 0; flex-shrink: 0; }
 .dd-pm-reason-extra { padding-left: 24px; box-sizing: border-box; margin-top: 6px; }
 .dd-pm-status-row { display: flex; flex-wrap: wrap; gap: 5px; }

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.62.1";
+const APP_VERSION = "2.64.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -160,7 +160,7 @@ function composePmReasonData(d, prefix) {
   });
   const reason = reasons.map((r) => {
     const label = r.category === "Others" ? (r.othersText ? `Others — ${r.othersText}` : "Others") : r.category;
-    return r.status ? `${label} (${r.status})` : label;
+    return r.status && r.status !== "NA" ? `${label} (${r.status})` : label;
   }).join("; ");
   return { reasons, reason };
 }
@@ -723,20 +723,22 @@ function renderDuplicateConfirmModal() {
 // name+class (studentKey) so a same-named student in a different class
 // isn't flagged. Grooming/Parent Meeting match on a single date;
 // Suspension matches when the new suspension's day range overlaps an
-// existing one, since suspensions span multiple days.
-function findDuplicateGroomingEntry(name, studentClass, date) {
+// existing one, since suspensions span multiple days. `excludeId` lets an
+// edit-save check for a collision with some *other* entry without always
+// matching itself.
+function findDuplicateGroomingEntry(name, studentClass, date, excludeId) {
   const key = studentKey(name, studentClass);
-  return state.incidents.find((i) => !i.deleted && i.date === date && studentKey(i.studentName, i.studentClass) === key) || null;
+  return state.incidents.find((i) => !i.deleted && i.id !== excludeId && i.date === date && studentKey(i.studentName, i.studentClass) === key) || null;
 }
-function findDuplicateParentMeeting(name, studentClass, date) {
+function findDuplicateParentMeeting(name, studentClass, date, excludeId) {
   const key = studentKey(name, studentClass);
-  return state.parentMeetings.find((m) => !m.deleted && m.date === date && studentKey(m.studentName, m.studentClass) === key) || null;
+  return state.parentMeetings.find((m) => !m.deleted && m.id !== excludeId && m.date === date && studentKey(m.studentName, m.studentClass) === key) || null;
 }
-function findDuplicateSuspension(name, studentClass, dates) {
+function findDuplicateSuspension(name, studentClass, dates, excludeId) {
   const key = studentKey(name, studentClass);
   const dateSet = new Set(dates);
   return state.suspensions.find((s) => {
-    if (s.deleted || studentKey(s.studentName, s.studentClass) !== key) return false;
+    if (s.deleted || s.id === excludeId || studentKey(s.studentName, s.studentClass) !== key) return false;
     return suspensionDayEntries(s).some((e) => dateSet.has(e.date));
   }) || null;
 }
@@ -1474,30 +1476,43 @@ async function submitEditIncident() {
   if (d.selectedIssues.length === 0) { state.newIncidentFormError = "Select at least one issue."; render(); return; }
   if (d.selectedIssues.includes("Others") && !(d.othersText || "").trim()) { state.newIncidentFormError = "Specify what \"Others\" means for this entry."; render(); return; }
   state.newIncidentFormError = "";
-  state.saveError = false;
-  state.saving = true;
-  render();
-  // Issues that are still selected keep their existing stage/deadline/
-  // history untouched; newly-ticked issue types start fresh at 1st
-  // Warning; anything unticked is dropped from the entry entirely.
-  const existingIssues = Array.isArray(it.issues) ? it.issues : [];
-  const keptIssues = existingIssues.filter((x) => d.selectedIssues.includes(x.type));
-  const newTypes = d.selectedIssues.filter((type) => !existingIssues.some((x) => x.type === type));
-  const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date, classLevel(d.studentClass)));
-  const finalIssues = [...keptIssues, ...newIssues].map((x) => x.type === "Others" ? { ...x, othersText: d.othersText || "" } : x);
-  const now = Date.now();
-  try {
-    const trimmedName = d.studentName.trim().replace(/\s+/g, " ");
-    await updateDoc(doc(db, "incidents", it.id), {
-      studentName: trimmedName, studentClass: d.studentClass, date: d.date, issues: finalIssues,
-      history: arrayUnion({ id: uid(), type: "edited", detail: `Entry edited — issues now: ${finalIssues.map(groomingIssueLabel).join(", ")}`, by: teacherName(), at: now }),
-    });
-    syncIncidentToSheet({ ...it, studentName: trimmedName, studentClass: d.studentClass, date: d.date, issues: finalIssues });
-    state.editingIncidentId = null;
-    state._editIncidentDraft = null;
-    state.saving = false;
+  const trimmedName = d.studentName.trim().replace(/\s+/g, " ");
+
+  const doSave = async () => {
+    state.saveError = false;
+    state.saving = true;
     render();
-  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); state.saving = false; render(); }
+    // Issues that are still selected keep their existing stage/deadline/
+    // history untouched; newly-ticked issue types start fresh at 1st
+    // Warning; anything unticked is dropped from the entry entirely.
+    const existingIssues = Array.isArray(it.issues) ? it.issues : [];
+    const keptIssues = existingIssues.filter((x) => d.selectedIssues.includes(x.type));
+    const newTypes = d.selectedIssues.filter((type) => !existingIssues.some((x) => x.type === type));
+    const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date, classLevel(d.studentClass)));
+    const finalIssues = [...keptIssues, ...newIssues].map((x) => x.type === "Others" ? { ...x, othersText: d.othersText || "" } : x);
+    const now = Date.now();
+    try {
+      await updateDoc(doc(db, "incidents", it.id), {
+        studentName: trimmedName, studentClass: d.studentClass, date: d.date, issues: finalIssues,
+        history: arrayUnion({ id: uid(), type: "edited", detail: `Entry edited — issues now: ${finalIssues.map(groomingIssueLabel).join(", ")}`, by: teacherName(), at: now }),
+      });
+      syncIncidentToSheet({ ...it, studentName: trimmedName, studentClass: d.studentClass, date: d.date, issues: finalIssues });
+      state.editingIncidentId = null;
+      state._editIncidentDraft = null;
+      state.saving = false;
+      render();
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); state.saving = false; render(); }
+  };
+
+  // Only worth flagging when the edit actually changes who/when this
+  // entry is for — tweaking just the issues on an entry that hasn't
+  // moved shouldn't re-trigger this on every save.
+  const identityChanged = trimmedName !== it.studentName || d.studentClass !== it.studentClass || d.date !== it.date;
+  if (identityChanged) {
+    const dup = findDuplicateGroomingEntry(trimmedName, d.studentClass, d.date, it.id);
+    if (guardDuplicate(dup, `${trimmedName} already has a grooming entry logged on ${formatDate(d.date)} (by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
+  }
+  await doSave();
 }
 
 // ==================== SUSPENSIONS (new unified per-day model) ====================
@@ -1732,19 +1747,32 @@ async function submitEditSuspension(e) {
   const newDaysKey = JSON.stringify(days);
   if (oldDaysKey !== newDaysKey) changes.push("Day-by-day schedule updated");
   if (changes.length === 0) { state.editingSuspensionId = null; state._suspDraft = null; render(); return; }
-  const now = Date.now();
-  state.saveError = false;
-  state.saving = true;
-  render();
-  try {
-    await updateDoc(doc(db, "suspensions", id), {
-      ...updated,
-      history: arrayUnion({ id: uid(), type: "edited", detail: `Suspension edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
-    });
-    syncSuspensionToSheet({ ...s, ...updated });
-    state.editingSuspensionId = null;
-    state._suspDraft = null;
-  } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+
+  const doSave = async () => {
+    const now = Date.now();
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      await updateDoc(doc(db, "suspensions", id), {
+        ...updated,
+        history: arrayUnion({ id: uid(), type: "edited", detail: `Suspension edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
+      });
+      syncSuspensionToSheet({ ...s, ...updated });
+      state.editingSuspensionId = null;
+      state._suspDraft = null;
+    } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+  };
+
+  // Only worth flagging when the edit actually moves who/when this
+  // suspension covers — editing just the reason or a booked location
+  // shouldn't re-trigger this on every save.
+  const identityChanged = studentName !== s.studentName || studentClass !== s.studentClass || oldDaysKey !== newDaysKey;
+  if (identityChanged) {
+    const dup = findDuplicateSuspension(studentName, studentClass, days.map((x) => x.date), id);
+    if (guardDuplicate(dup, `${studentName} already has an overlapping suspension logged (by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
+  }
+  await doSave();
 }
 
 // ==================== PARENT MEETINGS ====================
@@ -1845,19 +1873,32 @@ async function submitEditParentMeeting(e) {
   ]);
   if (JSON.stringify((m.attendees || []).slice().sort()) !== JSON.stringify(updated.attendees.slice().sort())) changes.push("Attendees updated");
   if (changes.length === 0) { state.editingPmId = null; state._pmDraft = null; render(); return; }
-  const now = Date.now();
-  state.saveError = false;
-  state.saving = true;
-  render();
-  try {
-    await updateDoc(doc(db, "parentMeetings", id), {
-      ...updated,
-      history: arrayUnion({ id: uid(), type: "edited", detail: `Meeting edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
-    });
-    syncParentMeetingToSheet({ ...m, ...updated });
-    state.editingPmId = null;
-    state._pmDraft = null;
-  } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+
+  const doSave = async () => {
+    const now = Date.now();
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      await updateDoc(doc(db, "parentMeetings", id), {
+        ...updated,
+        history: arrayUnion({ id: uid(), type: "edited", detail: `Meeting edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
+      });
+      syncParentMeetingToSheet({ ...m, ...updated });
+      state.editingPmId = null;
+      state._pmDraft = null;
+    } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+  };
+
+  // Only worth flagging when the edit actually moves who/when this
+  // meeting is for — editing just the reason or attendees shouldn't
+  // re-trigger this on every save.
+  const identityChanged = updated.studentName !== m.studentName || updated.studentClass !== m.studentClass || updated.date !== m.date;
+  if (identityChanged) {
+    const dup = findDuplicateParentMeeting(updated.studentName, updated.studentClass, updated.date, id);
+    if (guardDuplicate(dup, `${updated.studentName} already has a parent meeting logged on ${formatDate(updated.date)} (by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
+  }
+  await doSave();
 }
 async function deleteParentMeeting(id) {
   const entry = state.parentMeetings.find((i) => i.id === id);
@@ -1996,11 +2037,11 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Dashboard</div>
-          <p>The home icon shows trend charts (Today/Week/Month/Term/Year views) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings and suspensions this semester.</p>
+          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings and suspensions this semester. Tap a student's name anywhere in the app to see everything on file for them across all three logs.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Grooming Log</div>
-          <p>Pick one or more issues when logging an entry (Long Hair, Uniform, etc.) — each gets its own 1st/2nd/Final Warning countdown with its own deadline. Resolve an issue any time, or mark it unresolved to escalate to the next warning; deadlines can be moved if the student or parent proposes a different date. An entry only shows Resolved once every issue in it is resolved.</p>
+          <p>Pick one or more issues when logging an entry (Long Hair, Uniform, etc.) — each gets its own 1st/2nd/Final Warning countdown with its own deadline, and a "same day, over the weekend" rule automatically pushes a 4-day deadline to the next school day. Adding several students at once for the same issue(s) is one tap away ("+ Add another student") — each still gets their own independent entry. Resolve an issue any time, or mark it unresolved to escalate to the next warning; deadlines can be moved if the student or parent proposes a different date. Edit Entry lets you change the student, date, and which issues are selected. An entry only shows Resolved once every issue in it is resolved.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Suspension Log</div>
@@ -2008,11 +2049,19 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meeting</div>
-          <p>Log who attended (multiple people allowed) and why. "Others" lets you type in a specific relationship.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Same-day duplicate warning</div>
+          <p>Saving a new or edited entry checks whether that student already has something logged for the same day (or, for suspensions, an overlapping day) — you'll see who logged the earlier one and can save anyway if it's intentional.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Reports</div>
+          <p>The Annual Report (under the Dashboard) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat-suspension intervals, and day-of-week/term patterns. The Print/Export PDF button opens your device's own print dialog, so "Save as PDF" works the same on phone, tablet, or computer.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Editing, removing, backups</div>
-          <p>Suspensions and Parent Meetings can be edited — changes are tracked in the audit trail. Removing asks for a password and only hides the entry; find it under the recycling-bin icon to restore, for 30 days. The backup icon (top right) downloads everything as a file.</p>
+          <p>Every entry in all three logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg Google accounts; Settings has a User List of everyone who's signed in.</p>
         </div>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
@@ -3469,7 +3518,11 @@ function filteredIncidents() {
   }
   if (state.query.trim()) {
     const q = state.query.trim().toLowerCase();
-    list = list.filter((it) => it.studentName.toLowerCase().includes(q));
+    list = list.filter((it) =>
+      it.studentName.toLowerCase().includes(q) ||
+      (it.studentClass || "").toLowerCase().includes(q) ||
+      (it.loggedBy || "").toLowerCase().includes(q) ||
+      incidentSummaryLabel(it).toLowerCase().includes(q));
   }
   return [...list].sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
 }
@@ -3501,7 +3554,7 @@ function renderLogSection() {
         ${state.disciplineExpandedLevel ? renderClassPillsRow("discipline", state.disciplineExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="search-input" placeholder="Search by student name…" value="${escapeHtml(state.query)}" />
+            <input class="dd-input dd-search" id="search-input" placeholder="Search by name, class, issue, or teacher…" value="${escapeHtml(state.query)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.incidents.length === 0 ? "No entries yet. Log the first grooming issue to start the record." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderIncidentDetail).join("")}</div>`}
@@ -3827,7 +3880,11 @@ function filteredSuspensions() {
   }
   if (state.suspQuery.trim()) {
     const q = state.suspQuery.trim().toLowerCase();
-    list = list.filter((s) => s.studentName.toLowerCase().includes(q));
+    list = list.filter((s) =>
+      s.studentName.toLowerCase().includes(q) ||
+      (s.studentClass || "").toLowerCase().includes(q) ||
+      (s.loggedBy || "").toLowerCase().includes(q) ||
+      (s.reason || "").toLowerCase().includes(q));
   }
   return [...list].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
 }
@@ -3851,7 +3908,7 @@ function renderSuspensionSection() {
         ${state.suspensionExpandedLevel ? renderClassPillsRow("suspension", state.suspensionExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="susp-search-input" placeholder="Search by student name…" value="${escapeHtml(state.suspQuery)}" />
+            <input class="dd-input dd-search" id="susp-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.suspQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.suspensions.length === 0 ? "No suspensions logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderSuspensionDetail).join("")}</div>`}
@@ -4007,10 +4064,21 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
 function renderKeepingModalScroll() {
   const modal = document.querySelector(".dd-modal");
   const scrollTop = modal ? modal.scrollTop : null;
+  // The Parent Meeting "Reason(s) for meeting" checklist scrolls inside
+  // its own box, nested inside the modal — a fresh element after every
+  // re-render starts back at scrollTop 0, which is what made it keep
+  // jumping back to the top of the list on every tap. Preserved
+  // separately from the modal's own scroll position above.
+  const nestedList = modal ? modal.querySelector(".dd-pm-reason-list") : null;
+  const nestedScrollTop = nestedList ? nestedList.scrollTop : null;
   render();
   if (scrollTop !== null) {
     const newModal = document.querySelector(".dd-modal");
     if (newModal) newModal.scrollTop = scrollTop;
+    if (nestedScrollTop !== null) {
+      const newNestedList = newModal ? newModal.querySelector(".dd-pm-reason-list") : null;
+      if (newNestedList) newNestedList.scrollTop = nestedScrollTop;
+    }
   }
 }
 // Same idea as renderKeepingModalScroll but for controls that live directly
@@ -4137,7 +4205,11 @@ function filteredParentMeetings() {
   }
   if (state.pmQuery.trim()) {
     const q = state.pmQuery.trim().toLowerCase();
-    list = list.filter((m) => m.studentName.toLowerCase().includes(q));
+    list = list.filter((m) =>
+      m.studentName.toLowerCase().includes(q) ||
+      (m.studentClass || "").toLowerCase().includes(q) ||
+      (m.loggedBy || "").toLowerCase().includes(q) ||
+      (m.reason || "").toLowerCase().includes(q));
   }
   return [...list].sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
 }
@@ -4161,7 +4233,7 @@ function renderParentMeetingSection() {
         ${state.pmExpandedLevel ? renderClassPillsRow("pm", state.pmExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="pm-search-input" placeholder="Search by student name…" value="${escapeHtml(state.pmQuery)}" />
+            <input class="dd-input dd-search" id="pm-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.pmQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.parentMeetings.length === 0 ? "No parent meetings logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderParentMeetingDetail).join("")}</div>`}
