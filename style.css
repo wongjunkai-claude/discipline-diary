@@ -152,6 +152,13 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 }
 .dd-expand-toggle:hover { color: #1B2A41; border-color: #8A8571; }
 
+/* Multi-student grooming entry — extra name+class rows added below the
+   primary student, all sharing the one issue picker/date. */
+.dd-extra-student-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.dd-extra-student-row .dd-input { flex: 1; min-width: 0; }
+.dd-extra-student-row .dd-extra-student-class { flex: 0 0 90px; }
+.dd-extra-student-row .dd-expand-toggle { flex-shrink: 0; }
+
 .dd-checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .dd-checkbox-pill {
   display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
@@ -333,6 +340,26 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
   border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer;
 }
 .dd-issue-tag.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
+
+/* Parent Meeting "Reason(s) for meeting" multi-select — a compact
+   scrollable checklist rather than a pill grid, since the offence list
+   runs to ~29 options. */
+.dd-pm-reason-list {
+  display: flex; flex-direction: column; max-height: 230px; overflow-y: auto;
+  border: 1px solid #C9C4B4; border-radius: 3px; padding: 4px 10px; background: #fff; margin-bottom: 4px;
+}
+.dd-pm-reason-row { padding: 6px 0; border-bottom: 1px dashed #E4E1D4; }
+.dd-pm-reason-row:last-child { border-bottom: none; }
+.dd-pm-reason-check { display: flex; align-items: center; gap: 8px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: #1B2A41; cursor: pointer; }
+.dd-pm-reason-check input { margin: 0; flex-shrink: 0; }
+.dd-pm-reason-extra { padding-left: 24px; box-sizing: border-box; margin-top: 6px; }
+.dd-pm-status-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.dd-pm-status-pill {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 999px; border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer;
+}
+.dd-pm-status-pill.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
+.dd-pm-others-input { margin-top: 6px; }
 
 .dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; background: #FBFAF6; }
 .dd-issue-card-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }

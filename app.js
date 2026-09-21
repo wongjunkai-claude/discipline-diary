@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.60.0";
+const APP_VERSION = "2.62.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -141,6 +141,88 @@ function splitSavedReason(saved) {
   if (m) return { category: "Others", othersText: m[1] };
   return { category: "Others", othersText: saved };
 }
+// Builds both the structured `reasons` array (one entry per selected
+// offence, with its own Victim/Offender/Both/NA status where applicable)
+// and a backward-compatible composed `reason` display string, from a
+// draft's reasons/reasonStatuses/reasonOthersText fields. `prefix` picks
+// which set of fields to read: "" for the standalone Parent Meeting
+// draft, "pm" for the tagged-parent-meeting fields nested inside the
+// Suspension draft (pmReasons/pmReasonStatuses/pmReasonOthersText).
+function composePmReasonData(d, prefix) {
+  const selected = (prefix ? d.pmReasons : d.reasons) || [];
+  const statuses = (prefix ? d.pmReasonStatuses : d.reasonStatuses) || {};
+  const othersText = ((prefix ? d.pmReasonOthersText : d.reasonOthersText) || "").trim();
+  const reasons = selected.map((category) => {
+    const needsStatus = !NO_STATUS_PM_REASONS.has(category);
+    const entry = { category, status: needsStatus ? (statuses[category] || "NA") : null };
+    if (category === "Others") entry.othersText = othersText;
+    return entry;
+  });
+  const reason = reasons.map((r) => {
+    const label = r.category === "Others" ? (r.othersText ? `Others — ${r.othersText}` : "Others") : r.category;
+    return r.status ? `${label} (${r.status})` : label;
+  }).join("; ");
+  return { reasons, reason };
+}
+// Rehydrates a saved parent meeting's reason(s) into draft fields for
+// editing. New-format records carry a structured `reasons` array;
+// pre-migration records only ever had the old single-string `reason`
+// (parsed with splitSavedReason), with no status ever recorded for them.
+function pmReasonsFromSaved(m) {
+  if (Array.isArray(m?.reasons) && m.reasons.length) {
+    const selected = m.reasons.map((r) => r.category);
+    const statuses = {};
+    let othersText = "";
+    m.reasons.forEach((r) => {
+      if (r.status) statuses[r.category] = r.status;
+      if (r.category === "Others") othersText = r.othersText || "";
+    });
+    return { selected, statuses, othersText };
+  }
+  if (m?.reason) {
+    const split = splitSavedReason(m.reason);
+    if (!split.category) return { selected: [], statuses: {}, othersText: "" };
+    return { selected: [split.category], statuses: {}, othersText: split.othersText };
+  }
+  return { selected: [], statuses: {}, othersText: "" };
+}
+// Renders the multi-select "Reason(s) for meeting" checklist shared by the
+// standalone Parent Meeting form and the "tag a parent meeting" block
+// inside the Suspension form. A compact scrollable checklist (not a big
+// pill grid) since the offence list runs to ~29 options. Each checked
+// reason shows its own Victim/Offender/Both/NA status pills directly
+// beneath it, except Academic Matters and Learning Needs, which skip
+// status entirely since they aren't disciplinary offences.
+function renderPmReasonPicker(d, prefix) {
+  const selected = (prefix ? d.pmReasons : d.reasons) || [];
+  const statuses = (prefix ? d.pmReasonStatuses : d.reasonStatuses) || {};
+  const othersText = (prefix ? d.pmReasonOthersText : d.reasonOthersText) || "";
+  return `
+    <label class="dd-label">Reason(s) for meeting <span class="dd-mono-muted" style="font-size:11px;text-transform:none">select all that apply</span></label>
+    <div class="dd-pm-reason-list">
+      ${PM_REASON_OPTIONS.map((r) => {
+        const checked = selected.includes(r);
+        const needsStatus = !NO_STATUS_PM_REASONS.has(r);
+        const status = statuses[r] || "NA";
+        const isOthers = r === "Others";
+        return `
+        <div class="dd-pm-reason-row">
+          <label class="dd-pm-reason-check">
+            <input type="checkbox" class="dd-pm-reason-cb" data-pm-prefix="${prefix}" value="${escapeHtml(r)}" ${checked ? "checked" : ""} />
+            <span>${escapeHtml(r)}</span>
+          </label>
+          ${checked && (needsStatus || isOthers) ? `
+          <div class="dd-pm-reason-extra">
+            ${needsStatus ? `
+            <div class="dd-pm-status-row">
+              ${PM_STATUS_OPTIONS.map((st) => `<button type="button" class="dd-pm-status-pill ${status === st ? "active" : ""}" data-action="set-pm-reason-status" data-pm-prefix="${prefix}" data-reason="${escapeHtml(r)}" data-status="${st}">${st}</button>`).join("")}
+            </div>` : ""}
+            ${isOthers ? `<input class="dd-input dd-pm-others-input" data-pm-prefix="${prefix}" placeholder="Please specify" value="${escapeHtml(othersText)}" />` : ""}
+          </div>` : ""}
+        </div>`;
+      }).join("")}
+    </div>`;
+}
 const ATTENDEE_OPTIONS = ["Father", "Mother", "Grandfather", "Grandmother", "Guardian", "Others"];
 const REASON_OPTIONS = [
   "Open Defiance", "Verbal Bullying", "Hurtful Behaviour", "Assault", "Physical Bullying",
@@ -150,6 +232,22 @@ const REASON_OPTIONS = [
   "Sexual Misconduct", "Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons",
   "Illegal / Criminal Offences Causing Grievous Hurt", "Others",
 ];
+// Reason list for the Parent Meeting "reason(s) for meeting" picker only
+// (kept separate from REASON_OPTIONS, which stays as-is for the
+// Suspension log's own "Reason" field — Academic Matters/Learning Needs
+// aren't suspension-worthy reasons, so they're not added there).
+const PM_REASON_OPTIONS = [
+  "Open Defiance", "Verbal Bullying", "Hurtful Behaviour", "Assault", "Physical Bullying",
+  "Fighting", "Skipping Classes", "Truancy", "Leaving School Grounds Without Permission",
+  "Vandalism", "Unauthorised Device Use", "Cheating", "Forgery", "Cyberbullying", "Theft",
+  "Smoking", "Vape-Related Offences", "Inhalant Abuse", "Pornography-Related Offence",
+  "Sexual Misconduct", "Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons",
+  "Illegal / Criminal Offences Causing Grievous Hurt", "Academic Matters", "Learning Needs", "Others",
+];
+// Academic Matters/Learning Needs aren't disciplinary offences, so they
+// never show or store a Victim/Offender/Both/NA status.
+const NO_STATUS_PM_REASONS = new Set(["Academic Matters", "Learning Needs"]);
+const PM_STATUS_OPTIONS = ["Victim", "Offender", "Both", "NA"];
 
 // ---------- Grooming Log config ----------
 // days: [1st warning, 2nd warning, final warning] — calendar days given to
@@ -206,6 +304,16 @@ const todayISO = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Delays calling `fn` until `delayMs` has passed with no further calls —
+// used on the search boxes so a full page re-render only happens once
+// typing pauses, not on every single keystroke.
+function debounce(fn, delayMs) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), delayMs);
+  };
+}
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function formatDate(iso) {
   if (!iso) return "";
@@ -573,6 +681,65 @@ function renderDeleteConfirmModal() {
       </div>
     </div>`;
 }
+// Same-day duplicate-entry guard, shared by the "new entry" saves on all
+// three logs. `existing` is the duplicate record found (or null/undefined
+// — nothing to guard). If found, stashes `proceedFn` (a zero-arg function
+// that performs the actual save) behind a confirmation modal and returns
+// true so the caller stops there; returns false when it's safe to save
+// immediately. `proceedFn` is a live closure, not serialized data — fine
+// since state only ever lives in memory for this session.
+function guardDuplicate(existing, message, proceedFn) {
+  if (!existing) return false;
+  state.pendingDuplicateConfirm = { message, proceedFn };
+  render();
+  return true;
+}
+async function confirmDuplicateYes() {
+  const target = state.pendingDuplicateConfirm;
+  if (!target) return;
+  state.pendingDuplicateConfirm = null;
+  if (target.proceedFn) await target.proceedFn();
+}
+function cancelDuplicateConfirm() {
+  state.pendingDuplicateConfirm = null;
+  render();
+}
+function renderDuplicateConfirmModal() {
+  const target = state.pendingDuplicateConfirm;
+  if (!target) return "";
+  return `
+    <div class="dd-modal-backdrop" id="confirm-duplicate-backdrop">
+      <div class="dd-modal" style="max-width:360px;text-align:center">
+        <div class="dd-modal-title" style="margin-bottom:10px">Possible duplicate</div>
+        <div class="dd-sans" style="font-size:14px;color:#4A4536;margin-bottom:18px;line-height:1.5">${escapeHtml(target.message)}</div>
+        <div style="display:flex;gap:8px">
+          <button class="dd-add-btn" style="flex:1;background:#8A8571" id="btn-confirm-duplicate-no">Cancel</button>
+          <button class="dd-add-btn" style="flex:1;background:#B8863B" id="btn-confirm-duplicate-yes">Log Anyway</button>
+        </div>
+      </div>
+    </div>`;
+}
+// Same-day, same-student duplicate detectors for each log, keyed on
+// name+class (studentKey) so a same-named student in a different class
+// isn't flagged. Grooming/Parent Meeting match on a single date;
+// Suspension matches when the new suspension's day range overlaps an
+// existing one, since suspensions span multiple days.
+function findDuplicateGroomingEntry(name, studentClass, date) {
+  const key = studentKey(name, studentClass);
+  return state.incidents.find((i) => !i.deleted && i.date === date && studentKey(i.studentName, i.studentClass) === key) || null;
+}
+function findDuplicateParentMeeting(name, studentClass, date) {
+  const key = studentKey(name, studentClass);
+  return state.parentMeetings.find((m) => !m.deleted && m.date === date && studentKey(m.studentName, m.studentClass) === key) || null;
+}
+function findDuplicateSuspension(name, studentClass, dates) {
+  const key = studentKey(name, studentClass);
+  const dateSet = new Set(dates);
+  return state.suspensions.find((s) => {
+    if (s.deleted || studentKey(s.studentName, s.studentClass) !== key) return false;
+    return suspensionDayEntries(s).some((e) => dateSet.has(e.date));
+  }) || null;
+}
 
 // ---------- Suspension day-entry helpers (new unified per-day model) ----------
 function suspensionDayEntries(s) {
@@ -622,6 +789,7 @@ const state = {
   schoolClosureDays: null,
   schoolCalendarOverrides: null,
   confirmDeleteTarget: null,
+  pendingDuplicateConfirm: null,
   undoToast: null,
   studentViewName: null,
   studentViewClass: null,
@@ -670,8 +838,6 @@ const state = {
   pmFormError: "",
   suspFormError: "",
   newIncidentFormError: "",
-
-  caseFormError: "",
 
   saveError: false,
   saveErrorDetail: "",
@@ -916,7 +1082,7 @@ function handleNameSubmit(e) {
 
 // ==================== DISCIPLINE LOG ====================
 function freshIncidentDraft() {
-  return { studentName: "", studentClass: "", date: todayISO(), selectedIssues: [], othersText: "", linkedSuspensionIds: [], linkedPmIds: [] };
+  return { studentName: "", studentClass: "", date: todayISO(), selectedIssues: [], othersText: "", linkedSuspensionIds: [], linkedPmIds: [], extraStudents: [] };
 }
 // Compute a fresh issue object for a newly-picked grooming issue type,
 // starting at 1st Warning with its deadline computed from that issue's
@@ -1071,6 +1237,23 @@ function findRelatedRecords(studentName) {
 }
 
 // ---------- New Case wizard: Discipline -> Suspension? -> Parent Meeting? -> Submit ----------
+// Creates one grooming incident doc for a single student (issues shared
+// across a multi-student batch save) and syncs it to the Sheet. Used both
+// for the form's primary student and for every "also logging" extra
+// student — factored out so a batch save doesn't repeat the same block
+// per student.
+async function createIncidentDocForStudent(name, studentClass, date, selectedIssues, othersText, now) {
+  const issues = selectedIssues.map((type) => freshGroomingIssue(type, othersText, date, classLevel(studentClass)));
+  const issueSummary = issues.map((x) => groomingIssueLabel(x)).join(", ");
+  const docRef = await addDoc(collection(db, "incidents"), {
+    studentName: name, studentClass, date, issues,
+    linkedSuspensionIds: [], linkedPmIds: [],
+    loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
+    history: [{ id: uid(), type: "created", detail: `Entry created — ${issueSummary}`, by: teacherName(), at: now }],
+  });
+  syncIncidentToSheet({ id: docRef.id, studentName: name, studentClass, date, issue: issueSummary, actionTaken: "", status: "Monitoring", followUps: [], loggedBy: teacherName(), deleted: false });
+  return { docRef, issueSummary };
+}
 async function submitNewIncident() {
   const container = document.getElementById("new-form");
   const d = state._newIncidentDraft;
@@ -1078,57 +1261,89 @@ async function submitNewIncident() {
   const studentClass = container.querySelector('[name="studentClass"]')?.value || "";
   const date = container.querySelector('[name="date"]')?.value || d.date;
   const selectedIssues = d.selectedIssues || [];
+  // Extra students added via "+ Add another student" — same issue(s) and
+  // date as the primary student, but no auto-linking to related
+  // suspensions/meetings (that box is only shown for the primary name).
+  // Fully-empty rows (never filled in) are dropped silently.
+  const extraStudents = (d.extraStudents || [])
+    .map((s) => ({ name: (s.name || "").trim().replace(/\s+/g, " "), studentClass: s.studentClass || "" }))
+    .filter((s) => s.name || s.studentClass);
   if (!studentName) { state.newIncidentFormError = "Enter the student's name."; render(); return; }
   if (!studentClass) { state.newIncidentFormError = "Select a class."; render(); return; }
   if (selectedIssues.length === 0) { state.newIncidentFormError = "Select at least one issue."; render(); return; }
   if (selectedIssues.includes("Others") && !(d.othersText || "").trim()) { state.newIncidentFormError = "Specify what \"Others\" means for this entry."; render(); return; }
-  state.newIncidentFormError = "";
-  state.saveError = false;
-  state.saving = true;
-  render();
-  try {
-    const now = Date.now();
-    const issues = selectedIssues.map((type) => freshGroomingIssue(type, d.othersText, date, classLevel(studentClass)));
-    const issueSummary = issues.map((x) => groomingIssueLabel(x)).join(", ");
-    const docRef = await addDoc(collection(db, "incidents"), {
-      studentName, studentClass, date, issues,
-      linkedSuspensionIds: d.linkedSuspensionIds.slice(),
-      linkedPmIds: d.linkedPmIds.slice(),
-      loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-      history: [{ id: uid(), type: "created", detail: `Entry created — ${issueSummary}`, by: teacherName(), at: now }],
-    });
-    // Reflect the link on the other side too, so it shows up on the
-    // suspension/meeting record itself, not just this new entry.
-    for (const sId of d.linkedSuspensionIds) {
-      try {
-        await updateDoc(doc(db, "suspensions", sId), {
-          linkedIncidentIds: arrayUnion(docRef.id),
-          history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to grooming entry: "${issueSummary}"`, by: teacherName(), at: now }),
-        });
-      } catch (err) { /* non-fatal, main entry already saved */ }
-    }
-    for (const mId of d.linkedPmIds) {
-      try {
-        await updateDoc(doc(db, "parentMeetings", mId), {
-          linkedIncidentIds: arrayUnion(docRef.id),
-          history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to grooming entry: "${issueSummary}"`, by: teacherName(), at: now }),
-        });
-      } catch (err) { /* non-fatal */ }
-    }
-    state.showNewForm = false;
-    state._newIncidentDraft = null;
-    state.section = "log";
-    state.disciplineFilter = "all";
-    state.selectedIncidentId = docRef.id;
-    state.entryExpanded[docRef.id] = true;
-    syncIncidentToSheet({ id: docRef.id, studentName, studentClass, date, issue: issueSummary, actionTaken: "", status: "Monitoring", followUps: [], loggedBy: teacherName(), deleted: false });
-  } catch (err) {
-    state.saveError = true;
-    state.saveErrorDetail = err?.message || String(err);
-  } finally {
-    state.saving = false;
+  if (extraStudents.some((s) => !s.name || !s.studentClass)) { state.newIncidentFormError = "Fill in the name and class for every added student, or remove the empty row."; render(); return; }
+  const allStudents = [{ name: studentName, studentClass }, ...extraStudents];
+  // The same student listed twice in one batch is always a mistake (it
+  // would create two identical entries), so this is a hard stop rather
+  // than the "log anyway" warning used for a clash with an already-saved
+  // entry.
+  const batchKeys = allStudents.map((s) => studentKey(s.name, s.studentClass));
+  const repeatedIdx = batchKeys.findIndex((k, i) => batchKeys.indexOf(k) !== i);
+  if (repeatedIdx !== -1) {
+    state.newIncidentFormError = `${allStudents[repeatedIdx].name} is listed twice — remove the duplicate row.`;
     render();
+    return;
   }
+  state.newIncidentFormError = "";
+
+  const dupNames = [...new Set(allStudents.filter((s) => findDuplicateGroomingEntry(s.name, s.studentClass, date)).map((s) => s.name))];
+
+  const doSave = async () => {
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      const now = Date.now();
+      const { docRef, issueSummary } = await createIncidentDocForStudent(studentName, studentClass, date, selectedIssues, d.othersText, now);
+      // Reflect the link on the other side too, so it shows up on the
+      // suspension/meeting record itself, not just this new entry.
+      // (Only the primary student's entry can carry these — the related-
+      // records box is only ever shown for them.)
+      for (const sId of d.linkedSuspensionIds) {
+        try {
+          await updateDoc(doc(db, "suspensions", sId), {
+            linkedIncidentIds: arrayUnion(docRef.id),
+            history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to grooming entry: "${issueSummary}"`, by: teacherName(), at: now }),
+          });
+        } catch (err) { /* non-fatal, main entry already saved */ }
+      }
+      for (const mId of d.linkedPmIds) {
+        try {
+          await updateDoc(doc(db, "parentMeetings", mId), {
+            linkedIncidentIds: arrayUnion(docRef.id),
+            history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to grooming entry: "${issueSummary}"`, by: teacherName(), at: now }),
+          });
+        } catch (err) { /* non-fatal */ }
+      }
+      // Same issue(s), no auto-linking, for every additional student in
+      // the batch — one bad row shouldn't block the rest.
+      for (const s of extraStudents) {
+        try { await createIncidentDocForStudent(s.name, s.studentClass, date, selectedIssues, d.othersText, Date.now()); }
+        catch (err) { /* non-fatal */ }
+      }
+      state.showNewForm = false;
+      state._newIncidentDraft = null;
+      state.section = "log";
+      state.disciplineFilter = "all";
+      state.selectedIncidentId = docRef.id;
+      state.entryExpanded[docRef.id] = true;
+    } catch (err) {
+      state.saveError = true;
+      state.saveErrorDetail = err?.message || String(err);
+    } finally {
+      state.saving = false;
+      render();
+    }
+  };
+
+  if (dupNames.length > 0) {
+    const message = dupNames.length === 1
+      ? `${dupNames[0]} already has a grooming entry logged today. Log another anyway?`
+      : `${dupNames.join(", ")} already have a grooming entry logged today. Log anyway for all of them?`;
+    if (guardDuplicate(true, message, doSave)) return;
+  }
+  await doSave();
 }
 async function addFollowUp(id) {
   const note = (state.followDraft[id] || "").trim();
@@ -1291,7 +1506,8 @@ function freshSuspDraft() {
     studentName: "", studentClass: "", reasonCategory: "", reasonOthersText: "", startDate: todayISO(),
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {},
-    tagPm: false, pmAttendees: [], pmOthersText: "", pmReasonCategory: "", pmReasonOthersText: "",
+    tagPm: false, pmAttendees: [], pmOthersText: "",
+    pmReasons: [], pmReasonStatuses: {}, pmReasonOthersText: "",
   };
 }
 // OSS dates are chosen (default to the earliest school days from the start
@@ -1390,9 +1606,14 @@ async function submitNewSuspension(e) {
     render();
     return;
   }
-  const pmReasonValue = d.tagPm ? composeReasonValue(f, d, "pmReason") : "";
-  if (d.tagPm && (d.pmAttendees.length === 0 || !d.pmReasonCategory)) {
+  const pmReasonData = d.tagPm ? composePmReasonData(d, "pm") : { reasons: [], reason: "" };
+  if (d.tagPm && (d.pmAttendees.length === 0 || pmReasonData.reasons.length === 0)) {
     state.suspFormError = "Fill in who's attending and the reason for the tagged parent meeting.";
+    render();
+    return;
+  }
+  if (d.tagPm && pmReasonData.reasons.some((r) => r.category === "Others") && !(d.pmReasonOthersText || "").trim()) {
+    state.suspFormError = "Specify what \"Others\" means for the tagged parent meeting.";
     render();
     return;
   }
@@ -1403,39 +1624,46 @@ async function submitNewSuspension(e) {
     venue: d.issVenues[date] || "",
   }));
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
-  state.saveError = false;
-  state.saving = true;
-  render();
-  try {
-    const now = Date.now();
-    const docRef = await addDoc(collection(db, "suspensions"), {
-      studentName, studentClass, reason, startDate: d.startDate,
-      totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
-      days,
-      loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-      history: [{ id: uid(), type: "created", detail: `Suspension created — ${d.totalDays} day${d.totalDays > 1 ? "s" : ""} total (${d.ossDays} out-of-school, ${d.issDays} in-school)`, by: teacherName(), at: now }],
-    });
-    if (d.tagPm) {
-      try {
-        const pmRef = await addDoc(collection(db, "parentMeetings"), {
-          studentName, studentClass, date: d.startDate, attendees: d.pmAttendees.slice(),
-          othersText: d.pmOthersText || "", reason: pmReasonValue,
-          linkedSuspensionIds: [docRef.id],
-          loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-          history: [{ id: uid(), type: "created", detail: "Parent meeting tagged from a suspension entry", by: teacherName(), at: now }],
-        });
-        await updateDoc(doc(db, "suspensions", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
-        syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonValue, loggedBy: teacherName(), deleted: false });
-      } catch (err) { /* non-fatal — suspension already saved */ }
-    }
-    state.showNewSuspForm = false;
-    state._suspDraft = null;
-    state.section = "suspensions";
-    state.suspTab = "All";
-    state.selectedSuspId = docRef.id;
-    state.entryExpanded[docRef.id] = true;
-    syncSuspensionToSheet({ id: docRef.id, studentName, studentClass, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days, loggedBy: teacherName(), deleted: false });
-  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
+
+  const doSave = async () => {
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      const now = Date.now();
+      const docRef = await addDoc(collection(db, "suspensions"), {
+        studentName, studentClass, reason, startDate: d.startDate,
+        totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
+        days,
+        loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
+        history: [{ id: uid(), type: "created", detail: `Suspension created — ${d.totalDays} day${d.totalDays > 1 ? "s" : ""} total (${d.ossDays} out-of-school, ${d.issDays} in-school)`, by: teacherName(), at: now }],
+      });
+      if (d.tagPm) {
+        try {
+          const pmRef = await addDoc(collection(db, "parentMeetings"), {
+            studentName, studentClass, date: d.startDate, attendees: d.pmAttendees.slice(),
+            othersText: d.pmOthersText || "", reason: pmReasonData.reason, reasons: pmReasonData.reasons,
+            linkedSuspensionIds: [docRef.id],
+            loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
+            history: [{ id: uid(), type: "created", detail: "Parent meeting tagged from a suspension entry", by: teacherName(), at: now }],
+          });
+          await updateDoc(doc(db, "suspensions", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
+          syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
+        } catch (err) { /* non-fatal — suspension already saved */ }
+      }
+      state.showNewSuspForm = false;
+      state._suspDraft = null;
+      state.section = "suspensions";
+      state.suspTab = "All";
+      state.selectedSuspId = docRef.id;
+      state.entryExpanded[docRef.id] = true;
+      syncSuspensionToSheet({ id: docRef.id, studentName, studentClass, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days, loggedBy: teacherName(), deleted: false });
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
+  };
+
+  const dup = findDuplicateSuspension(studentName, studentClass, days.map((x) => x.date));
+  if (guardDuplicate(dup, `${studentName} already has an overlapping suspension logged (by ${dup?.loggedBy || "another teacher"}). Log another anyway?`, doSave)) return;
+  await doSave();
 }
 async function deleteSuspension(id) {
   const entry = state.suspensions.find((i) => i.id === id);
@@ -1521,10 +1749,11 @@ async function submitEditSuspension(e) {
 
 // ==================== PARENT MEETINGS ====================
 function freshPmDraft(m) {
-  const split = splitSavedReason(m?.reason);
+  const r = pmReasonsFromSaved(m);
   return {
     studentName: m?.studentName || "", studentClass: m?.studentClass || "",
-    date: m?.date || todayISO(), reasonCategory: split.category, reasonOthersText: split.othersText,
+    date: m?.date || todayISO(),
+    reasons: r.selected, reasonStatuses: r.statuses, reasonOthersText: r.othersText,
     attendees: (m?.attendees || []).slice(), othersText: m?.othersText || "",
   };
 }
@@ -1534,34 +1763,48 @@ async function submitNewParentMeeting(e) {
   const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
   const date = f.date.value;
-  const reason = composeReasonValue(f, state._pmDraft);
+  const { reasons, reason } = composePmReasonData(state._pmDraft, "");
   const attendees = state._pmDraft.attendees.slice();
   const othersText = state._pmDraft.othersText.trim();
-  if (!studentName || !studentClass || !date || !reason || attendees.length === 0) {
-    state.pmFormError = attendees.length === 0 ? "Select at least one attendee before saving." : "Fill in every required field before saving.";
+  if (!studentName || !studentClass || !date || reasons.length === 0 || attendees.length === 0) {
+    state.pmFormError = attendees.length === 0 ? "Select at least one attendee before saving."
+      : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
+      : "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if (reasons.some((r) => r.category === "Others") && !state._pmDraft.reasonOthersText.trim()) {
+    state.pmFormError = "Specify what \"Others\" means for this meeting.";
     render();
     return;
   }
   state.pmFormError = "";
-  state.saveError = false;
-  state.saving = true;
-  render();
-  try {
-    const now = Date.now();
-    const attendeeSummaryStr = attendees.map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
-    const docRef = await addDoc(collection(db, "parentMeetings"), {
-      studentName, studentClass, date, reason, attendees, othersText,
-      loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-      history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}`, by: teacherName(), at: now }],
-    });
-    state.showNewPmForm = false;
-    state._pmDraft = null;
-    state.section = "parentMeetings";
-    state.pmTab = "All";
-    state.selectedPmId = docRef.id;
-    state.entryExpanded[docRef.id] = true;
-    syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, loggedBy: teacherName(), deleted: false });
-  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
+
+  const doSave = async () => {
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      const now = Date.now();
+      const attendeeSummaryStr = attendees.map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
+      const docRef = await addDoc(collection(db, "parentMeetings"), {
+        studentName, studentClass, date, reason, reasons, attendees, othersText,
+        loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
+        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}`, by: teacherName(), at: now }],
+      });
+      state.showNewPmForm = false;
+      state._pmDraft = null;
+      state.section = "parentMeetings";
+      state.pmTab = "All";
+      state.selectedPmId = docRef.id;
+      state.entryExpanded[docRef.id] = true;
+      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, loggedBy: teacherName(), deleted: false });
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
+  };
+
+  const dup = findDuplicateParentMeeting(studentName, studentClass, date);
+  if (guardDuplicate(dup, `${studentName} already has a parent meeting logged today (by ${dup?.loggedBy || "another teacher"}). Log another anyway?`, doSave)) return;
+  await doSave();
 }
 function openEditParentMeeting(id) {
   const m = state.parentMeetings.find((i) => i.id === id);
@@ -1577,13 +1820,21 @@ async function submitEditParentMeeting(e) {
   const id = state.editingPmId;
   const m = state.parentMeetings.find((i) => i.id === id);
   if (!m) return;
+  const { reasons, reason } = composePmReasonData(state._pmDraft, "");
   const updated = {
     studentName: f.studentName.value.trim().replace(/\s+/g, " "), studentClass: f.studentClass.value,
-    date: f.date.value, reason: composeReasonValue(f, state._pmDraft),
+    date: f.date.value, reason, reasons,
     attendees: state._pmDraft.attendees.slice(), othersText: state._pmDraft.othersText.trim(),
   };
-  if (!updated.studentName || !updated.studentClass || !updated.date || !updated.reason || updated.attendees.length === 0) {
-    state.pmFormError = updated.attendees.length === 0 ? "Select at least one attendee before saving." : "Fill in every required field before saving.";
+  if (!updated.studentName || !updated.studentClass || !updated.date || reasons.length === 0 || updated.attendees.length === 0) {
+    state.pmFormError = updated.attendees.length === 0 ? "Select at least one attendee before saving."
+      : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
+      : "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if (reasons.some((r) => r.category === "Others") && !state._pmDraft.reasonOthersText.trim()) {
+    state.pmFormError = "Specify what \"Others\" means for this meeting.";
     render();
     return;
   }
@@ -1686,6 +1937,7 @@ function renderMain() {
   if (state._extraSchoolHolidayDraft) html += renderExtraSchoolHolidayModal();
   if (state._closureModalDraft) html += renderClosureDayModal();
   html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
+  html += state.pendingDuplicateConfirm ? renderDuplicateConfirmModal() : "";
   html += state.undoToast ? renderUndoToast() : "";
   return html + renderKnownStudentsDatalist();
 }
@@ -3478,6 +3730,15 @@ function renderNewForm() {
         </div>` : ""}
         <label class="dd-label">Class</label>
         <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
+        ${(d.extraStudents || []).length > 0 ? `
+        <label class="dd-label">Also logging (same issue(s), below)</label>
+        ${d.extraStudents.map((s, idx) => `
+          <div class="dd-extra-student-row">
+            <input class="dd-input dd-extra-student-name" data-idx="${idx}" placeholder="Student name" value="${escapeHtml(s.name)}" list="known-students" autocomplete="off" />
+            <select class="dd-input dd-extra-student-class" data-idx="${idx}">${classOptionsHtml(s.studentClass)}</select>
+            <button type="button" class="dd-expand-toggle" data-action="remove-extra-student" data-idx="${idx}" title="Remove">✕</button>
+          </div>`).join("")}` : ""}
+        <button type="button" class="dd-back-link" id="btn-add-extra-student">+ Add another student (same issue(s))</button>
         <label class="dd-label">Date caught</label>
         <div class="dd-issue-due-row">
           <div class="dd-date-icon-btn" title="Change the date">
@@ -3814,7 +4075,6 @@ function attachSuspFieldListeners(form, idPrefix, d, rawOnChange) {
       if (d.issVenues[date] === location) delete d.issVenues[date];
       else d.issVenues[date] = location;
       if (idPrefix === "susp") state.suspFormError = "";
-      if (idPrefix === "case-susp") state.caseFormError = "";
       onChange();
     }));
   form.querySelectorAll(`[data-action="${idPrefix}-unbook-iss"]`).forEach((el) =>
@@ -3850,7 +4110,7 @@ function renderSuspForm(isEdit) {
               </label>`).join("")}
           </div>
           ${d.pmAttendees.includes("Others") ? `<input class="dd-input" id="susp-pm-others-text" style="margin-top:8px" placeholder="Please specify" value="${escapeHtml(d.pmOthersText)}" />` : ""}
-          ${renderReasonPicker(d.pmReasonCategory, d.pmReasonOthersText, "pmReason")}
+          ${renderPmReasonPicker(d, "pm")}
         </div>` : ""}` : ""}
         ${state.suspFormError ? `<div class="dd-error">${escapeHtml(state.suspFormError)}</div>` : ""}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
@@ -3978,7 +4238,7 @@ function renderPmForm(isEdit) {
           </div>
           <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
         </div>
-        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
+        ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>
         <div class="dd-checkbox-group">
           ${ATTENDEE_OPTIONS.map((a) => `
@@ -4342,13 +4602,14 @@ function attachGroomingListeners() {
   }
 
   const search = document.getElementById("search-input");
-  if (search) search.addEventListener("input", () => {
+  if (search) search.addEventListener("input", debounce(() => {
+    if (!search.isConnected) return; // page re-rendered from elsewhere while the timer was pending
     state.query = search.value;
     const cursor = search.selectionStart;
     render();
     const ns = document.getElementById("search-input");
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
-  });
+  }, 300));
 
   document.querySelectorAll('[data-action="follow-input"]').forEach((el) =>
     el.addEventListener("input", () => { state.followDraft[el.dataset.id] = el.value; }));
@@ -4490,13 +4751,14 @@ function attachSuspListeners() {
     el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
 
   const search = document.getElementById("susp-search-input");
-  if (search) search.addEventListener("input", () => {
+  if (search) search.addEventListener("input", debounce(() => {
+    if (!search.isConnected) return; // page re-rendered from elsewhere while the timer was pending
     state.suspQuery = search.value;
     const cursor = search.selectionStart;
     render();
     const ns = document.getElementById("susp-search-input");
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
-  });
+  }, 300));
 
   document.querySelectorAll('[data-action="delete-suspension"]').forEach((el) =>
     el.addEventListener("click", () => requestDeleteConfirmation("suspension", el.dataset.id)));
@@ -4512,7 +4774,13 @@ function attachSuspListeners() {
 // "+ New Suspension Only" button (creating standalone, no discipline entry).
 function attachSuspFormModalListeners() {
   if (state.showNewSuspForm || state.editingSuspensionId) {
+    // Guarded because the screens that render this modal and the ones
+    // that attach its listeners are decided in two separate places — the
+    // student cross-log view, for one, renders only the *edit* variant.
+    // Without this, a mismatch would throw here and silently abandon
+    // every listener still queued behind it.
     const form = document.getElementById("susp-form");
+    if (!form) return;
     form.addEventListener("submit", state.editingSuspensionId ? submitEditSuspension : submitNewSuspension);
     document.getElementById("susp-modal-close").addEventListener("click", () => { state.showNewSuspForm = false; state.editingSuspensionId = null; state._suspDraft = null; render(); });
     document.getElementById("susp-modal-backdrop").addEventListener("click", (e) => {
@@ -4541,22 +4809,20 @@ function attachSuspFormModalListeners() {
       }));
     const pmOthersEl = document.getElementById("susp-pm-others-text");
     if (pmOthersEl) pmOthersEl.addEventListener("input", () => { state._suspDraft.pmOthersText = pmOthersEl.value; });
-    const pmReasonSel = form.querySelector('[name="pmReason"]');
-    if (pmReasonSel) pmReasonSel.addEventListener("change", () => { state._suspDraft.pmReasonCategory = pmReasonSel.value; renderKeepingModalScroll(); });
-    const pmReasonOthersEl = form.querySelector('.dd-reason-others-input[data-for="pmReason"]');
-    if (pmReasonOthersEl) pmReasonOthersEl.addEventListener("input", () => { state._suspDraft.pmReasonOthersText = pmReasonOthersEl.value; });
+    attachPmReasonPickerListeners(form, state._suspDraft, "pm");
   }
 }
 
 function attachPmListeners() {
   const search = document.getElementById("pm-search-input");
-  if (search) search.addEventListener("input", () => {
+  if (search) search.addEventListener("input", debounce(() => {
+    if (!search.isConnected) return; // page re-rendered from elsewhere while the timer was pending
     state.pmQuery = search.value;
     const cursor = search.selectionStart;
     render();
     const ns = document.getElementById("pm-search-input");
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
-  });
+  }, 300));
 
   document.querySelectorAll('[data-action="set-pm-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.pmTab = el.dataset.tab; render(); }));
@@ -4571,11 +4837,43 @@ function attachPmListeners() {
   attachPmFormModalListeners();
 }
 
+// Attaches listeners for the multi-select "Reason(s) for meeting"
+// checklist rendered by renderPmReasonPicker — shared by the standalone
+// Parent Meeting form and the Suspension form's tagged-parent-meeting
+// block. `prefix` ("" or "pm") picks which draft fields to mutate,
+// matching renderPmReasonPicker/composePmReasonData.
+function attachPmReasonPickerListeners(form, d, prefix) {
+  const reasonsKey = prefix ? `${prefix}Reasons` : "reasons";
+  const statusesKey = prefix ? `${prefix}ReasonStatuses` : "reasonStatuses";
+  const othersKey = prefix ? `${prefix}ReasonOthersText` : "reasonOthersText";
+  // The edit-suspension draft is built without these fields (its tagged-
+  // meeting block never renders), so make sure they exist before any
+  // handler below tries to read or delete through them.
+  if (!Array.isArray(d[reasonsKey])) d[reasonsKey] = [];
+  if (!d[statusesKey]) d[statusesKey] = {};
+  form.querySelectorAll(`.dd-pm-reason-cb[data-pm-prefix="${prefix}"]`).forEach((cb) =>
+    cb.addEventListener("change", () => {
+      const list = d[reasonsKey];
+      if (cb.checked) { if (!list.includes(cb.value)) list.push(cb.value); }
+      else { d[reasonsKey] = list.filter((x) => x !== cb.value); delete d[statusesKey][cb.value]; }
+      renderKeepingModalScroll();
+    }));
+  form.querySelectorAll(`[data-action="set-pm-reason-status"][data-pm-prefix="${prefix}"]`).forEach((el) =>
+    el.addEventListener("click", () => {
+      d[statusesKey][el.dataset.reason] = el.dataset.status;
+      renderKeepingModalScroll();
+    }));
+  const othersEl = form.querySelector(`.dd-pm-others-input[data-pm-prefix="${prefix}"]`);
+  if (othersEl) othersEl.addEventListener("input", () => { d[othersKey] = othersEl.value; });
+}
+
 // Shared between the Parent Meeting Log page (editing) and the Dashboard's
 // "+ New Meeting Only" button (creating standalone, no discipline entry).
 function attachPmFormModalListeners() {
   if (state.showNewPmForm || state.editingPmId) {
+    // Same guard as the suspension form — see the note there.
     const form = document.getElementById("pm-form");
+    if (!form) return;
     form.addEventListener("submit", state.editingPmId ? submitEditParentMeeting : submitNewParentMeeting);
     document.getElementById("pm-modal-close").addEventListener("click", () => { state.showNewPmForm = false; state.editingPmId = null; state._pmDraft = null; render(); });
     document.getElementById("pm-modal-backdrop").addEventListener("click", (e) => {
@@ -4583,10 +4881,7 @@ function attachPmFormModalListeners() {
     });
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._pmDraft[name] = el.value; }); };
     syncField("studentName");
-    const reasonSel = form.elements["reason"];
-    if (reasonSel) reasonSel.addEventListener("change", () => { state._pmDraft.reasonCategory = reasonSel.value; renderKeepingModalScroll(); });
-    const reasonOthersEl = form.querySelector(".dd-reason-others-input");
-    if (reasonOthersEl) reasonOthersEl.addEventListener("input", () => { state._pmDraft.reasonOthersText = reasonOthersEl.value; });
+    attachPmReasonPickerListeners(form, state._pmDraft, "");
     const pmDateEl = form.elements["date"];
     if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];
@@ -4707,6 +5002,15 @@ function handleDelegatedTap(e) {
   const noBtn = e.target.closest && e.target.closest("#btn-confirm-delete-no");
   const confirmBackdropHit = e.target.id === "confirm-delete-backdrop";
   if (noBtn || confirmBackdropHit) { runDelegatedAction("confirm-delete-no", () => cancelDeleteConfirmation()); return; }
+  // Same-day duplicate-entry warning — shared across Grooming, Suspension
+  // and Parent Meeting "new entry" saves (see guardDuplicate), so it's
+  // wired here in the one handler that's always live, rather than in any
+  // one section's per-render attach*Listeners.
+  const dupYesBtn = e.target.closest && e.target.closest("#btn-confirm-duplicate-yes");
+  if (dupYesBtn) { runDelegatedAction("confirm-duplicate-yes", () => confirmDuplicateYes()); return; }
+  const dupNoBtn = e.target.closest && e.target.closest("#btn-confirm-duplicate-no");
+  const dupBackdropHit = e.target.id === "confirm-duplicate-backdrop";
+  if (dupNoBtn || dupBackdropHit) { runDelegatedAction("confirm-duplicate-no", () => cancelDuplicateConfirm()); return; }
   const closeBtn = e.target.closest && e.target.closest("#modal-close");
   const backdropHit = e.target.id === "modal-backdrop";
   if (closeBtn || backdropHit) {
@@ -4732,11 +5036,42 @@ function handleDelegatedTap(e) {
       if (dateEl) state._newIncidentDraft.date = dateEl.value;
       const othersEl = container.querySelector("#new-incident-others-text");
       if (othersEl) state._newIncidentDraft.othersText = othersEl.value;
+      const extraStudents = state._newIncidentDraft.extraStudents || [];
+      container.querySelectorAll(".dd-extra-student-name").forEach((el) => {
+        const idx = parseInt(el.dataset.idx, 10);
+        if (extraStudents[idx]) extraStudents[idx].name = el.value;
+      });
+      container.querySelectorAll(".dd-extra-student-class").forEach((el) => {
+        const idx = parseInt(el.dataset.idx, 10);
+        if (extraStudents[idx]) extraStudents[idx].studentClass = el.value;
+      });
     }
+  }
+  const addStudentBtn = e.target.closest && e.target.closest("#btn-add-extra-student");
+  if (addStudentBtn && state._newIncidentDraft) {
+    runDelegatedAction("add-extra-student", () => {
+      if (!Array.isArray(state._newIncidentDraft.extraStudents)) state._newIncidentDraft.extraStudents = [];
+      state._newIncidentDraft.extraStudents.push({ name: "", studentClass: "" });
+      renderKeepingModalScroll();
+    });
+    return;
+  }
+  const removeStudentBtn = e.target.closest && e.target.closest('[data-action="remove-extra-student"]');
+  if (removeStudentBtn && state._newIncidentDraft) {
+    const idx = parseInt(removeStudentBtn.dataset.idx, 10);
+    runDelegatedAction("remove-extra-student-" + idx, () => {
+      state._newIncidentDraft.extraStudents.splice(idx, 1);
+      renderKeepingModalScroll();
+    });
+    return;
   }
   const saveBtn = e.target.closest && e.target.closest("#btn-save-new-incident");
   if (saveBtn && !saveBtn.disabled) { runDelegatedAction("save-new-incident", () => submitNewIncident()); return; }
-  const tagBtn = e.target.closest && e.target.closest(".dd-issue-tag");
+  // Matched on the data-action, not the .dd-issue-tag class: that class is
+  // shared by four different button groups (closure type, HBL levels, new
+  // issue tags, edit issue tags), and a class match would let any of the
+  // others push an undefined issue into this draft.
+  const tagBtn = e.target.closest && e.target.closest('[data-action="toggle-grooming-issue"]');
   if (tagBtn && state._newIncidentDraft) {
     const type = tagBtn.dataset.issue;
     runDelegatedAction("toggle-tag-" + type, () => {
