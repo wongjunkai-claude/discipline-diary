@@ -388,49 +388,30 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 }
 .dd-settings-list-row:last-child { border-bottom: none; }
 
-/* Swipe-left-to-remove wrapper for Manage Access rows (Authorized
-   Teachers / Admins). .dd-swipe-content is dragged via touch JS in
-   app.js; .dd-swipe-action sits underneath, revealed as it slides left.
-   Swiping only reveals the action — tapping it still goes through the
-   same Yes/No confirmation as the old ✕ button did. */
-.dd-swipe-row { position: relative; overflow: hidden; border-bottom: 1px solid #E4E1D4; }
-.dd-swipe-row:last-child { border-bottom: none; }
-.dd-swipe-action {
-  position: absolute; top: 0; right: 0; bottom: 0; width: 84px; box-sizing: border-box;
-  background: #A3372B; color: #fff; border: none; padding: 0; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
-}
-.dd-swipe-content {
-  position: relative; background: #FBFAF6; touch-action: pan-y;
-  transition: transform 0.2s ease;
-}
-.dd-swipe-content .dd-settings-list-row { border-bottom: none; }
 button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 
-/* Chat-participant-style list for the Authorised Teachers List page —
-   round avatar, name/status stacked underneath, role pill trailing.
-   Reuses the same .dd-swipe-row/.dd-swipe-action/.dd-swipe-content
-   wrapper as everywhere else; only the row's own contents differ. */
+/* Contact-list-style rows for the Authorised Teachers List page — name
+   (+ role pill) with email underneath, and a "⋮" More button (Owners/
+   Admins only) that opens an action-sheet modal (renderMemberActionModal
+   in app.js) rather than any in-row delete control. */
 .dd-contact-list { display: flex; flex-direction: column; }
 .dd-contact-row {
   display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #E4E1D4;
 }
 .dd-contact-row:last-child { border-bottom: none; }
 .dd-contact-row-pending { opacity: 0.65; }
-.dd-swipe-content .dd-contact-row { border-bottom: none; }
-.dd-avatar {
-  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; color: #fff;
-  font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 14px; letter-spacing: 0.02em;
-  display: flex; align-items: center; justify-content: center;
-}
 .dd-contact-body { flex: 1; min-width: 0; }
 .dd-contact-name { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 500; color: #1B2A41; }
 .dd-contact-sub {
-  display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px; color: #8A8571; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dd-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dd-more-btn {
+  background: none; border: none; color: #8A8571; cursor: pointer; flex-shrink: 0;
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  font-size: 20px; line-height: 1; border-radius: 50%;
+}
+.dd-more-btn:hover { color: #1B2A41; background: #F2EFE6; }
 
 /* Chat-style "compose" row for adding/promoting/transferring — a rounded
    pill input with a circular send button, echoing a messaging app's text

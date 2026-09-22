@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.72.0";
+const APP_VERSION = "2.73.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -608,6 +608,7 @@ async function confirmDeleteYes() {
   else if (target.type === "addAuthorized") await addAuthorizedEmail(target.id);
   else if (target.type === "addAdmin") await addAdminEmail(target.id);
   else if (target.type === "addAllExisting") await addExistingUsersBulk(target.emails || []);
+  else if (target.type === "removeMember") await removeMemberFully(target.id);
 }
 // ---------- Access management (Authorized Teachers / Admins) ----------
 // Valid email shape only — the @moe.edu.sg suffix is enforced by
@@ -627,30 +628,6 @@ function accessPill(label) {
   const ink = ACCESS_PILL_STYLE[label];
   return `<span class="dd-issue-stage-badge" style="background:${ink}22;color:${ink};margin-left:6px">${label}</span>`;
 }
-// Deterministic per-person avatar color + initials for the Authorised
-// Teachers list (chat-participant style) — the same email always lands on
-// the same color, so people stay visually distinguishable across sessions
-// without storing anything extra.
-const AVATAR_COLORS = ["#1B2A41", "#3C6E47", "#A3372B", "#B8863B", "#5B4B8A", "#2E6E8E"];
-function avatarColorFor(key) {
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
-}
-function initialsFor(name, email) {
-  const trimmedName = (name || "").trim();
-  if (trimmedName) {
-    const parts = trimmedName.split(/\s+/).filter(Boolean);
-    return parts.length >= 2
-      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-      : parts[0].slice(0, 2).toUpperCase();
-  }
-  return (email || "?").slice(0, 2).toUpperCase();
-}
-function avatarHtml(name, email) {
-  const color = avatarColorFor(email || name || "?");
-  return `<div class="dd-avatar" style="background:${color}">${escapeHtml(initialsFor(name, email))}</div>`;
-}
 async function addAuthorizedEmail(rawEmail) {
   const email = (rawEmail || "").trim().toLowerCase();
   if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
@@ -663,6 +640,23 @@ async function addAuthorizedEmail(rawEmail) {
 async function removeAuthorizedEmail(email) {
   try { await deleteDoc(doc(db, "authorizedUsers", email)); }
   catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  render();
+}
+// "Remove User" from the Authorised Teachers List's "⋮" menu — a full
+// revoke, distinct from "Remove Admin" (which only demotes and leaves
+// their teacher access alone). Clears both collections since either one
+// alone is enough to keep someone signed in (isMoeUser() allows either).
+// A plain Admin can only ever reach this for a non-admin row, so their
+// attempt to delete admins/{email} is expected to be rejected by
+// firestore.rules (only the Owner may write there) — harmless, since
+// there's nothing to remove from that collection for them anyway.
+async function removeMemberFully(email) {
+  try {
+    await Promise.all([
+      deleteDoc(doc(db, "authorizedUsers", email)).catch(() => {}),
+      deleteDoc(doc(db, "admins", email)).catch(() => {}),
+    ]);
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
 // Anyone who has ever actually signed in (users/{uid} docs, one per person,
@@ -822,6 +816,34 @@ function renderDeleteConfirmModal() {
       </div>
     </div>`;
 }
+// The "⋮" action sheet on an Authorised Teachers List row. Never performs
+// anything itself — every option here just closes this menu and opens the
+// existing Yes/No confirmation modal (requestDeleteConfirmation), so every
+// access change still goes through one confirmation, same as before.
+function renderMemberActionModal() {
+  const t = state.memberActionTarget;
+  if (!t) return "";
+  const isAdminTier = t.tier === "ADMIN";
+  const who = t.name || t.email;
+  const rows = [{ label: "Remove User", action: "member-remove-user", danger: true }];
+  if (state.isOwner) {
+    rows.push(isAdminTier
+      ? { label: "Remove Admin", action: "member-remove-admin" }
+      : { label: "Make Admin", action: "member-make-admin" });
+    rows.push({ label: "Make Owner", action: "member-make-owner" });
+  }
+  return `
+    <div class="dd-modal-backdrop" id="member-action-backdrop">
+      <div class="dd-modal" style="max-width:320px">
+        <div class="dd-modal-title" style="font-size:17px;margin-bottom:2px">${escapeHtml(who)}</div>
+        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:16px">${escapeHtml(t.email)}</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${rows.map((r) => `<button type="button" class="dd-add-btn" style="${r.danger ? "background:#A3372B" : "background:#1B2A41"}" data-action="${r.action}" data-id="${escapeHtml(t.email)}" data-name="${escapeHtml(t.name || "")}">${r.label}</button>`).join("")}
+          <button type="button" class="dd-add-btn" style="background:#8A8571" id="member-action-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
 // Same-day duplicate-entry guard, shared by the "new entry" saves on all
 // three logs. `existing` is the duplicate record found (or null/undefined
 // — nothing to guard). If found, stashes `proceedFn` (a zero-arg function
@@ -964,11 +986,11 @@ const state = {
   editingIncidentId: null,
   historyOpen: {},
   entryExpanded: {},
-  // Which Manage Access swipe row (if any) is currently pulled open,
-  // e.g. "auth-tan_mei_ling@moe.edu.sg" or "admin-...". Set by the touch
-  // drag handlers in attachSwipeListeners() so the row stays open across
-  // any re-render, not just while the finger is down.
-  swipeOpenId: null,
+  // The teacher currently targeted by the Authorised Teachers List's "⋮"
+  // action menu, e.g. { email, name, tier }. Set when that button is
+  // tapped, cleared when the menu is dismissed or an action is chosen
+  // (choosing one hands off to the existing Yes/No confirmation modal).
+  memberActionTarget: null,
   followDraft: {},
   editingFollowUpId: null,
   followEditDraft: {},
@@ -2236,6 +2258,7 @@ function renderMain() {
   if (state._schoolHolidayDraft) html += renderSchoolHolidayEditModal();
   if (state._extraSchoolHolidayDraft) html += renderExtraSchoolHolidayModal();
   if (state._closureModalDraft) html += renderClosureDayModal();
+  html += state.memberActionTarget ? renderMemberActionModal() : "";
   html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
   html += state.pendingDuplicateConfirm ? renderDuplicateConfirmModal() : "";
   html += state.undoToast ? renderUndoToast() : "";
@@ -3130,45 +3153,28 @@ function renderSettingsSection() {
       return r !== 0 ? r : a.email.localeCompare(b.email);
     });
 
-    // Wraps a row so it can be swiped left to reveal a full-width "Remove"
-    // action (attachSwipeListeners() drives the drag) — only when the
-    // viewer actually has permission to remove it; otherwise it's just a
-    // plain, non-interactive row. The small ✕ inside innerHtml (when
-    // present) keeps working as a mouse-friendly fallback, since swiping
-    // needs touch and desktop admins won't have that.
-    const swipeRow = (idKey, innerHtml, removable, action, dataId) => {
-      if (!removable) return `<div class="dd-contact-row">${innerHtml}</div>`;
-      const open = state.swipeOpenId === idKey;
-      return `
-      <div class="dd-swipe-row">
-        <button type="button" class="dd-swipe-action" data-action="${action}" data-id="${escapeHtml(dataId)}">Remove</button>
-        <div class="dd-swipe-content" data-swipe-target="${escapeHtml(idKey)}" style="transform:translateX(${open ? "-84px" : "0"})">
-          <div class="dd-contact-row">${innerHtml}</div>
-        </div>
-      </div>`;
-    };
+    // Only Owners/Admins ever get a "⋮" — regular viewers just see the
+    // plain list. Which of the three actions that "⋮" offers depends on
+    // who's looking and what tier the row is: any admin can remove a
+    // plain Authorised Teacher, but only the Owner can act on an Admin
+    // row, promote/demote admins, or hand over ownership. The Owner's own
+    // row never gets a "⋮" — none of these actions apply to yourself.
     const memberRow = (m) => {
       const onboarded = onboardedByEmail[m.email];
       const name = onboarded?.name || "";
       const pill = m.tier ? accessPill(m.tier) : "";
-      let statusLabel, statusColor;
-      if (m.tier === "OWNER" && !ownerWasTransferred) { statusLabel = "Permanent"; statusColor = "#1B2A41"; }
-      else { statusLabel = onboarded ? "Signed in" : "Not signed in yet"; statusColor = onboarded ? "#3C6E47" : "#B8863B"; }
-      let removable = false, action = "", dataId = "";
-      if (m.tier === "ADMIN") { removable = state.isOwner; action = "remove-admin"; dataId = m.email; }
-      else if (!m.tier) { removable = state.isAdmin; action = "remove-authorized"; dataId = m.email; }
-      const removeBtn = removable ? `<button class="dd-followup-icon-btn" data-action="${action}" data-id="${escapeHtml(dataId)}" title="Remove">✕</button>` : "";
-      const inner = `
-        ${avatarHtml(name, m.email)}
+      const canManage = m.tier === "OWNER" ? false : m.tier === "ADMIN" ? state.isOwner : state.isAdmin;
+      const moreBtn = canManage
+        ? `<button type="button" class="dd-more-btn" data-action="open-member-actions" data-id="${escapeHtml(m.email)}" data-tier="${m.tier || ""}" data-name="${escapeHtml(name)}" title="More">⋮</button>`
+        : "";
+      return `
+      <div class="dd-contact-row">
         <div class="dd-contact-body">
           <div class="dd-contact-name">${escapeHtml(name || m.email)}${pill}</div>
-          <div class="dd-contact-sub">
-            <span class="dd-status-dot" style="background:${statusColor}"></span>
-            ${name ? `${escapeHtml(m.email)} · ` : ""}${statusLabel}
-          </div>
+          <div class="dd-contact-sub">${name ? escapeHtml(m.email) : ""}</div>
         </div>
-        ${removeBtn}`;
-      return swipeRow(`member-${m.email}`, inner, removable, action, dataId);
+        ${moreBtn}
+      </div>`;
     };
     body = `
       ${backBtn("Settings", "settings-back-to-menu")}
@@ -3186,7 +3192,7 @@ function renderSettingsSection() {
       <div class="dd-contact-list" style="margin-top:2px">
         ${existingNotYetAuthorized.map((email) => {
           const u = onboardedByEmail[email];
-          return `<div class="dd-contact-row dd-contact-row-pending">${avatarHtml(u?.name || "", email)}<div class="dd-contact-body"><div class="dd-contact-name">${escapeHtml(u?.name || email)}</div>${u?.name ? `<div class="dd-contact-sub">${escapeHtml(email)}</div>` : ""}</div></div>`;
+          return `<div class="dd-contact-row dd-contact-row-pending"><div class="dd-contact-body"><div class="dd-contact-name">${escapeHtml(u?.name || email)}</div>${u?.name ? `<div class="dd-contact-sub">${escapeHtml(email)}</div>` : ""}</div></div>`;
         }).join("")}
       </div>
       <button class="dd-add-btn" type="button" id="btn-add-existing-users" style="margin-top:8px;background:#3C6E47;border-radius:999px">Add Existing Users</button>
@@ -3195,7 +3201,7 @@ function renderSettingsSection() {
       ${state.isAdmin ? `
       <div class="dd-compose-bar" style="margin-top:18px">
         <span class="dd-compose-avatar" style="background:#3C6E47">+</span>
-        <input class="dd-compose-input" id="new-authorized-email" placeholder="Add teacher — teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <input class="dd-compose-input" id="new-authorized-email" value="@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
         <button class="dd-compose-send" type="button" id="btn-add-authorized" style="background:#3C6E47" title="Add">➤</button>
       </div>` : ""}
 
@@ -4693,62 +4699,6 @@ function renderPmForm(isEdit) {
     </div>`;
 }
 
-// Drives the swipe-left-to-reveal-Remove gesture on Manage Access rows
-// (renderSettingsSection's swipeRow() builds the markup). Pure DOM
-// manipulation during the drag — no render() per touchmove, since that
-// would tear down and rebuild the very element being dragged. state.
-// swipeOpenId is only updated at the end of a gesture, so the row's
-// position survives an unrelated re-render (e.g. a live list update)
-// triggered while it's open.
-function attachSwipeListeners() {
-  const REVEAL = 84; // px — matches .dd-swipe-action's width
-  document.querySelectorAll(".dd-swipe-content[data-swipe-target]").forEach((el) => {
-    const id = el.dataset.swipeTarget;
-    let startX = 0, startY = 0, baseX = 0, dragging = null, lastX = 0;
-    el.addEventListener("touchstart", (e) => {
-      if (state.swipeOpenId && state.swipeOpenId !== id) {
-        const prev = document.querySelector(`.dd-swipe-content[data-swipe-target="${state.swipeOpenId}"]`);
-        if (prev) prev.style.transform = "translateX(0px)";
-        state.swipeOpenId = null;
-      }
-      const t = e.touches[0];
-      startX = t.clientX; startY = t.clientY;
-      baseX = state.swipeOpenId === id ? -REVEAL : 0;
-      lastX = baseX;
-      dragging = null;
-    }, { passive: true });
-    el.addEventListener("touchmove", (e) => {
-      const t = e.touches[0];
-      const dx = t.clientX - startX;
-      const dy = t.clientY - startY;
-      if (dragging === null) {
-        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
-        dragging = Math.abs(dx) > Math.abs(dy); // horizontal drag vs. vertical page scroll
-      }
-      if (!dragging) return;
-      e.preventDefault();
-      lastX = Math.max(-REVEAL, Math.min(0, baseX + dx));
-      el.style.transform = `translateX(${lastX}px)`;
-    }, { passive: false });
-    el.addEventListener("touchend", () => {
-      if (!dragging) return;
-      // Read back the dragged distance from our own tracked `lastX`, not
-      // getComputedStyle(el).transform — with the CSS transition on this
-      // element, the computed style can still report the pre-drag value
-      // synchronously right after we set it (the transition hasn't been
-      // flushed to a frame yet), which made every swipe snap shut again.
-      const open = lastX < -REVEAL / 2;
-      el.style.transform = `translateX(${open ? -REVEAL : 0}px)`;
-      state.swipeOpenId = open ? id : null;
-    });
-    // A tap while open just closes it again (a real swipe's touchmove
-    // suppresses the browser's own synthetic click, so this only fires
-    // for an actual tap, not the end of a drag).
-    el.addEventListener("click", () => {
-      if (state.swipeOpenId === id) { el.style.transform = "translateX(0px)"; state.swipeOpenId = null; }
-    });
-  });
-}
 // ==================== LISTENERS ====================
 function attachMainListeners() {
   const undoBtn = document.getElementById("btn-undo-delete");
@@ -4816,14 +4766,54 @@ function attachMainListeners() {
 
   document.querySelectorAll('[data-action="settings-open-access"]').forEach((el) =>
     el.addEventListener("click", () => { state.accessFormError = ""; state.settingsView = "manageAccess"; render(); }));
-  document.querySelectorAll('[data-action="remove-authorized"]').forEach((el) =>
-    el.addEventListener("click", () => requestDeleteConfirmation("authorizedUser", el.dataset.id, { message: `Remove ${el.dataset.id}'s access? They won't be able to sign in again until re-added.` })));
-  document.querySelectorAll('[data-action="remove-admin"]').forEach((el) =>
-    el.addEventListener("click", () => requestDeleteConfirmation("adminUser", el.dataset.id, { message: `Remove ${el.dataset.id} as an admin? They'll keep their teacher access unless also removed from Authorised Teachers.` })));
+
+  // Authorised Teachers List "⋮" menu: tapping a row's button opens the
+  // action-picker modal; every option in that modal just hands off to the
+  // existing Yes/No confirmation flow (requestDeleteConfirmation), same as
+  // the old ✕/swipe actions did — nothing here writes to Firestore itself.
+  document.querySelectorAll('[data-action="open-member-actions"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.memberActionTarget = { email: el.dataset.id, name: el.dataset.name || "", tier: el.dataset.tier || null };
+      render();
+    }));
+  const memberActionBackdrop = document.getElementById("member-action-backdrop");
+  if (memberActionBackdrop) memberActionBackdrop.addEventListener("click", (e) => {
+    if (e.target === memberActionBackdrop) { state.memberActionTarget = null; render(); }
+  });
+  const memberActionCancel = document.getElementById("member-action-cancel");
+  if (memberActionCancel) memberActionCancel.addEventListener("click", () => { state.memberActionTarget = null; render(); });
+  document.querySelectorAll('[data-action="member-remove-user"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.memberActionTarget = null;
+      requestDeleteConfirmation("removeMember", el.dataset.id, { message: `Remove ${el.dataset.name || el.dataset.id}? They won't be able to sign in again until re-added.` });
+    }));
+  document.querySelectorAll('[data-action="member-make-admin"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.memberActionTarget = null;
+      requestDeleteConfirmation("addAdmin", el.dataset.id, { message: `Make ${el.dataset.name || el.dataset.id} an admin? They'll be able to add/remove Authorised Teachers.` });
+    }));
+  document.querySelectorAll('[data-action="member-remove-admin"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.memberActionTarget = null;
+      requestDeleteConfirmation("adminUser", el.dataset.id, { message: `Remove ${el.dataset.name || el.dataset.id} as an admin? They'll keep their teacher access unless also removed.` });
+    }));
+  document.querySelectorAll('[data-action="member-make-owner"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      state.memberActionTarget = null;
+      requestDeleteConfirmation("transferOwnership", el.dataset.id, { message: `Transfer ownership to ${el.dataset.name || el.dataset.id}? They become the primary Owner. You'll keep admin access.` });
+    }));
+
   const addAuthorizedBtn = document.getElementById("btn-add-authorized");
+  const newAuthorizedInput = document.getElementById("new-authorized-email");
+  // The field comes prefilled with "@moe.edu.sg" — put the cursor before
+  // it on focus so typing a name just slots in ahead of the domain,
+  // rather than the person having to select/delete it first.
+  if (newAuthorizedInput) newAuthorizedInput.addEventListener("focus", () => {
+    const atIndex = newAuthorizedInput.value.indexOf("@");
+    newAuthorizedInput.setSelectionRange(atIndex === -1 ? 0 : atIndex, atIndex === -1 ? 0 : atIndex);
+  });
   if (addAuthorizedBtn) addAuthorizedBtn.addEventListener("click", () => {
-    const input = document.getElementById("new-authorized-email");
-    const email = (input?.value || "").trim().toLowerCase();
+    const email = (newAuthorizedInput?.value || "").trim().toLowerCase();
     if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
     state.accessFormError = "";
     requestDeleteConfirmation("addAuthorized", email, { message: `Add ${email} to Authorised Teachers? They'll be able to sign in right away.` });
@@ -4852,7 +4842,6 @@ function attachMainListeners() {
     if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
     requestDeleteConfirmation("transferOwnership", email, { message: `Transfer ownership to ${email}? They become the primary Owner. You'll keep admin access.` });
   });
-  attachSwipeListeners();
 
   const signOutBtn = document.getElementById("btn-app-sign-out");
   if (signOutBtn) signOutBtn.addEventListener("click", signOutOfApp);
