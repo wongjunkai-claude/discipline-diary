@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.70.0";
+const APP_VERSION = "2.72.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -607,6 +607,7 @@ async function confirmDeleteYes() {
   else if (target.type === "transferOwnership") await transferOwnership(target.id);
   else if (target.type === "addAuthorized") await addAuthorizedEmail(target.id);
   else if (target.type === "addAdmin") await addAdminEmail(target.id);
+  else if (target.type === "addAllExisting") await addExistingUsersBulk(target.emails || []);
 }
 // ---------- Access management (Authorized Teachers / Admins) ----------
 // Valid email shape only — the @moe.edu.sg suffix is enforced by
@@ -626,6 +627,30 @@ function accessPill(label) {
   const ink = ACCESS_PILL_STYLE[label];
   return `<span class="dd-issue-stage-badge" style="background:${ink}22;color:${ink};margin-left:6px">${label}</span>`;
 }
+// Deterministic per-person avatar color + initials for the Authorised
+// Teachers list (chat-participant style) — the same email always lands on
+// the same color, so people stay visually distinguishable across sessions
+// without storing anything extra.
+const AVATAR_COLORS = ["#1B2A41", "#3C6E47", "#A3372B", "#B8863B", "#5B4B8A", "#2E6E8E"];
+function avatarColorFor(key) {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+function initialsFor(name, email) {
+  const trimmedName = (name || "").trim();
+  if (trimmedName) {
+    const parts = trimmedName.split(/\s+/).filter(Boolean);
+    return parts.length >= 2
+      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+      : parts[0].slice(0, 2).toUpperCase();
+  }
+  return (email || "?").slice(0, 2).toUpperCase();
+}
+function avatarHtml(name, email) {
+  const color = avatarColorFor(email || name || "?");
+  return `<div class="dd-avatar" style="background:${color}">${escapeHtml(initialsFor(name, email))}</div>`;
+}
 async function addAuthorizedEmail(rawEmail) {
   const email = (rawEmail || "").trim().toLowerCase();
   if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
@@ -638,6 +663,32 @@ async function addAuthorizedEmail(rawEmail) {
 async function removeAuthorizedEmail(email) {
   try { await deleteDoc(doc(db, "authorizedUsers", email)); }
   catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  render();
+}
+// Anyone who has ever actually signed in (users/{uid} docs, one per person,
+// tracked in state.userList) but isn't yet on the Authorised Teachers List,
+// nor already an admin or the owner — i.e. teachers from before this
+// allowlist existed who'd otherwise be locked out the next time the
+// permission rules cut them off. Used both to show the "Add Existing Users"
+// shortcut and to actually perform that bulk add.
+function existingUsersNotYetAuthorized() {
+  const authorizedEmailSet = new Set((state.authorizedList || []).map((a) => a.id));
+  const adminEmailSet = new Set((state.adminsList || []).map((a) => a.id));
+  const effectiveOwner = (state.currentOwnerEmail || OWNER_EMAIL).toLowerCase();
+  const known = new Set([...authorizedEmailSet, ...adminEmailSet, effectiveOwner]);
+  const emails = (state.userList || [])
+    .map((u) => (u.email || "").toLowerCase())
+    .filter((e) => e && known.has(e) === false);
+  return [...new Set(emails)];
+}
+async function addExistingUsersBulk(emails) {
+  if (!emails.length) return;
+  state.accessFormError = "";
+  try {
+    await Promise.all(emails.map((email) =>
+      setDoc(doc(db, "authorizedUsers", email), { email, addedAt: Date.now(), addedBy: teacherName() || state.authUser?.email || "", addedFrom: "existingUsers" })
+    ));
+  } catch (err) { state.accessFormError = `Couldn't add everyone — ${err?.message || String(err)}`; }
   render();
 }
 async function addAdminEmail(rawEmail) {
@@ -2269,7 +2320,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Editing, removing, backups</div>
-          <p>Every entry in all three logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorized Teachers list — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
+          <p>Every entry in all three logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorised Teachers List — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
         </div>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
@@ -3053,7 +3104,7 @@ function renderSettingsSection() {
   } else if (state.settingsView === "manageAccess") {
     const admins = (state.adminsList || []).slice().sort((a, b) => a.email.localeCompare(b.email));
     const authorized = (state.authorizedList || []).slice().sort((a, b) => a.email.localeCompare(b.email));
-    const effectiveOwner = state.currentOwnerEmail || OWNER_EMAIL;
+    const effectiveOwner = (state.currentOwnerEmail || OWNER_EMAIL).toLowerCase();
     const ownerWasTransferred = effectiveOwner !== OWNER_EMAIL;
     // The "users" collection gets a doc written the first time someone
     // actually signs in and picks a display name (see freshSignIn/rename
@@ -3061,8 +3112,24 @@ function renderSettingsSection() {
     // "added to the list" apart from "has actually signed in".
     const onboardedByEmail = {};
     (state.userList || []).forEach((u) => { if (u.email) onboardedByEmail[u.email.toLowerCase()] = u; });
-    const adminEmailSet = new Set(admins.map((a) => a.id));
-    const tierPillFor = (email) => email === effectiveOwner ? accessPill("OWNER") : adminEmailSet.has(email) ? accessPill("ADMIN") : "";
+    const existingNotYetAuthorized = existingUsersNotYetAuthorized();
+
+    // One combined "participants" list, chat-group style — Owner and
+    // Admins come from their own Firestore collections but are shown
+    // inline with everyone else rather than in separate boxes, each just
+    // carrying a role pill. A Map (keyed by email) lets the Owner's/
+    // Admin's higher tier take over a plain Authorised Teacher entry if
+    // that same email also happens to be on the authorizedUsers list.
+    const memberMap = new Map();
+    authorized.forEach((u) => memberMap.set(u.id, { email: u.id, tier: null }));
+    admins.forEach((a) => memberMap.set(a.id, { email: a.id, tier: "ADMIN" }));
+    memberMap.set(effectiveOwner, { email: effectiveOwner, tier: "OWNER" });
+    const tierRank = { OWNER: 0, ADMIN: 1 };
+    const members = [...memberMap.values()].sort((a, b) => {
+      const r = (tierRank[a.tier] ?? 2) - (tierRank[b.tier] ?? 2);
+      return r !== 0 ? r : a.email.localeCompare(b.email);
+    });
+
     // Wraps a row so it can be swiped left to reveal a full-width "Remove"
     // action (attachSwipeListeners() drives the drag) — only when the
     // viewer actually has permission to remove it; otherwise it's just a
@@ -3070,70 +3137,83 @@ function renderSettingsSection() {
     // present) keeps working as a mouse-friendly fallback, since swiping
     // needs touch and desktop admins won't have that.
     const swipeRow = (idKey, innerHtml, removable, action, dataId) => {
-      if (!removable) return `<div class="dd-settings-list-row">${innerHtml}</div>`;
+      if (!removable) return `<div class="dd-contact-row">${innerHtml}</div>`;
       const open = state.swipeOpenId === idKey;
       return `
       <div class="dd-swipe-row">
         <button type="button" class="dd-swipe-action" data-action="${action}" data-id="${escapeHtml(dataId)}">Remove</button>
         <div class="dd-swipe-content" data-swipe-target="${escapeHtml(idKey)}" style="transform:translateX(${open ? "-84px" : "0"})">
-          <div class="dd-settings-list-row">${innerHtml}</div>
+          <div class="dd-contact-row">${innerHtml}</div>
         </div>
       </div>`;
     };
+    const memberRow = (m) => {
+      const onboarded = onboardedByEmail[m.email];
+      const name = onboarded?.name || "";
+      const pill = m.tier ? accessPill(m.tier) : "";
+      let statusLabel, statusColor;
+      if (m.tier === "OWNER" && !ownerWasTransferred) { statusLabel = "Permanent"; statusColor = "#1B2A41"; }
+      else { statusLabel = onboarded ? "Signed in" : "Not signed in yet"; statusColor = onboarded ? "#3C6E47" : "#B8863B"; }
+      let removable = false, action = "", dataId = "";
+      if (m.tier === "ADMIN") { removable = state.isOwner; action = "remove-admin"; dataId = m.email; }
+      else if (!m.tier) { removable = state.isAdmin; action = "remove-authorized"; dataId = m.email; }
+      const removeBtn = removable ? `<button class="dd-followup-icon-btn" data-action="${action}" data-id="${escapeHtml(dataId)}" title="Remove">✕</button>` : "";
+      const inner = `
+        ${avatarHtml(name, m.email)}
+        <div class="dd-contact-body">
+          <div class="dd-contact-name">${escapeHtml(name || m.email)}${pill}</div>
+          <div class="dd-contact-sub">
+            <span class="dd-status-dot" style="background:${statusColor}"></span>
+            ${name ? `${escapeHtml(m.email)} · ` : ""}${statusLabel}
+          </div>
+        </div>
+        ${removeBtn}`;
+      return swipeRow(`member-${m.email}`, inner, removable, action, dataId);
+    };
     body = `
       ${backBtn("Settings", "settings-back-to-menu")}
-      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">${state.isAdmin ? "Manage Access" : "Authorized Teachers"}</div>
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Authorised Teachers List</div>
       <div class="dd-mono-muted" style="font-size:12px;margin-bottom:14px">
         ${state.isAdmin
-          ? `Only @${ALLOWED_EMAIL_DOMAIN} emails on the list below can sign in. Removing someone takes effect immediately, even if they're already signed in — they're logged out on their next action and can't sign in again until re-added.`
+          ? `Only @${ALLOWED_EMAIL_DOMAIN} emails below can sign in. Removing someone takes effect immediately, even if they're already signed in — they're logged out on their next action and can't sign in again until re-added.`
           : `Everyone who can currently sign in to Discipline Diary. Only an Owner or Admin can add or remove someone here.`}
       </div>
 
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Authorized Teachers</div>
-      ${authorized.length === 0 ? `<div class="dd-dash-empty">${state.isAdmin ? "No one added yet — add emails below." : "No one added yet."}</div>` : authorized.map((u) => {
-        const onboarded = onboardedByEmail[u.email];
-        const inner = `
-        <div style="flex:1;min-width:0">
-          <div class="dd-sans" style="font-size:14px">${escapeHtml(u.email)}${tierPillFor(u.email)}</div>
-          <div class="dd-mono-muted" style="font-size:11px;color:${onboarded ? "#3C6E47" : "#B8863B"}">
-            ${onboarded ? `● Signed in${onboarded.name ? ` as ${escapeHtml(onboarded.name)}` : ""}` : "● Not signed in yet"}
-          </div>
-        </div>
-        ${state.isAdmin ? `<button class="dd-followup-icon-btn" data-action="remove-authorized" data-id="${escapeHtml(u.id)}" title="Remove access">✕</button>` : ""}`;
-        return swipeRow(`auth-${u.id}`, inner, state.isAdmin, "remove-authorized", u.id);
-      }).join("")}
-      ${state.isAdmin ? `
-      <div class="dd-followup-row" style="margin-top:10px">
-        <input class="dd-input dd-followup-input" id="new-authorized-email" placeholder="teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
-        <button class="dd-add-btn" type="button" id="btn-add-authorized">Add</button>
-      </div>` : ""}
+      <div class="dd-contact-list">${members.map(memberRow).join("")}</div>
 
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:24px 0 8px">Owner</div>
-      <div class="dd-settings-list-row">
-        <div style="flex:1;min-width:0">
-          <div class="dd-sans" style="font-size:14px">${escapeHtml(effectiveOwner)}${accessPill("OWNER")}</div>
-          ${ownerWasTransferred ? "" : `<div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase">Permanent</div>`}
-        </div>
+      ${state.isAdmin && existingNotYetAuthorized.length > 0 ? `
+      <div class="dd-mono-muted" style="font-size:12px;margin-top:16px">${existingNotYetAuthorized.length} previously signed-in teacher${existingNotYetAuthorized.length === 1 ? "" : "s"} not yet on this list:</div>
+      <div class="dd-contact-list" style="margin-top:2px">
+        ${existingNotYetAuthorized.map((email) => {
+          const u = onboardedByEmail[email];
+          return `<div class="dd-contact-row dd-contact-row-pending">${avatarHtml(u?.name || "", email)}<div class="dd-contact-body"><div class="dd-contact-name">${escapeHtml(u?.name || email)}</div>${u?.name ? `<div class="dd-contact-sub">${escapeHtml(email)}</div>` : ""}</div></div>`;
+        }).join("")}
       </div>
-      ${ownerWasTransferred ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:6px">${escapeHtml(OWNER_EMAIL)} remains a permanent fallback and can always regain access if needed — it can only be changed by editing the app's code.</div>` : ""}
-      ${state.isOwner ? `
-      <div class="dd-mono-muted" style="font-size:12px;margin-top:10px">Hand over ownership to someone else. You'll keep admin access afterwards.</div>
-      <div class="dd-followup-row" style="margin-top:6px">
-        <input class="dd-input dd-followup-input" id="new-owner-email" placeholder="teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
-        <button class="dd-add-btn" type="button" id="btn-transfer-owner" style="background:#A3372B">Transfer</button>
+      <button class="dd-add-btn" type="button" id="btn-add-existing-users" style="margin-top:8px;background:#3C6E47;border-radius:999px">Add Existing Users</button>
+      ` : ""}
+
+      ${state.isAdmin ? `
+      <div class="dd-compose-bar" style="margin-top:18px">
+        <span class="dd-compose-avatar" style="background:#3C6E47">+</span>
+        <input class="dd-compose-input" id="new-authorized-email" placeholder="Add teacher — teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <button class="dd-compose-send" type="button" id="btn-add-authorized" style="background:#3C6E47" title="Add">➤</button>
       </div>` : ""}
 
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:24px 0 8px">Admins</div>
-      ${state.isAdmin ? `<div class="dd-mono-muted" style="font-size:12px;margin-bottom:8px">Admins can add/remove Authorized Teachers above. Only the Owner can add/remove admins.</div>` : ""}
-      ${admins.length === 0 ? `<div class="dd-dash-empty">No additional admins yet.</div>` : admins.map((u) => swipeRow(`admin-${u.id}`, `
-        <div style="flex:1;min-width:0"><div class="dd-sans" style="font-size:14px">${escapeHtml(u.email)}${accessPill("ADMIN")}</div></div>
-        ${state.isOwner ? `<button class="dd-followup-icon-btn" data-action="remove-admin" data-id="${escapeHtml(u.id)}" title="Remove admin">✕</button>` : ""}`,
-        state.isOwner, "remove-admin", u.id)).join("")}
       ${state.isOwner ? `
-      <div class="dd-followup-row" style="margin-top:10px">
-        <input class="dd-input dd-followup-input" id="new-admin-email" placeholder="teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
-        <button class="dd-add-btn" type="button" id="btn-add-admin">Add</button>
+      <div class="dd-compose-bar" style="margin-top:10px">
+        <span class="dd-compose-avatar" style="background:#B8863B">★</span>
+        <input class="dd-compose-input" id="new-admin-email" placeholder="Make admin — teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <button class="dd-compose-send" type="button" id="btn-add-admin" style="background:#B8863B" title="Make admin">➤</button>
       </div>` : ""}
+
+      ${state.isOwner ? `
+      <div class="dd-mono-muted" style="font-size:12px;margin-top:20px">Hand over ownership to someone else. You'll keep admin access afterwards.</div>
+      <div class="dd-compose-bar" style="margin-top:6px">
+        <span class="dd-compose-avatar" style="background:#A3372B">⇄</span>
+        <input class="dd-compose-input" id="new-owner-email" placeholder="Transfer to — teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <button class="dd-compose-send" type="button" id="btn-transfer-owner" style="background:#A3372B" title="Transfer">➤</button>
+      </div>` : ""}
+      ${ownerWasTransferred ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:10px">${escapeHtml(OWNER_EMAIL)} remains a permanent fallback and can always regain access if needed — it can only be changed by editing the app's code.</div>` : ""}
       ${state.accessFormError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.accessFormError)}</div>` : ""}`;
   } else {
     const year = new Date().getFullYear();
@@ -3146,7 +3226,7 @@ function renderSettingsSection() {
         ${menuRow("Annual Summary Reports", "settings-open-years")}
         ${menuRow("Classes For The Year", "settings-open-classes")}
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
-        ${menuRow(state.isAdmin ? "Manage Access" : "Authorized Teachers", "settings-open-access")}
+        ${menuRow("Authorised Teachers List", "settings-open-access")}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -4739,14 +4819,23 @@ function attachMainListeners() {
   document.querySelectorAll('[data-action="remove-authorized"]').forEach((el) =>
     el.addEventListener("click", () => requestDeleteConfirmation("authorizedUser", el.dataset.id, { message: `Remove ${el.dataset.id}'s access? They won't be able to sign in again until re-added.` })));
   document.querySelectorAll('[data-action="remove-admin"]').forEach((el) =>
-    el.addEventListener("click", () => requestDeleteConfirmation("adminUser", el.dataset.id, { message: `Remove ${el.dataset.id} as an admin? They'll keep their teacher access unless also removed from Authorized Teachers.` })));
+    el.addEventListener("click", () => requestDeleteConfirmation("adminUser", el.dataset.id, { message: `Remove ${el.dataset.id} as an admin? They'll keep their teacher access unless also removed from Authorised Teachers.` })));
   const addAuthorizedBtn = document.getElementById("btn-add-authorized");
   if (addAuthorizedBtn) addAuthorizedBtn.addEventListener("click", () => {
     const input = document.getElementById("new-authorized-email");
     const email = (input?.value || "").trim().toLowerCase();
     if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
     state.accessFormError = "";
-    requestDeleteConfirmation("addAuthorized", email, { message: `Add ${email} to Authorized Teachers? They'll be able to sign in right away.` });
+    requestDeleteConfirmation("addAuthorized", email, { message: `Add ${email} to Authorised Teachers? They'll be able to sign in right away.` });
+  });
+  const addExistingUsersBtn = document.getElementById("btn-add-existing-users");
+  if (addExistingUsersBtn) addExistingUsersBtn.addEventListener("click", () => {
+    const emails = existingUsersNotYetAuthorized();
+    if (!emails.length) return;
+    requestDeleteConfirmation("addAllExisting", null, {
+      message: `Add ${emails.length} previously signed-in teacher${emails.length === 1 ? "" : "s"} to the Authorised Teachers List? They'll be able to sign in right away.`,
+      emails,
+    });
   });
   const addAdminBtn = document.getElementById("btn-add-admin");
   if (addAdminBtn) addAdminBtn.addEventListener("click", () => {
@@ -4754,7 +4843,7 @@ function attachMainListeners() {
     const email = (input?.value || "").trim().toLowerCase();
     if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
     state.accessFormError = "";
-    requestDeleteConfirmation("addAdmin", email, { message: `Make ${email} an admin? They'll be able to add/remove Authorized Teachers.` });
+    requestDeleteConfirmation("addAdmin", email, { message: `Make ${email} an admin? They'll be able to add/remove Authorised Teachers.` });
   });
   const transferOwnerBtn = document.getElementById("btn-transfer-owner");
   if (transferOwnerBtn) transferOwnerBtn.addEventListener("click", () => {

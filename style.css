@@ -408,6 +408,52 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-swipe-content .dd-settings-list-row { border-bottom: none; }
 button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 
+/* Chat-participant-style list for the Authorised Teachers List page —
+   round avatar, name/status stacked underneath, role pill trailing.
+   Reuses the same .dd-swipe-row/.dd-swipe-action/.dd-swipe-content
+   wrapper as everywhere else; only the row's own contents differ. */
+.dd-contact-list { display: flex; flex-direction: column; }
+.dd-contact-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #E4E1D4;
+}
+.dd-contact-row:last-child { border-bottom: none; }
+.dd-contact-row-pending { opacity: 0.65; }
+.dd-swipe-content .dd-contact-row { border-bottom: none; }
+.dd-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; color: #fff;
+  font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 14px; letter-spacing: 0.02em;
+  display: flex; align-items: center; justify-content: center;
+}
+.dd-contact-body { flex: 1; min-width: 0; }
+.dd-contact-name { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 500; color: #1B2A41; }
+.dd-contact-sub {
+  display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px; color: #8A8571; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dd-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+/* Chat-style "compose" row for adding/promoting/transferring — a rounded
+   pill input with a circular send button, echoing a messaging app's text
+   field rather than a plain form row. */
+.dd-compose-bar {
+  display: flex; align-items: center; gap: 8px; background: #F2EFE6; border: 1px solid #C9C4B4;
+  border-radius: 24px; padding: 5px 5px 5px 6px;
+}
+.dd-compose-avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; color: #fff; font-size: 15px;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.dd-compose-input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; color: #1B2A41;
+}
+.dd-compose-input::placeholder { color: #8A8571; }
+.dd-compose-send {
+  width: 30px; height: 30px; border-radius: 50%; border: none; color: #fff; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0;
+}
+.dd-compose-send:hover { opacity: 0.9; }
+
 .dd-settings-menu-group {
   background: #fff; border: 1px solid #C9C4B4; border-radius: 6px; overflow: hidden;
 }
