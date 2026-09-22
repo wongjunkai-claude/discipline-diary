@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.74.1";
+const APP_VERSION = "2.75.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -571,6 +571,10 @@ function diffText(oldObj, newObj, fields) {
 // Deleting an entry now just asks "Delete the entry?" with Yes/No,
 // rather than a password — the confirmation IS the safeguard.
 function requestDeleteConfirmation(type, id, extra) {
+  // Drop focus first so any on-screen keyboard starts collapsing before the
+  // modal is drawn, rather than shifting the modal underneath the finger
+  // once it's already up (see the note in handleDelegatedTap).
+  try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
   state.confirmDeleteTarget = { type, id, ...(extra || {}) };
   render();
 }
@@ -634,12 +638,15 @@ async function addAuthorizedEmail(rawEmail) {
   state.accessFormError = "";
   try {
     await setDoc(doc(db, "authorizedUsers", email), { email, addedAt: Date.now(), addedBy: teacherName() || state.authUser?.email || "" });
-  } catch (err) { state.accessFormError = `Couldn't add — ${err?.message || String(err)}`; }
+  } catch (err) {
+    console.error("addAuthorizedEmail failed:", err);
+    state.accessFormError = `Couldn't add ${email} — ${err?.code || err?.message || String(err)}`;
+  }
   render();
 }
 async function removeAuthorizedEmail(email) {
   try { await deleteDoc(doc(db, "authorizedUsers", email)); }
-  catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  catch (err) { console.error("removeAuthorizedEmail failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
 // "Remove User" from the Authorised Teachers List's "⋮" menu — a full
@@ -653,10 +660,10 @@ async function removeAuthorizedEmail(email) {
 async function removeMemberFully(email) {
   try {
     await Promise.all([
-      deleteDoc(doc(db, "authorizedUsers", email)).catch(() => {}),
-      deleteDoc(doc(db, "admins", email)).catch(() => {}),
+      deleteDoc(doc(db, "authorizedUsers", email)).catch((err) => console.warn("removeMemberFully: authorizedUsers delete failed (may not exist):", err)),
+      deleteDoc(doc(db, "admins", email)).catch((err) => console.warn("removeMemberFully: admins delete failed (expected if caller isn't Owner):", err)),
     ]);
-  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  } catch (err) { console.error("removeMemberFully failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
 // Anyone who has ever actually signed in (users/{uid} docs, one per person,
@@ -682,7 +689,7 @@ async function addExistingUsersBulk(emails) {
     await Promise.all(emails.map((email) =>
       setDoc(doc(db, "authorizedUsers", email), { email, addedAt: Date.now(), addedBy: teacherName() || state.authUser?.email || "", addedFrom: "existingUsers" })
     ));
-  } catch (err) { state.accessFormError = `Couldn't add everyone — ${err?.message || String(err)}`; }
+  } catch (err) { console.error("addExistingUsersBulk failed:", err); state.accessFormError = `Couldn't add everyone — ${err?.code || err?.message || String(err)}`; }
   render();
 }
 async function addAdminEmail(rawEmail) {
@@ -692,13 +699,13 @@ async function addAdminEmail(rawEmail) {
   state.accessFormError = "";
   try {
     await setDoc(doc(db, "admins", email), { email, addedAt: Date.now(), addedBy: teacherName() || state.authUser?.email || "" });
-  } catch (err) { state.accessFormError = `Couldn't add — ${err?.message || String(err)}`; }
+  } catch (err) { console.error("addAdminEmail failed:", err); state.accessFormError = `Couldn't add ${email} as admin — ${err?.code || err?.message || String(err)}`; }
   render();
 }
 async function removeAdminEmail(email) {
   if (!state.isOwner) return;
   try { await deleteDoc(doc(db, "admins", email)); }
-  catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  catch (err) { console.error("removeAdminEmail failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
 // Hands the day-to-day Owner role to a new email. Writes the outgoing
@@ -721,7 +728,7 @@ async function transferOwnership(rawEmail) {
       await setDoc(doc(db, "admins", outgoing), { email: outgoing, addedAt: Date.now(), addedBy: outgoing });
     }
     await setDoc(doc(db, "settings", "owner"), { email, transferredAt: Date.now(), transferredBy: outgoing });
-  } catch (err) { state.accessFormError = `Couldn't transfer ownership — ${err?.message || String(err)}`; }
+  } catch (err) { console.error("transferOwnership failed:", err); state.accessFormError = `Couldn't transfer ownership — ${err?.code || err?.message || String(err)}`; }
   render();
 }
 // Tapping "+" opens this with an empty draft (id: null); tapping an
@@ -1152,7 +1159,18 @@ function ensureAccessSubscriptions() {
   if (!unsubAdmins) {
     unsubAdmins = onSnapshot(
       collection(db, "admins"),
-      (snap) => { state.adminsList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); render(); },
+      (snap) => {
+        state.adminsList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // Keep this account's own admin flag live off the same snapshot,
+        // rather than only the one-shot getDoc at sign-in: otherwise
+        // someone promoted to Admin mid-session sees no admin controls
+        // until they sign out and back in, and someone demoted keeps
+        // seeing controls whose writes firestore.rules then rejects.
+        const myEmail = state.authUser?.email || "";
+        state.isAdminExplicit = !!myEmail && snap.docs.some((d) => d.id === myEmail);
+        state.isAdmin = state.isOwner || state.isAdminExplicit;
+        render();
+      },
       (err) => { handleRealtimePermissionError(err); }
     );
   }
@@ -2194,6 +2212,8 @@ async function deleteParentMeeting(id) {
 }
 
 // ==================== RENDER ====================
+// Which access-error message we've already scrolled into view (see render()).
+let lastScrolledAccessError = "";
 function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
   if (!state.authUser) { root.innerHTML = renderSignInScreen(); attachSignInListeners(); return; }
@@ -2202,6 +2222,21 @@ function render() {
   updateFollowUpBadge();
   root.innerHTML = renderMain();
   attachMainListeners();
+  // The Authorised Teachers List's add/remove/promote actions can fail
+  // silently-looking otherwise (e.g. a rules rejection) — the confirm
+  // modal closes either way, so without this the only sign of trouble is
+  // small text below the compose bar, easy to miss if it's off-screen.
+  // Only scroll when the message itself changes: every live Firestore
+  // snapshot triggers a re-render, and scrolling on each one would keep
+  // yanking the page while the error is on screen.
+  if (state.accessFormError) {
+    if (lastScrolledAccessError !== state.accessFormError) {
+      const errEl = document.getElementById("access-form-error");
+      if (errEl) { lastScrolledAccessError = state.accessFormError; errEl.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    }
+  } else {
+    lastScrolledAccessError = "";
+  }
 }
 // Reflects the overdue/due-today grooming follow-up count in the browser
 // tab title, and on the installed app's icon where the platform
@@ -3202,7 +3237,7 @@ function renderSettingsSection() {
         <button class="dd-compose-send" type="button" id="btn-add-authorized" style="background:#3C6E47" title="Add">➤</button>
       </div>` : ""}
       ${ownerWasTransferred ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:10px">${escapeHtml(OWNER_EMAIL)} remains a permanent fallback and can always regain access if needed — it can only be changed by editing the app's code.</div>` : ""}
-      ${state.accessFormError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.accessFormError)}</div>` : ""}`;
+      ${state.accessFormError ? `<div class="dd-error" style="margin-top:14px;padding:10px 12px;border:1px solid #A3372B;border-radius:6px;background:#A3372B11" id="access-form-error">${escapeHtml(state.accessFormError)}</div>` : ""}`;
   } else {
     const year = new Date().getFullYear();
     const needsReview = !state.classConfig?.classesByYear?.[String(year)];
@@ -5495,18 +5530,26 @@ function runDelegatedAction(key, fn) {
 function handleDelegatedTap(e) {
   const yesBtn = e.target.closest && e.target.closest("#btn-confirm-delete-yes");
   if (yesBtn) { runDelegatedAction("confirm-delete-yes", () => confirmDeleteYes()); return; }
+  // Deliberately NOT dismissing on a backdrop tap. These confirmations can
+  // appear straight after typing (adding a teacher, saving an entry), so the
+  // on-screen keyboard is still collapsing as the modal appears — the
+  // vertically-centred box slides downwards while the viewport grows back.
+  // A tap aimed at "Yes" could land on the backdrop a moment later and
+  // silently cancel, which looked exactly like "I pressed Yes and nothing
+  // happened, nobody got added". Yes/No must be tapped explicitly now.
   const noBtn = e.target.closest && e.target.closest("#btn-confirm-delete-no");
-  const confirmBackdropHit = e.target.id === "confirm-delete-backdrop";
-  if (noBtn || confirmBackdropHit) { runDelegatedAction("confirm-delete-no", () => cancelDeleteConfirmation()); return; }
+  if (noBtn) { runDelegatedAction("confirm-delete-no", () => cancelDeleteConfirmation()); return; }
   // Same-day duplicate-entry warning — shared across Grooming, Suspension
   // and Parent Meeting "new entry" saves (see guardDuplicate), so it's
   // wired here in the one handler that's always live, rather than in any
   // one section's per-render attach*Listeners.
   const dupYesBtn = e.target.closest && e.target.closest("#btn-confirm-duplicate-yes");
   if (dupYesBtn) { runDelegatedAction("confirm-duplicate-yes", () => confirmDuplicateYes()); return; }
+  // Same reasoning as the delete confirmation above — this one pops up right
+  // after filling in a form, so a backdrop tap is even likelier to be a
+  // mis-landed "Yes".
   const dupNoBtn = e.target.closest && e.target.closest("#btn-confirm-duplicate-no");
-  const dupBackdropHit = e.target.id === "confirm-duplicate-backdrop";
-  if (dupNoBtn || dupBackdropHit) { runDelegatedAction("confirm-duplicate-no", () => cancelDuplicateConfirm()); return; }
+  if (dupNoBtn) { runDelegatedAction("confirm-duplicate-no", () => cancelDuplicateConfirm()); return; }
   const closeBtn = e.target.closest && e.target.closest("#modal-close");
   const backdropHit = e.target.id === "modal-backdrop";
   if (closeBtn || backdropHit) {

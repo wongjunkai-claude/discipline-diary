@@ -32,9 +32,15 @@ service cloud.firestore {
     function emailLower() {
       return request.auth.token.email.lower();
     }
+    // .get('email', '') rather than .data.email on purpose: if that document
+    // ever exists without an email field, reading it directly would make this
+    // rule error out, and since isOwner() feeds isAdmin() which feeds
+    // isMoeUser(), that single error would deny every request from everyone —
+    // a total app-wide lockout. The default keeps it degrading safely to
+    // "no transferred owner", leaving the hardcoded fallback owner working.
     function currentOwnerEmail() {
       return exists(/databases/$(database)/documents/settings/owner)
-        ? get(/databases/$(database)/documents/settings/owner).data.email
+        ? get(/databases/$(database)/documents/settings/owner).data.get('email', '').lower()
         : '';
     }
     function isOwner() {
@@ -86,15 +92,21 @@ service cloud.firestore {
       allow read, write: if isMoeUser();
     }
 
+    // App settings (class lists, school closure days, calendar overrides…).
+    // The `docId != 'owner'` guard matters: when two match blocks cover the
+    // same document, Firestore OR's them together — the more specific path
+    // does NOT override the broader one. Without this guard, the wildcard
+    // here would grant every authorized teacher write access to
+    // settings/owner, letting anyone make themselves Owner and then manage
+    // admins, regardless of the stricter rule directly below.
     match /settings/{docId} {
-      allow read, write: if isMoeUser();
+      allow read: if isMoeUser();
+      allow write: if isMoeUser() && docId != 'owner';
     }
     // The day-to-day Owner pointer (see the access-control note above).
-    // More specific than the /settings/{docId} match right above, so
-    // Firestore uses this block instead of that one for this exact
-    // document — any signed-in authorized user can read who the current
-    // Owner is, but only the current Owner can change it (which is also
-    // how a transfer gives up the outgoing owner's own rights immediately).
+    // Any signed-in authorized user can read who the current Owner is, but
+    // only the current Owner can change it — which is also how a transfer
+    // gives up the outgoing owner's own rights immediately.
     match /settings/owner {
       allow read: if isMoeUser();
       allow write: if isOwner();
