@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.64.1";
+const APP_VERSION = "2.70.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -84,7 +84,7 @@ function syncParentMeetingToSheet(m) {
     studentName: m.studentName, studentClass: m.studentClass,
     attendeesText: formatAttendeesForSheet(m.attendees, m.othersText),
     date: m.date,
-    reason: (m.deleted ? "Removed — " : "") + (m.reason || ""),
+    reason: (m.deleted ? "Removed — " : "") + (m.pmStatus === "Cancelled" ? "[Cancelled] " : m.pmStatus === "Postponed" ? "[Postponed] " : "") + (m.reason || ""),
     loggedBy: m.loggedBy,
   });
 }
@@ -248,6 +248,20 @@ const PM_REASON_OPTIONS = [
 // never show or store a Victim/Offender/Both/NA status.
 const NO_STATUS_PM_REASONS = new Set(["Academic Matters", "Learning Needs"]);
 const PM_STATUS_OPTIONS = ["Victim", "Offender", "Both", "NA"];
+// Whether the meeting itself went ahead — separate from the per-reason
+// Victim/Offender/Both/NA status above. Cancelled/Postponed meetings stay
+// visible in the log, but are excluded from every parent-meeting tally
+// (P-level counters, This Week/Upcoming/Completed counts, calendar and
+// annual-report totals) via isPmCounted() below, so they don't inflate
+// how many meetings actually took place.
+const PM_MEETING_STATUS_OPTIONS = ["Scheduled", "Postponed", "Cancelled"];
+const PM_MEETING_STATUS_STYLE = {
+  Postponed: { ink: "#B8863B", label: "POSTPONED" },
+  Cancelled: { ink: "#8A8571", label: "CANCELLED" },
+};
+function isPmCounted(m) {
+  return !m.deleted && m.pmStatus !== "Cancelled" && m.pmStatus !== "Postponed";
+}
 
 // ---------- Grooming Log config ----------
 // days: [1st warning, 2nd warning, final warning] — calendar days given to
@@ -588,7 +602,82 @@ async function confirmDeleteYes() {
     }
     try { await setDoc(doc(db, "settings", "schoolCalendarOverrides"), patch, { merge: true }); }
     catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
-  }
+  } else if (target.type === "authorizedUser") await removeAuthorizedEmail(target.id);
+  else if (target.type === "adminUser") await removeAdminEmail(target.id);
+  else if (target.type === "transferOwnership") await transferOwnership(target.id);
+  else if (target.type === "addAuthorized") await addAuthorizedEmail(target.id);
+  else if (target.type === "addAdmin") await addAdminEmail(target.id);
+}
+// ---------- Access management (Authorized Teachers / Admins) ----------
+// Valid email shape only — the @moe.edu.sg suffix is enforced by
+// firestore.rules anyway (isMoeUser() requires it before any of this
+// matters), this is just a friendlier client-side check.
+function isValidMoeEmail(email) {
+  return /^[^\s@]+@moe\.edu\.sg$/i.test(email);
+}
+// Small "OWNER"/"ADMIN" pill shown beside an email anywhere it appears in
+// the Manage Access page, so the account's tier is visible at a glance
+// regardless of which list it's found in.
+const ACCESS_PILL_STYLE = {
+  OWNER: "#1B2A41",
+  ADMIN: "#B8863B",
+};
+function accessPill(label) {
+  const ink = ACCESS_PILL_STYLE[label];
+  return `<span class="dd-issue-stage-badge" style="background:${ink}22;color:${ink};margin-left:6px">${label}</span>`;
+}
+async function addAuthorizedEmail(rawEmail) {
+  const email = (rawEmail || "").trim().toLowerCase();
+  if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
+  state.accessFormError = "";
+  try {
+    await setDoc(doc(db, "authorizedUsers", email), { email, addedAt: Date.now(), addedBy: teacherName() || state.authUser?.email || "" });
+  } catch (err) { state.accessFormError = `Couldn't add — ${err?.message || String(err)}`; }
+  render();
+}
+async function removeAuthorizedEmail(email) {
+  try { await deleteDoc(doc(db, "authorizedUsers", email)); }
+  catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  render();
+}
+async function addAdminEmail(rawEmail) {
+  if (!state.isOwner) return; // firestore.rules is the real gate; this just matches the UI
+  const email = (rawEmail || "").trim().toLowerCase();
+  if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
+  state.accessFormError = "";
+  try {
+    await setDoc(doc(db, "admins", email), { email, addedAt: Date.now(), addedBy: teacherName() || state.authUser?.email || "" });
+  } catch (err) { state.accessFormError = `Couldn't add — ${err?.message || String(err)}`; }
+  render();
+}
+async function removeAdminEmail(email) {
+  if (!state.isOwner) return;
+  try { await deleteDoc(doc(db, "admins", email)); }
+  catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  render();
+}
+// Hands the day-to-day Owner role to a new email. Writes the outgoing
+// owner into admins FIRST (while they still hold owner rights) so they
+// keep admin access rather than being cut off, then writes the new owner
+// to settings/owner LAST, since that write is what actually gives up the
+// current owner's own elevated rights under firestore.rules — reversing
+// this order would make the second write get rejected by the rules the
+// moment the first one takes effect. OWNER_EMAIL (the hardcoded
+// break-glass account) is unaffected either way and remains a permanent
+// fallback regardless of how many times ownership is handed over.
+async function transferOwnership(rawEmail) {
+  if (!state.isOwner) return;
+  const email = (rawEmail || "").trim().toLowerCase();
+  if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
+  state.accessFormError = "";
+  const outgoing = state.authUser?.email || "";
+  try {
+    if (outgoing && outgoing !== OWNER_EMAIL) {
+      await setDoc(doc(db, "admins", outgoing), { email: outgoing, addedAt: Date.now(), addedBy: outgoing });
+    }
+    await setDoc(doc(db, "settings", "owner"), { email, transferredAt: Date.now(), transferredBy: outgoing });
+  } catch (err) { state.accessFormError = `Couldn't transfer ownership — ${err?.message || String(err)}`; }
+  render();
 }
 // Tapping "+" opens this with an empty draft (id: null); tapping an
 // existing entry's calendar icon opens it pre-filled (id set) — Save
@@ -670,10 +759,11 @@ function renderExtraSchoolHolidayModal() {
     </div>`;
 }
 function renderDeleteConfirmModal() {
+  const msg = state.confirmDeleteTarget?.message || "Delete the entry?";
   return `
     <div class="dd-modal-backdrop" id="confirm-delete-backdrop">
       <div class="dd-modal" style="max-width:340px;text-align:center">
-        <div class="dd-modal-title" style="margin-bottom:18px">Delete the entry?</div>
+        <div class="dd-modal-title" style="margin-bottom:18px">${escapeHtml(msg)}</div>
         <div style="display:flex;gap:8px">
           <button class="dd-add-btn" style="flex:1;background:#8A8571" id="btn-confirm-delete-no">No</button>
           <button class="dd-add-btn" style="flex:1;background:#A3372B" id="btn-confirm-delete-yes">Yes</button>
@@ -779,6 +869,13 @@ const state = {
   authUser: null,
   authError: "",
   userList: [],
+  isOwner: false,
+  isAdmin: false,
+  isAdminExplicit: false,
+  currentOwnerEmail: "",
+  adminsList: [],
+  authorizedList: [],
+  accessFormError: "",
   teacherName: localStorage.getItem("dd-teacher-name") || "",
   holidays: null,
   section: "dashboard",
@@ -816,6 +913,11 @@ const state = {
   editingIncidentId: null,
   historyOpen: {},
   entryExpanded: {},
+  // Which Manage Access swipe row (if any) is currently pulled open,
+  // e.g. "auth-tan_mei_ling@moe.edu.sg" or "admin-...". Set by the touch
+  // drag handlers in attachSwipeListeners() so the row stays open across
+  // any re-render, not just while the finger is down.
+  swipeOpenId: null,
   followDraft: {},
   editingFollowUpId: null,
   followEditDraft: {},
@@ -852,8 +954,22 @@ let unsubSuspensions = null;
 let unsubHolidays = null;
 let unsubParentMeetings = null;
 let unsubUsers = null;
+let unsubAdmins = null;
+let unsubAuthorized = null;
+let unsubOwner = null;
 
 const ALLOWED_EMAIL_DOMAIN = "moe.edu.sg";
+// Permanent "break-glass" account — always allowed in no matter what,
+// even if the Authorized Teachers/Admins/Owner data is empty or wrong, so
+// there's always a way to recover access management. Changing this
+// requires editing the code (here) AND firestore.rules, then redeploying
+// both — it's intentionally not manageable from inside the app.
+//
+// The *day-to-day* Owner is separate and IS handed over from inside the
+// app (Settings → Manage Access → Transfer Ownership), stored in the
+// settings/owner Firestore doc and reflected live in state.currentOwnerEmail.
+// This constant stays valid as a permanent fallback even after a transfer.
+const OWNER_EMAIL = "wong_jun_kai@moe.edu.sg";
 async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
   // Not passing an "hd" domain hint here — the account picker will show
@@ -883,6 +999,9 @@ onAuthStateChanged(auth, async (u) => {
   if (unsubHolidays) { unsubHolidays(); unsubHolidays = null; }
   if (unsubParentMeetings) { unsubParentMeetings(); unsubParentMeetings = null; }
   if (unsubUsers) { unsubUsers(); unsubUsers = null; }
+  if (unsubAdmins) { unsubAdmins(); unsubAdmins = null; }
+  if (unsubAuthorized) { unsubAuthorized(); unsubAuthorized = null; }
+  if (unsubOwner) { unsubOwner(); unsubOwner = null; }
   if (!u) { state.authUser = null; render(); return; }
   const email = (u.email || "").toLowerCase();
   if (!email.endsWith(`@${ALLOWED_EMAIL_DOMAIN}`)) {
@@ -893,22 +1012,108 @@ onAuthStateChanged(auth, async (u) => {
     return;
   }
   state.authUser = { uid: u.uid, email };
+  // Provisional — corrected (possibly to true, if ownership was handed to
+  // this account) once the live settings/owner listener starts below.
+  state.isOwner = email === OWNER_EMAIL;
   try {
     const userDoc = await getDoc(doc(db, "users", u.uid));
     state.teacherName = (userDoc.exists() && userDoc.data().name) ? userDoc.data().name : "";
   } catch (e) {
+    // A permission-denied read here (the "users" collection only requires
+    // being signed in AND authorized — see firestore.rules) means this
+    // account isn't on the Authorized Teachers list and isn't an admin,
+    // i.e. their access has been removed. Sign them out with a clear
+    // message rather than silently falling back to an empty app. Any
+    // other kind of error (offline, etc.) keeps the old local fallback.
+    if (e?.code === "permission-denied") {
+      state.authError = "Your access to Discipline Diary has been removed. Contact your school's Discipline Diary admin if you believe this is a mistake.";
+      state.authUser = null;
+      await signOutOfApp();
+      render();
+      return;
+    }
     state.teacherName = localStorage.getItem("dd-teacher-name") || "";
   }
+  state.isAdminExplicit = false;
+  if (!state.isOwner) {
+    try {
+      const adminDoc = await getDoc(doc(db, "admins", email));
+      state.isAdminExplicit = adminDoc.exists();
+    } catch (e) { state.isAdminExplicit = false; }
+  }
+  state.isAdmin = state.isOwner || state.isAdminExplicit;
   if (state.teacherName) startListening();
   render();
 });
 
+// Fires on any live Firestore listener's error callback. A permission-
+// denied error here (as opposed to offline/network errors) means this
+// account's access was just revoked while they were mid-session — the
+// Authorized Teachers/Admins removal takes effect on Firestore's side in
+// real time, so this is how an active "unauthorized user" session actually
+// gets kicked out immediately, not just blocked on their next sign-in.
+function handleRealtimePermissionError(err) {
+  if (err?.code === "permission-denied" && state.authUser) {
+    state.authError = "Your access to Discipline Diary has been removed. Contact your school's Discipline Diary admin if you believe this is a mistake.";
+    state.authUser = null;
+    signOutOfApp();
+    render();
+    return true;
+  }
+  return false;
+}
+// Starts/stops the admin-only listeners (Admins list, Authorized Teachers
+// list) to match the current state.isAdmin. Called at initial sign-in and
+// again every time the live Owner listener fires, since a mid-session
+// ownership transfer can flip state.isAdmin for both the outgoing and
+// incoming owner without either of them signing out and back in.
+// Every signed-in authorized user can now VIEW the Admins/Authorized
+// Teachers lists (Settings → Authorized Teachers / Manage Access) — only
+// managing them (add/remove/transfer) is restricted to admins/owner, and
+// that's enforced separately in the UI (state.isAdmin/state.isOwner gates
+// on the buttons) and in firestore.rules (writes require isAdmin()/
+// isOwner()). So these listeners just always run once signed in; nothing
+// left to start/stop reactively, but the function name stays for the one
+// call site that re-invokes it when ownership changes.
+function ensureAccessSubscriptions() {
+  if (!unsubAdmins) {
+    unsubAdmins = onSnapshot(
+      collection(db, "admins"),
+      (snap) => { state.adminsList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); render(); },
+      (err) => { handleRealtimePermissionError(err); }
+    );
+  }
+  if (!unsubAuthorized) {
+    unsubAuthorized = onSnapshot(
+      collection(db, "authorizedUsers"),
+      (snap) => { state.authorizedList = snap.docs.map((d) => ({ id: d.id, ...d.data() })); render(); },
+      (err) => { handleRealtimePermissionError(err); }
+    );
+  }
+}
 function startListening() {
   state.dataLoaded = false;
   state.suspLoaded = false;
   state.pmLoaded = false;
   if (unsubUsers) unsubUsers();
-  unsubUsers = onSnapshot(collection(db, "users"), (snap) => { state.userList = snap.docs.map((d) => d.data()); render(); });
+  unsubUsers = onSnapshot(
+    collection(db, "users"),
+    (snap) => { state.userList = snap.docs.map((d) => d.data()); render(); },
+    (err) => { handleRealtimePermissionError(err); }
+  );
+  if (unsubOwner) unsubOwner();
+  unsubOwner = onSnapshot(
+    doc(db, "settings", "owner"),
+    (snap) => {
+      state.currentOwnerEmail = snap.exists() ? (snap.data().email || "").toLowerCase() : "";
+      state.isOwner = !!state.authUser && (state.authUser.email === OWNER_EMAIL || state.authUser.email === state.currentOwnerEmail);
+      state.isAdmin = state.isOwner || state.isAdminExplicit;
+      ensureAccessSubscriptions();
+      render();
+    },
+    () => {}
+  );
+  ensureAccessSubscriptions();
   unsubIncidents = onSnapshot(
     collection(db, "incidents"),
     (snap) => {
@@ -917,7 +1122,7 @@ function startListening() {
       writeBackupSnapshot();
       render();
     },
-    () => { state.dataLoaded = true; render(); }
+    (err) => { if (!handleRealtimePermissionError(err)) { state.dataLoaded = true; render(); } }
   );
   unsubSuspensions = onSnapshot(
     collection(db, "suspensions"),
@@ -927,7 +1132,7 @@ function startListening() {
       writeBackupSnapshot();
       render();
     },
-    () => { state.suspLoaded = true; render(); }
+    (err) => { if (!handleRealtimePermissionError(err)) { state.suspLoaded = true; render(); } }
   );
   unsubParentMeetings = onSnapshot(
     collection(db, "parentMeetings"),
@@ -937,7 +1142,7 @@ function startListening() {
       writeBackupSnapshot();
       render();
     },
-    () => { state.pmLoaded = true; render(); }
+    (err) => { if (!handleRealtimePermissionError(err)) { state.pmLoaded = true; render(); } }
   );
   ensureHolidaysSeeded();
   checkAnnualPublicHolidayFetch();
@@ -1783,6 +1988,7 @@ function freshPmDraft(m) {
     date: m?.date || todayISO(),
     reasons: r.selected, reasonStatuses: r.statuses, reasonOthersText: r.othersText,
     attendees: (m?.attendees || []).slice(), othersText: m?.othersText || "",
+    meetingStatus: m?.pmStatus || "Scheduled",
   };
 }
 async function submitNewParentMeeting(e) {
@@ -1794,6 +2000,7 @@ async function submitNewParentMeeting(e) {
   const { reasons, reason } = composePmReasonData(state._pmDraft, "");
   const attendees = state._pmDraft.attendees.slice();
   const othersText = state._pmDraft.othersText.trim();
+  const pmStatus = state._pmDraft.meetingStatus || "Scheduled";
   if (!studentName || !studentClass || !date || reasons.length === 0 || attendees.length === 0) {
     state.pmFormError = attendees.length === 0 ? "Select at least one attendee before saving."
       : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
@@ -1816,9 +2023,9 @@ async function submitNewParentMeeting(e) {
       const now = Date.now();
       const attendeeSummaryStr = attendees.map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
       const docRef = await addDoc(collection(db, "parentMeetings"), {
-        studentName, studentClass, date, reason, reasons, attendees, othersText,
+        studentName, studentClass, date, reason, reasons, attendees, othersText, pmStatus,
         loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}`, by: teacherName(), at: now }],
+        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}${pmStatus !== "Scheduled" ? ` (${pmStatus})` : ""}`, by: teacherName(), at: now }],
       });
       state.showNewPmForm = false;
       state._pmDraft = null;
@@ -1826,7 +2033,7 @@ async function submitNewParentMeeting(e) {
       state.pmTab = "All";
       state.selectedPmId = docRef.id;
       state.entryExpanded[docRef.id] = true;
-      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, loggedBy: teacherName(), deleted: false });
+      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, pmStatus, loggedBy: teacherName(), deleted: false });
     } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
 
@@ -1853,6 +2060,7 @@ async function submitEditParentMeeting(e) {
     studentName: f.studentName.value.trim().replace(/\s+/g, " "), studentClass: f.studentClass.value,
     date: f.date.value, reason, reasons,
     attendees: state._pmDraft.attendees.slice(), othersText: state._pmDraft.othersText.trim(),
+    pmStatus: state._pmDraft.meetingStatus || "Scheduled",
   };
   if (!updated.studentName || !updated.studentClass || !updated.date || reasons.length === 0 || updated.attendees.length === 0) {
     state.pmFormError = updated.attendees.length === 0 ? "Select at least one attendee before saving."
@@ -1867,9 +2075,9 @@ async function submitEditParentMeeting(e) {
     return;
   }
   state.pmFormError = "";
-  const changes = diffText(m, updated, [
+  const changes = diffText({ ...m, pmStatus: m.pmStatus || "Scheduled" }, updated, [
     { key: "studentName", label: "Student name" }, { key: "studentClass", label: "Class" },
-    { key: "date", label: "Date" }, { key: "reason", label: "Reason" },
+    { key: "date", label: "Date" }, { key: "reason", label: "Reason" }, { key: "pmStatus", label: "Meeting status" },
   ]);
   if (JSON.stringify((m.attendees || []).slice().sort()) !== JSON.stringify(updated.attendees.slice().sort())) changes.push("Attendees updated");
   if (changes.length === 0) { state.editingPmId = null; state._pmDraft = null; render(); return; }
@@ -2061,7 +2269,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Editing, removing, backups</div>
-          <p>Every entry in all three logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg Google accounts; Settings has a User List of everyone who's signed in.</p>
+          <p>Every entry in all three logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorized Teachers list — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
         </div>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
@@ -2110,7 +2318,7 @@ function computeDailyCountsForMonth(monthKeyStr) {
       else counts[e.date].suspensionISS++;
     });
   });
-  state.parentMeetings.forEach((m) => { if (m.deleted) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
   return counts;
 }
 function suspensionEntryCountForMonth(monthKeyStr) {
@@ -2187,7 +2395,7 @@ function computeMonthlyTrend() {
   keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
   state.suspensions.forEach((s) => { if (s.deleted) return; const k = monthKey(s.startDate); if (counts[k]) counts[k].suspension++; });
-  state.parentMeetings.forEach((m) => { if (m.deleted) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ key: k, label: monthLabelFromKey(k), ...counts[k] }));
 }
 const CHART_COLORS = { discipline: "#1B2A41", suspension: "#B8863B", parentMeeting: "#3C6E47" };
@@ -2248,7 +2456,7 @@ function availableReportYears() {
 }
 function computeYearlyCategoryTotals(year) {
   const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
-  const parentMeeting = state.parentMeetings.filter((m) => !m.deleted && m.date && m.date.startsWith(`${year}-`)).length;
+  const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && m.date && m.date.startsWith(`${year}-`)).length;
   const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)).length;
   return { discipline, suspension, parentMeeting };
 }
@@ -2258,7 +2466,7 @@ function computeYearMonthlyTrend(year) {
   keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
   state.suspensions.forEach((s) => { if (s.deleted) return; const k = monthKey(s.startDate); if (counts[k]) counts[k].suspension++; });
-  state.parentMeetings.forEach((m) => { if (m.deleted) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ label: monthLabelFromKey(k), ...counts[k] }));
 }
 function computeYearTermTrend(year) {
@@ -2267,7 +2475,7 @@ function computeYearTermTrend(year) {
     label: t.label,
     discipline: state.incidents.filter((i) => !i.deleted && i.date >= t.start && i.date <= t.end).length,
     suspension: state.suspensions.filter((s) => !s.deleted && s.startDate >= t.start && s.startDate <= t.end).length,
-    parentMeeting: state.parentMeetings.filter((m) => !m.deleted && m.date >= t.start && m.date <= t.end).length,
+    parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && m.date >= t.start && m.date <= t.end).length,
   }));
 }
 function computeYearLevelRanking(year) {
@@ -2842,23 +3050,91 @@ function renderSettingsSection() {
         "edit-closure-day", `data-id="${e.id}"`,
         "request-delete-closure-day", e.id
       )).join("")}`;
-  } else if (state.settingsView === "userList") {
-    const users = (state.userList || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  } else if (state.settingsView === "manageAccess") {
+    const admins = (state.adminsList || []).slice().sort((a, b) => a.email.localeCompare(b.email));
+    const authorized = (state.authorizedList || []).slice().sort((a, b) => a.email.localeCompare(b.email));
+    const effectiveOwner = state.currentOwnerEmail || OWNER_EMAIL;
+    const ownerWasTransferred = effectiveOwner !== OWNER_EMAIL;
+    // The "users" collection gets a doc written the first time someone
+    // actually signs in and picks a display name (see freshSignIn/rename
+    // flow) — matching an authorized email against it is how we tell
+    // "added to the list" apart from "has actually signed in".
+    const onboardedByEmail = {};
+    (state.userList || []).forEach((u) => { if (u.email) onboardedByEmail[u.email.toLowerCase()] = u; });
+    const adminEmailSet = new Set(admins.map((a) => a.id));
+    const tierPillFor = (email) => email === effectiveOwner ? accessPill("OWNER") : adminEmailSet.has(email) ? accessPill("ADMIN") : "";
+    // Wraps a row so it can be swiped left to reveal a full-width "Remove"
+    // action (attachSwipeListeners() drives the drag) — only when the
+    // viewer actually has permission to remove it; otherwise it's just a
+    // plain, non-interactive row. The small ✕ inside innerHtml (when
+    // present) keeps working as a mouse-friendly fallback, since swiping
+    // needs touch and desktop admins won't have that.
+    const swipeRow = (idKey, innerHtml, removable, action, dataId) => {
+      if (!removable) return `<div class="dd-settings-list-row">${innerHtml}</div>`;
+      const open = state.swipeOpenId === idKey;
+      return `
+      <div class="dd-swipe-row">
+        <button type="button" class="dd-swipe-action" data-action="${action}" data-id="${escapeHtml(dataId)}">Remove</button>
+        <div class="dd-swipe-content" data-swipe-target="${escapeHtml(idKey)}" style="transform:translateX(${open ? "-84px" : "0"})">
+          <div class="dd-settings-list-row">${innerHtml}</div>
+        </div>
+      </div>`;
+    };
     body = `
       ${backBtn("Settings", "settings-back-to-menu")}
-      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">User List</div>
-      ${users.length === 0 ? `<div class="dd-dash-empty">No one has signed in yet.</div>` : `
-      <div class="dd-level-breakdown">
-        <div class="dd-level-row dd-level-row-header">
-          <div class="dd-level-cell-class" style="width:auto;flex:1 1 0">Name</div>
-          <div class="dd-level-cell-term" style="flex:2 1 0">Email</div>
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">${state.isAdmin ? "Manage Access" : "Authorized Teachers"}</div>
+      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:14px">
+        ${state.isAdmin
+          ? `Only @${ALLOWED_EMAIL_DOMAIN} emails on the list below can sign in. Removing someone takes effect immediately, even if they're already signed in — they're logged out on their next action and can't sign in again until re-added.`
+          : `Everyone who can currently sign in to Discipline Diary. Only an Owner or Admin can add or remove someone here.`}
+      </div>
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Authorized Teachers</div>
+      ${authorized.length === 0 ? `<div class="dd-dash-empty">${state.isAdmin ? "No one added yet — add emails below." : "No one added yet."}</div>` : authorized.map((u) => {
+        const onboarded = onboardedByEmail[u.email];
+        const inner = `
+        <div style="flex:1;min-width:0">
+          <div class="dd-sans" style="font-size:14px">${escapeHtml(u.email)}${tierPillFor(u.email)}</div>
+          <div class="dd-mono-muted" style="font-size:11px;color:${onboarded ? "#3C6E47" : "#B8863B"}">
+            ${onboarded ? `● Signed in${onboarded.name ? ` as ${escapeHtml(onboarded.name)}` : ""}` : "● Not signed in yet"}
+          </div>
         </div>
-        ${users.map((u) => `
-        <div class="dd-level-row">
-          <div class="dd-level-cell-class" style="width:auto;flex:1 1 0">${escapeHtml(u.name || "—")}</div>
-          <div class="dd-level-cell-term" style="flex:2 1 0;text-align:left">${escapeHtml(u.email || "—")}</div>
-        </div>`).join("")}
-      </div>`}`;
+        ${state.isAdmin ? `<button class="dd-followup-icon-btn" data-action="remove-authorized" data-id="${escapeHtml(u.id)}" title="Remove access">✕</button>` : ""}`;
+        return swipeRow(`auth-${u.id}`, inner, state.isAdmin, "remove-authorized", u.id);
+      }).join("")}
+      ${state.isAdmin ? `
+      <div class="dd-followup-row" style="margin-top:10px">
+        <input class="dd-input dd-followup-input" id="new-authorized-email" placeholder="teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <button class="dd-add-btn" type="button" id="btn-add-authorized">Add</button>
+      </div>` : ""}
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:24px 0 8px">Owner</div>
+      <div class="dd-settings-list-row">
+        <div style="flex:1;min-width:0">
+          <div class="dd-sans" style="font-size:14px">${escapeHtml(effectiveOwner)}${accessPill("OWNER")}</div>
+          ${ownerWasTransferred ? "" : `<div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase">Permanent</div>`}
+        </div>
+      </div>
+      ${ownerWasTransferred ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:6px">${escapeHtml(OWNER_EMAIL)} remains a permanent fallback and can always regain access if needed — it can only be changed by editing the app's code.</div>` : ""}
+      ${state.isOwner ? `
+      <div class="dd-mono-muted" style="font-size:12px;margin-top:10px">Hand over ownership to someone else. You'll keep admin access afterwards.</div>
+      <div class="dd-followup-row" style="margin-top:6px">
+        <input class="dd-input dd-followup-input" id="new-owner-email" placeholder="teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <button class="dd-add-btn" type="button" id="btn-transfer-owner" style="background:#A3372B">Transfer</button>
+      </div>` : ""}
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:24px 0 8px">Admins</div>
+      ${state.isAdmin ? `<div class="dd-mono-muted" style="font-size:12px;margin-bottom:8px">Admins can add/remove Authorized Teachers above. Only the Owner can add/remove admins.</div>` : ""}
+      ${admins.length === 0 ? `<div class="dd-dash-empty">No additional admins yet.</div>` : admins.map((u) => swipeRow(`admin-${u.id}`, `
+        <div style="flex:1;min-width:0"><div class="dd-sans" style="font-size:14px">${escapeHtml(u.email)}${accessPill("ADMIN")}</div></div>
+        ${state.isOwner ? `<button class="dd-followup-icon-btn" data-action="remove-admin" data-id="${escapeHtml(u.id)}" title="Remove admin">✕</button>` : ""}`,
+        state.isOwner, "remove-admin", u.id)).join("")}
+      ${state.isOwner ? `
+      <div class="dd-followup-row" style="margin-top:10px">
+        <input class="dd-input dd-followup-input" id="new-admin-email" placeholder="teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
+        <button class="dd-add-btn" type="button" id="btn-add-admin">Add</button>
+      </div>` : ""}
+      ${state.accessFormError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.accessFormError)}</div>` : ""}`;
   } else {
     const year = new Date().getFullYear();
     const needsReview = !state.classConfig?.classesByYear?.[String(year)];
@@ -2870,7 +3146,7 @@ function renderSettingsSection() {
         ${menuRow("Annual Summary Reports", "settings-open-years")}
         ${menuRow("Classes For The Year", "settings-open-classes")}
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
-        ${menuRow("User List", "settings-open-users")}
+        ${menuRow(state.isAdmin ? "Manage Access" : "Authorized Teachers", "settings-open-access")}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -2895,11 +3171,11 @@ function renderClassPillsRow(pageKey, level) {
       ${classes.map((c) => `<button type="button" class="dd-range-pill${selected === c ? " active" : ""}" style="flex:1" data-action="select-class-pill" data-page="${pageKey}" data-class="${c}">${c}</button>`).join("")}
     </div>`;
 }
-function renderLevelBreakdown(pageKey, items, dateField) {
+function renderLevelBreakdown(pageKey, items, dateField, isActive) {
   const year = new Date().getFullYear();
   const moe = computeMoeCalendar(year);
   const today = todayISO();
-  const active = items.filter((it) => !it.deleted);
+  const active = items.filter(isActive || ((it) => !it.deleted));
   const levelCounts = [1, 2, 3, 4, 5, 6].map((lvl) => ({
     level: lvl,
     count: active.filter((it) => classLevel(it.studentClass) === lvl).length,
@@ -2995,7 +3271,7 @@ function computeCountsForDate(dateISO) {
     if (s.deleted) return;
     suspensionDayEntries(s).forEach((e) => { if (e.date === dateISO) { if (e.type === "OSS") c.suspensionOSS++; else c.suspensionISS++; } });
   });
-  state.parentMeetings.forEach((m) => { if (!m.deleted && m.date === dateISO) c.parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (isPmCounted(m) && m.date === dateISO) c.parentMeeting++; });
   return c;
 }
 function suspensionEntryCountForRange(fromISO, toISO) {
@@ -3141,7 +3417,7 @@ function renderYearCalendar(incl) {
   const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
   const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
   totals.discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
-  totals.parentMeeting = state.parentMeetings.filter((m) => !m.deleted && m.date && m.date.startsWith(`${year}-`)).length;
+  totals.parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && m.date && m.date.startsWith(`${year}-`)).length;
   totals.suspension = suspensionEntryCountForRange(`${year}-01-01`, `${year}-12-31`);
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
   return `
@@ -4215,7 +4491,11 @@ function filteredParentMeetings() {
 }
 function pmCounts() {
   const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
-  state.parentMeetings.forEach((m) => { if (m.deleted) { c.Deleted++; return; } c[parentMeetingWeekCategory(m)]++; });
+  state.parentMeetings.forEach((m) => {
+    if (m.deleted) { c.Deleted++; return; }
+    if (!isPmCounted(m)) return; // Cancelled/Postponed stay in the log but don't tally
+    c[parentMeetingWeekCategory(m)]++;
+  });
   return c;
 }
 
@@ -4226,7 +4506,7 @@ function renderParentMeetingSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        ${renderLevelBreakdown("pm", state.parentMeetings, "date")}
+        ${renderLevelBreakdown("pm", state.parentMeetings, "date", isPmCounted)}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -4261,7 +4541,7 @@ function renderParentMeetingDetail(m) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(m.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(m.studentName)}${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
           <div class="dd-card-meta dd-card-meta-primary">${formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
         </div>
@@ -4310,6 +4590,10 @@ function renderPmForm(isEdit) {
           </div>
           <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
         </div>
+        <label class="dd-label">Meeting status <span class="dd-mono-muted" style="font-size:11px;text-transform:none">cancelled/postponed meetings stay in the log but aren't counted in tallies</span></label>
+        <div class="dd-pm-status-row" style="margin-bottom:12px">
+          ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill ${(d.meetingStatus || "Scheduled") === s ? "active" : ""}" data-action="set-pm-meeting-status" data-status="${s}">${s}</button>`).join("")}
+        </div>
         ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>
         <div class="dd-checkbox-group">
@@ -4329,6 +4613,62 @@ function renderPmForm(isEdit) {
     </div>`;
 }
 
+// Drives the swipe-left-to-reveal-Remove gesture on Manage Access rows
+// (renderSettingsSection's swipeRow() builds the markup). Pure DOM
+// manipulation during the drag — no render() per touchmove, since that
+// would tear down and rebuild the very element being dragged. state.
+// swipeOpenId is only updated at the end of a gesture, so the row's
+// position survives an unrelated re-render (e.g. a live list update)
+// triggered while it's open.
+function attachSwipeListeners() {
+  const REVEAL = 84; // px — matches .dd-swipe-action's width
+  document.querySelectorAll(".dd-swipe-content[data-swipe-target]").forEach((el) => {
+    const id = el.dataset.swipeTarget;
+    let startX = 0, startY = 0, baseX = 0, dragging = null, lastX = 0;
+    el.addEventListener("touchstart", (e) => {
+      if (state.swipeOpenId && state.swipeOpenId !== id) {
+        const prev = document.querySelector(`.dd-swipe-content[data-swipe-target="${state.swipeOpenId}"]`);
+        if (prev) prev.style.transform = "translateX(0px)";
+        state.swipeOpenId = null;
+      }
+      const t = e.touches[0];
+      startX = t.clientX; startY = t.clientY;
+      baseX = state.swipeOpenId === id ? -REVEAL : 0;
+      lastX = baseX;
+      dragging = null;
+    }, { passive: true });
+    el.addEventListener("touchmove", (e) => {
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (dragging === null) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        dragging = Math.abs(dx) > Math.abs(dy); // horizontal drag vs. vertical page scroll
+      }
+      if (!dragging) return;
+      e.preventDefault();
+      lastX = Math.max(-REVEAL, Math.min(0, baseX + dx));
+      el.style.transform = `translateX(${lastX}px)`;
+    }, { passive: false });
+    el.addEventListener("touchend", () => {
+      if (!dragging) return;
+      // Read back the dragged distance from our own tracked `lastX`, not
+      // getComputedStyle(el).transform — with the CSS transition on this
+      // element, the computed style can still report the pre-drag value
+      // synchronously right after we set it (the transition hasn't been
+      // flushed to a frame yet), which made every swipe snap shut again.
+      const open = lastX < -REVEAL / 2;
+      el.style.transform = `translateX(${open ? -REVEAL : 0}px)`;
+      state.swipeOpenId = open ? id : null;
+    });
+    // A tap while open just closes it again (a real swipe's touchmove
+    // suppresses the browser's own synthetic click, so this only fires
+    // for an actual tap, not the end of a drag).
+    el.addEventListener("click", () => {
+      if (state.swipeOpenId === id) { el.style.transform = "translateX(0px)"; state.swipeOpenId = null; }
+    });
+  });
+}
 // ==================== LISTENERS ====================
 function attachMainListeners() {
   const undoBtn = document.getElementById("btn-undo-delete");
@@ -4394,8 +4734,37 @@ function attachMainListeners() {
   document.querySelectorAll('[data-action="settings-open-holidays"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsView = "holidays"; state.saveError = false; render(); }));
 
-  document.querySelectorAll('[data-action="settings-open-users"]').forEach((el) =>
-    el.addEventListener("click", () => { state.settingsView = "userList"; render(); }));
+  document.querySelectorAll('[data-action="settings-open-access"]').forEach((el) =>
+    el.addEventListener("click", () => { state.accessFormError = ""; state.settingsView = "manageAccess"; render(); }));
+  document.querySelectorAll('[data-action="remove-authorized"]').forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("authorizedUser", el.dataset.id, { message: `Remove ${el.dataset.id}'s access? They won't be able to sign in again until re-added.` })));
+  document.querySelectorAll('[data-action="remove-admin"]').forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("adminUser", el.dataset.id, { message: `Remove ${el.dataset.id} as an admin? They'll keep their teacher access unless also removed from Authorized Teachers.` })));
+  const addAuthorizedBtn = document.getElementById("btn-add-authorized");
+  if (addAuthorizedBtn) addAuthorizedBtn.addEventListener("click", () => {
+    const input = document.getElementById("new-authorized-email");
+    const email = (input?.value || "").trim().toLowerCase();
+    if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
+    state.accessFormError = "";
+    requestDeleteConfirmation("addAuthorized", email, { message: `Add ${email} to Authorized Teachers? They'll be able to sign in right away.` });
+  });
+  const addAdminBtn = document.getElementById("btn-add-admin");
+  if (addAdminBtn) addAdminBtn.addEventListener("click", () => {
+    const input = document.getElementById("new-admin-email");
+    const email = (input?.value || "").trim().toLowerCase();
+    if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
+    state.accessFormError = "";
+    requestDeleteConfirmation("addAdmin", email, { message: `Make ${email} an admin? They'll be able to add/remove Authorized Teachers.` });
+  });
+  const transferOwnerBtn = document.getElementById("btn-transfer-owner");
+  if (transferOwnerBtn) transferOwnerBtn.addEventListener("click", () => {
+    const input = document.getElementById("new-owner-email");
+    const email = (input?.value || "").trim().toLowerCase();
+    if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
+    requestDeleteConfirmation("transferOwnership", email, { message: `Transfer ownership to ${email}? They become the primary Owner. You'll keep admin access.` });
+  });
+  attachSwipeListeners();
+
   const signOutBtn = document.getElementById("btn-app-sign-out");
   if (signOutBtn) signOutBtn.addEventListener("click", signOutOfApp);
 
@@ -4954,6 +5323,8 @@ function attachPmFormModalListeners() {
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._pmDraft[name] = el.value; }); };
     syncField("studentName");
     attachPmReasonPickerListeners(form, state._pmDraft, "");
+    form.querySelectorAll('[data-action="set-pm-meeting-status"]').forEach((el) =>
+      el.addEventListener("click", () => { state._pmDraft.meetingStatus = el.dataset.status; renderKeepingModalScroll(); }));
     const pmDateEl = form.elements["date"];
     if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];

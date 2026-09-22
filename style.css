@@ -387,6 +387,25 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
   display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #E4E1D4;
 }
 .dd-settings-list-row:last-child { border-bottom: none; }
+
+/* Swipe-left-to-remove wrapper for Manage Access rows (Authorized
+   Teachers / Admins). .dd-swipe-content is dragged via touch JS in
+   app.js; .dd-swipe-action sits underneath, revealed as it slides left.
+   Swiping only reveals the action — tapping it still goes through the
+   same Yes/No confirmation as the old ✕ button did. */
+.dd-swipe-row { position: relative; overflow: hidden; border-bottom: 1px solid #E4E1D4; }
+.dd-swipe-row:last-child { border-bottom: none; }
+.dd-swipe-action {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 84px; box-sizing: border-box;
+  background: #A3372B; color: #fff; border: none; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.dd-swipe-content {
+  position: relative; background: #FBFAF6; touch-action: pan-y;
+  transition: transform 0.2s ease;
+}
+.dd-swipe-content .dd-settings-list-row { border-bottom: none; }
 button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 
 .dd-settings-menu-group {

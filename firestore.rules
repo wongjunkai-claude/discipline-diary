@@ -1,15 +1,57 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Only signed-in @moe.edu.sg accounts may access anything in this
-    // database. This mirrors the same domain check the app does after
-    // Google Sign-In — enforcing it here too means a client-side bug (or
-    // someone bypassing the app's own check) still can't get in with a
-    // non-school account, since Firestore itself is the actual gatekeeper.
-    function isMoeUser() {
+    // ---------- Access control ----------
+    // Three tiers:
+    //   1. Owner  — always allowed in, always able to manage everyone else.
+    //               Two ways to hold this: (a) BOOTSTRAP_OWNER_EMAIL below,
+    //               a permanent hardcoded fallback that can only change by
+    //               editing this file (and app.js's OWNER_EMAIL) and
+    //               redeploying — this guarantees there's always at least
+    //               one account that can bootstrap/recover access even if
+    //               Firestore data is empty or wrong; or (b) whoever's
+    //               email is currently written to settings/owner, which
+    //               the current Owner can hand over from inside the app
+    //               (Settings → Manage Access → Transfer Ownership) — no
+    //               redeploy needed for that day-to-day handover.
+    //   2. Admin  — emails listed in admins/{email}. Can manage the
+    //               Authorized Teachers list (below). Only the Owner can
+    //               add/remove admins.
+    //   3. Authorized Teacher — emails listed in authorizedUsers/{email}.
+    //               Can use the app (read/write logs) but cannot manage
+    //               who else has access.
+    // Removing someone from authorizedUsers (or admins), or transferring
+    // ownership away from them, takes effect immediately — every rule
+    // below re-evaluates on each request/listener update, so an active
+    // session is cut off in real time, not just blocked on next sign-in.
+    function isMoeDomain() {
       return request.auth != null
         && request.auth.token.email != null
         && request.auth.token.email.matches('.*@moe[.]edu[.]sg$');
+    }
+    function emailLower() {
+      return request.auth.token.email.lower();
+    }
+    function currentOwnerEmail() {
+      return exists(/databases/$(database)/documents/settings/owner)
+        ? get(/databases/$(database)/documents/settings/owner).data.email
+        : '';
+    }
+    function isOwner() {
+      return isMoeDomain() &&
+        (emailLower() == 'wong_jun_kai@moe.edu.sg' || emailLower() == currentOwnerEmail());
+    }
+    function isAdmin() {
+      return isMoeDomain() && (isOwner() ||
+        exists(/databases/$(database)/documents/admins/$(emailLower())));
+    }
+    // Kept as "isMoeUser" (rather than renaming everywhere below) since
+    // every collection's rule already reads isMoeUser() — the meaning
+    // upgraded from "any @moe.edu.sg account" to "any @moe.edu.sg account
+    // that's also on the Authorized Teachers list (or an admin/owner)".
+    function isMoeUser() {
+      return isMoeDomain() && (isAdmin() ||
+        exists(/databases/$(database)/documents/authorizedUsers/$(emailLower())));
     }
 
     // Discipline log entries. Deletion is permanent and immediate (no
@@ -47,14 +89,42 @@ service cloud.firestore {
     match /settings/{docId} {
       allow read, write: if isMoeUser();
     }
+    // The day-to-day Owner pointer (see the access-control note above).
+    // More specific than the /settings/{docId} match right above, so
+    // Firestore uses this block instead of that one for this exact
+    // document — any signed-in authorized user can read who the current
+    // Owner is, but only the current Owner can change it (which is also
+    // how a transfer gives up the outgoing owner's own rights immediately).
+    match /settings/owner {
+      allow read: if isMoeUser();
+      allow write: if isOwner();
+    }
 
     // One doc per signed-in teacher, holding their chosen display name
-    // and confirmed school email — read by everyone (for the User List
-    // page), but each person can only ever write their own doc.
+    // and confirmed school email — read by everyone (used to show "signed
+    // in as X" against the Authorized Teachers list), but each person can
+    // only ever write their own doc.
     match /users/{uid} {
       allow read: if isMoeUser();
       allow create, update: if isMoeUser() && request.auth.uid == uid;
       allow delete: if false;
+    }
+
+    // The roster of who may sign in at all. Every authorized teacher can
+    // SEE this list (Settings → Authorized Teachers), but only admins/owner
+    // can change it (Settings → Manage Access, same page with extra
+    // controls for them).
+    match /authorizedUsers/{email} {
+      allow read: if isMoeUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Who's an admin. Anyone authorized can see who the admins are (so the
+    // Manage Access page can display the list to a non-owner admin too),
+    // but only the Owner can add or remove one.
+    match /admins/{email} {
+      allow read: if isMoeUser();
+      allow create, update, delete: if isOwner();
     }
   }
 }
