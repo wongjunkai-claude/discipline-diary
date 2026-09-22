@@ -400,6 +400,12 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 }
 .dd-contact-row:last-child { border-bottom: none; }
 .dd-contact-row-pending { opacity: 0.65; }
+/* Onboarding indicator — filled green when this person has actually
+   signed in at least once; an unfilled, dotted-outline green circle
+   when they're on the list but haven't signed in yet. */
+.dd-onboard-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; box-sizing: border-box; }
+.dd-onboard-dot-on { background: #3C6E47; }
+.dd-onboard-dot-off { background: transparent; border: 1.5px dotted #3C6E47; }
 .dd-contact-body { flex: 1; min-width: 0; }
 .dd-contact-name { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 500; color: #1B2A41; }
 .dd-contact-sub {

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.73.0";
+const APP_VERSION = "2.74.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -3167,8 +3167,10 @@ function renderSettingsSection() {
       const moreBtn = canManage
         ? `<button type="button" class="dd-more-btn" data-action="open-member-actions" data-id="${escapeHtml(m.email)}" data-tier="${m.tier || ""}" data-name="${escapeHtml(name)}" title="More">⋮</button>`
         : "";
+      const dot = `<span class="dd-onboard-dot ${onboarded ? "dd-onboard-dot-on" : "dd-onboard-dot-off"}" title="${onboarded ? "Onboarded" : "Not onboarded yet"}"></span>`;
       return `
       <div class="dd-contact-row">
+        ${dot}
         <div class="dd-contact-body">
           <div class="dd-contact-name">${escapeHtml(name || m.email)}${pill}</div>
           <div class="dd-contact-sub">${name ? escapeHtml(m.email) : ""}</div>
@@ -3179,11 +3181,6 @@ function renderSettingsSection() {
     body = `
       ${backBtn("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Authorised Teachers List</div>
-      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:14px">
-        ${state.isAdmin
-          ? `Only @${ALLOWED_EMAIL_DOMAIN} emails below can sign in. Removing someone takes effect immediately, even if they're already signed in — they're logged out on their next action and can't sign in again until re-added.`
-          : `Everyone who can currently sign in to Discipline Diary. Only an Owner or Admin can add or remove someone here.`}
-      </div>
 
       <div class="dd-contact-list">${members.map(memberRow).join("")}</div>
 
@@ -3192,7 +3189,7 @@ function renderSettingsSection() {
       <div class="dd-contact-list" style="margin-top:2px">
         ${existingNotYetAuthorized.map((email) => {
           const u = onboardedByEmail[email];
-          return `<div class="dd-contact-row dd-contact-row-pending"><div class="dd-contact-body"><div class="dd-contact-name">${escapeHtml(u?.name || email)}</div>${u?.name ? `<div class="dd-contact-sub">${escapeHtml(email)}</div>` : ""}</div></div>`;
+          return `<div class="dd-contact-row dd-contact-row-pending"><span class="dd-onboard-dot dd-onboard-dot-on" title="Onboarded"></span><div class="dd-contact-body"><div class="dd-contact-name">${escapeHtml(u?.name || email)}</div>${u?.name ? `<div class="dd-contact-sub">${escapeHtml(email)}</div>` : ""}</div></div>`;
         }).join("")}
       </div>
       <button class="dd-add-btn" type="button" id="btn-add-existing-users" style="margin-top:8px;background:#3C6E47;border-radius:999px">Add Existing Users</button>
@@ -3203,21 +3200,6 @@ function renderSettingsSection() {
         <span class="dd-compose-avatar" style="background:#3C6E47">+</span>
         <input class="dd-compose-input" id="new-authorized-email" value="@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
         <button class="dd-compose-send" type="button" id="btn-add-authorized" style="background:#3C6E47" title="Add">➤</button>
-      </div>` : ""}
-
-      ${state.isOwner ? `
-      <div class="dd-compose-bar" style="margin-top:10px">
-        <span class="dd-compose-avatar" style="background:#B8863B">★</span>
-        <input class="dd-compose-input" id="new-admin-email" placeholder="Make admin — teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
-        <button class="dd-compose-send" type="button" id="btn-add-admin" style="background:#B8863B" title="Make admin">➤</button>
-      </div>` : ""}
-
-      ${state.isOwner ? `
-      <div class="dd-mono-muted" style="font-size:12px;margin-top:20px">Hand over ownership to someone else. You'll keep admin access afterwards.</div>
-      <div class="dd-compose-bar" style="margin-top:6px">
-        <span class="dd-compose-avatar" style="background:#A3372B">⇄</span>
-        <input class="dd-compose-input" id="new-owner-email" placeholder="Transfer to — teacher@${ALLOWED_EMAIL_DOMAIN}" autocomplete="off" />
-        <button class="dd-compose-send" type="button" id="btn-transfer-owner" style="background:#A3372B" title="Transfer">➤</button>
       </div>` : ""}
       ${ownerWasTransferred ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:10px">${escapeHtml(OWNER_EMAIL)} remains a permanent fallback and can always regain access if needed — it can only be changed by editing the app's code.</div>` : ""}
       ${state.accessFormError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.accessFormError)}</div>` : ""}`;
@@ -4827,22 +4809,6 @@ function attachMainListeners() {
       emails,
     });
   });
-  const addAdminBtn = document.getElementById("btn-add-admin");
-  if (addAdminBtn) addAdminBtn.addEventListener("click", () => {
-    const input = document.getElementById("new-admin-email");
-    const email = (input?.value || "").trim().toLowerCase();
-    if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
-    state.accessFormError = "";
-    requestDeleteConfirmation("addAdmin", email, { message: `Make ${email} an admin? They'll be able to add/remove Authorised Teachers.` });
-  });
-  const transferOwnerBtn = document.getElementById("btn-transfer-owner");
-  if (transferOwnerBtn) transferOwnerBtn.addEventListener("click", () => {
-    const input = document.getElementById("new-owner-email");
-    const email = (input?.value || "").trim().toLowerCase();
-    if (!isValidMoeEmail(email)) { state.accessFormError = "Enter a valid @moe.edu.sg email."; render(); return; }
-    requestDeleteConfirmation("transferOwnership", email, { message: `Transfer ownership to ${email}? They become the primary Owner. You'll keep admin access.` });
-  });
-
   const signOutBtn = document.getElementById("btn-app-sign-out");
   if (signOutBtn) signOutBtn.addEventListener("click", signOutOfApp);
 
