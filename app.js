@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.74.0";
+const APP_VERSION = "2.74.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4793,6 +4793,15 @@ function attachMainListeners() {
   if (newAuthorizedInput) newAuthorizedInput.addEventListener("focus", () => {
     const atIndex = newAuthorizedInput.value.indexOf("@");
     newAuthorizedInput.setSelectionRange(atIndex === -1 ? 0 : atIndex, atIndex === -1 ? 0 : atIndex);
+  });
+  // Force lowercase as they type (or paste) — emails are matched
+  // case-sensitively against Firestore doc IDs elsewhere, so keeping the
+  // field itself lowercase (not just at submit) avoids "Jane@..." and
+  // "jane@..." ever being treated as different people.
+  if (newAuthorizedInput) newAuthorizedInput.addEventListener("input", () => {
+    const pos = newAuthorizedInput.selectionStart;
+    newAuthorizedInput.value = newAuthorizedInput.value.toLowerCase();
+    newAuthorizedInput.setSelectionRange(pos, pos);
   });
   if (addAuthorizedBtn) addAuthorizedBtn.addEventListener("click", () => {
     const email = (newAuthorizedInput?.value || "").trim().toLowerCase();
