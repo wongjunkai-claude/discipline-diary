@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.5.0";
+const APP_VERSION = "3.5.3";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4143,9 +4143,9 @@ function renderMonthlyBreakdownTable(rows) {
   if (!withData.length) return `<div class="dd-dash-empty">Nothing logged this year yet.</div>`;
   const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
   return `
-    <div class="dd-level-breakdown" style="margin-top:10px">
+    <div class="dd-level-breakdown dd-level-breakdown-monthly" style="margin-top:10px">
       <div class="dd-level-row dd-level-row-header">
-        <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">Month</div>
+        <div class="dd-level-cell-class">Month</div>
         <div class="dd-level-cell-term">Grooming</div>
         <div class="dd-level-cell-term">Suspension</div>
         <div class="dd-level-cell-term">Time Out</div>
@@ -4153,14 +4153,14 @@ function renderMonthlyBreakdownTable(rows) {
       </div>
       ${withData.map((r) => `
       <div class="dd-level-row">
-        <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">${escapeHtml(r.label)}</div>
+        <div class="dd-level-cell-class">${escapeHtml(r.label)}</div>
         <div class="dd-level-cell-term">${r.discipline}</div>
         <div class="dd-level-cell-term">${r.suspension}</div>
         <div class="dd-level-cell-term">${r.timeOut || 0}</div>
         <div class="dd-level-cell-term">${r.parentMeeting}</div>
       </div>`).join("")}
       <div class="dd-level-row dd-level-row-total">
-        <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">Total</div>
+        <div class="dd-level-cell-class">Total</div>
         <div class="dd-level-cell-term">${sum("discipline")}</div>
         <div class="dd-level-cell-term">${sum("suspension")}</div>
         <div class="dd-level-cell-term">${sum("timeOut")}</div>
@@ -4263,7 +4263,7 @@ function renderSettingsSection() {
           <div class="dd-level-cell-class">Term</div>
           <div class="dd-level-cell-term dd-level-cell-term-groom" style="color:${CHART_COLORS.discipline}">Groom</div>
           <div class="dd-level-cell-term dd-level-cell-term-susp" style="color:${CHART_COLORS.suspension}">Susp</div>
-          <div class="dd-level-cell-term dd-level-cell-term-timeout dd-level-cell-term-timeout-first" style="flex:4;color:${CHART_COLORS.timeOut}">Time Out</div>
+          <div class="dd-level-cell-term dd-level-cell-term-timeout dd-level-cell-term-timeout-first dd-byterm-to-head" style="color:${CHART_COLORS.timeOut}">Time Out</div>
           <div class="dd-level-cell-term dd-level-cell-term-meet" style="color:${CHART_COLORS.parentMeeting}">Meet</div>
         </div>
         <div class="dd-level-row dd-level-row-header dd-level-row-subheader">
