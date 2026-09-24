@@ -72,6 +72,11 @@ service cloud.firestore {
       allow read, create, update, delete: if isMoeUser();
     }
 
+    // Time Out records (same shape as suspensions) — same protection.
+    match /timeOuts/{timeOutId} {
+      allow read, create, update, delete: if isMoeUser();
+    }
+
     // Parent meeting logs — same protection.
     match /parentMeetings/{meetingId} {
       allow read, create, update, delete: if isMoeUser();

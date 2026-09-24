@@ -1,8 +1,10 @@
 /**
  * Discipline Diary — Google Sheets logger
  *
- * Writes to three tabs — "Discipline Log", "Suspension Log", "Parent
- * Meeting Log" — each with columns matching that log's actual fields.
+ * Writes to four tabs — "Discipline Log", "Suspension Log", "Time Out
+ * Log", "Parent Meeting Log" — each with columns matching that log's
+ * actual fields. A tab is created automatically the first time a record
+ * of that type arrives.
  * Each record is one row (an "upsert"): sending an update for an entry
  * that's already on the sheet finds it by ID and overwrites that row,
  * rather than adding a new row every time. Follow-ups on a discipline
@@ -42,6 +44,14 @@ var SHEET_CONFIG = {
     headers: ["Timestamp", "ID", "Student Name", "Class", "Reason", "Start Date", "Total Days", "In-School Days", "Out-of-School Days", "Day-by-Day Schedule", "Logged By"],
     buildRow: function (data, ts) {
       return [ts, data.id || "", data.studentName || "", data.studentClass || "", data.reason || "",
+        data.startDate || "", data.totalDays || "", data.issDays || "", data.ossDays || "", data.scheduleText || "", data.loggedBy || ""];
+    },
+  },
+  TimeOut: {
+    tabName: "Time Out Log",
+    headers: ["Timestamp", "ID", "Student Name", "Class", "Type", "Reason", "Start Date", "Total Days", "In-School Days", "Out-of-School Days", "Day-by-Day Schedule", "Logged By"],
+    buildRow: function (data, ts) {
+      return [ts, data.id || "", data.studentName || "", data.studentClass || "", data.toType || "", data.reason || "",
         data.startDate || "", data.totalDays || "", data.issDays || "", data.ossDays || "", data.scheduleText || "", data.loggedBy || ""];
     },
   },
@@ -88,7 +98,7 @@ function doPost(e) {
   return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ID always lives in column B (index 2) across all three tab layouts above.
+// ID always lives in column B (index 2) across all four tab layouts above.
 function findRowById(sheet, id) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return -1;

@@ -529,10 +529,18 @@ Two layers of protection, on top of the 30-day recovery window above:
    8. Commit the updated `app.js` to GitHub (same edit-in-browser process as
       before)
 
-   From then on, three tabs fill in automatically — **Discipline Log**,
-   **Suspension Log**, **Parent Meeting Log** — each with columns matching
-   that log's actual fields (e.g. Discipline Log has Student Name, Class,
-   Date, Issue, Action Taken, Status, Follow-ups, Logged By).
+   From then on, four tabs fill in automatically — **Discipline Log**,
+   **Suspension Log**, **Time Out Log**, **Parent Meeting Log** — each with
+   columns matching that log's actual fields (e.g. Discipline Log has
+   Student Name, Class, Date, Issue, Action Taken, Status, Follow-ups,
+   Logged By). Each tab is created the first time a record of that type
+   arrives.
+
+   **Already set up before the Time Out Log existed?** Paste the updated
+   `apps-script.gs` into your Apps Script project and redeploy it (Deploy →
+   Manage deployments → edit → Version: New version → Deploy). The Web app
+   URL stays the same, so `app.js` doesn't need changing. Until you do,
+   Time Outs still save in the app — they just won't reach the Sheet.
 
    **Each record is one row that updates in place**, not a new row per
    action — editing an entry, changing its status, or adding a follow-up

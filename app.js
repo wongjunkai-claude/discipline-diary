@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.75.0";
+const APP_VERSION = "2.85.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -50,7 +50,7 @@ function formatFollowUpsForSheet(followUps) {
 }
 function formatScheduleForSheet(days) {
   return (days || []).slice().sort((a, b) => a.date.localeCompare(b.date))
-    .map((d) => `${formatDate(d.date)} (${SUSP_TYPE_STYLE[d.type].label}${d.type === "ISS" && d.venue ? ` - ${d.venue}` : ""})`).join("\n");
+    .map((d) => `${formatDate(d.date)} (${SUSP_TYPE_STYLE[d.type].label}${d.type === "ISS" && d.venue ? ` - ${d.venue}${d.administrator ? ` / ${d.administrator}` : ""}` : ""})`).join("\n");
 }
 function formatAttendeesForSheet(attendees, othersText) {
   return (attendees || []).map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
@@ -76,6 +76,19 @@ function syncSuspensionToSheet(s) {
     startDate: s.startDate, totalDays: s.totalDays, issDays: s.issDays, ossDays: s.ossDays,
     scheduleText: formatScheduleForSheet(s.days),
     loggedBy: s.loggedBy,
+  });
+}
+// Same shape as a suspension (Time Outs started life as a copy of that log),
+// sent under its own recordType so apps-script.gs files it on its own tab.
+function syncTimeOutToSheet(t) {
+  logToSheet({
+    recordType: "TimeOut", id: t.id,
+    studentName: t.studentName, studentClass: t.studentClass,
+    toType: toTypeLabel(t.toType),
+    reason: (t.deleted ? "Removed — " : "") + (t.reason || ""),
+    startDate: t.startDate, totalDays: t.totalDays, issDays: t.issDays, ossDays: t.ossDays,
+    scheduleText: formatScheduleForSheet(t.days),
+    loggedBy: t.loggedBy,
   });
 }
 function syncParentMeetingToSheet(m) {
@@ -110,6 +123,30 @@ const SUSP_STATUS_STYLE = {
   Completed: { ink: "#3C6E47", label: "COMPLETED" },
 };
 const LOCATION_OPTIONS = ["General Office", "MPR 1"];
+// The four kinds of Time Out. Recess/Lesson time outs have no "sent home"
+// variant — the student is always kept in school — so those are forced
+// in-school for every day. CCA/Learning Experience time outs can go either
+// way (stay in school under supervision, or simply not attend), so those
+// keep the same editable in-school/out-of-school day split a suspension has.
+const TO_TYPES = [
+  { key: "Recess", label: "Time Out (Recess)", shortLabel: "Recess", abbrev: "R", alwaysInSchool: true },
+  { key: "Lesson", label: "Time Out (Lesson)", shortLabel: "Lesson", abbrev: "L", alwaysInSchool: true },
+  { key: "CCA", label: "Time Out (CCA)", shortLabel: "CCA", abbrev: "CCA", alwaysInSchool: false },
+  { key: "LearningExperience", label: "Time Out (Learning Experience)", shortLabel: "Learning Exp.", abbrev: "LE", alwaysInSchool: false },
+];
+function toTypeInfo(key) { return TO_TYPES.find((t) => t.key === key) || TO_TYPES[0]; }
+function toTypeLabel(key) { return toTypeInfo(key).label; }
+// Tallies a list of already-filtered Time Out records by type — used
+// wherever a "Time Out" total is entry-counted (one record = one count),
+// i.e. Month/Year/Chart/Annual Report. An unrecognized/missing toType (old
+// data from before types existed) is folded into Recess rather than
+// dropped, so the breakdown's total always matches the plain count.
+function timeOutTypeBreakdown(records) {
+  const counts = {};
+  TO_TYPES.forEach((t) => { counts[t.key] = 0; });
+  records.forEach((t) => { counts[counts.hasOwnProperty(t.toType) ? t.toType : "Recess"]++; });
+  return counts;
+}
 function composeReasonValue(form, draft, fieldName) {
   fieldName = fieldName || "reason";
   const sel = form.querySelector(`[name="${fieldName}"]`);
@@ -145,7 +182,7 @@ function splitSavedReason(saved) {
 // offence, with its own Victim/Offender/Both/NA status where applicable)
 // and a backward-compatible composed `reason` display string, from a
 // draft's reasons/reasonStatuses/reasonOthersText fields. `prefix` picks
-// which set of fields to read: "" for the standalone Parent Meeting
+// which set of fields to read: "" for the standalone Parent Meet
 // draft, "pm" for the tagged-parent-meeting fields nested inside the
 // Suspension draft (pmReasons/pmReasonStatuses/pmReasonOthersText).
 function composePmReasonData(d, prefix) {
@@ -187,7 +224,7 @@ function pmReasonsFromSaved(m) {
   return { selected: [], statuses: {}, othersText: "" };
 }
 // Renders the multi-select "Reason(s) for meeting" checklist shared by the
-// standalone Parent Meeting form and the "tag a parent meeting" block
+// standalone Parent Meet form and the "tag a parent meeting" block
 // inside the Suspension form. A compact scrollable checklist (not a big
 // pill grid) since the offence list runs to ~29 options. Each checked
 // reason shows its own Victim/Offender/Both/NA status pills directly
@@ -232,7 +269,7 @@ const REASON_OPTIONS = [
   "Sexual Misconduct", "Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons",
   "Illegal / Criminal Offences Causing Grievous Hurt", "Others",
 ];
-// Reason list for the Parent Meeting "reason(s) for meeting" picker only
+// Reason list for the Parent Meet "reason(s) for meeting" picker only
 // (kept separate from REASON_OPTIONS, which stays as-is for the
 // Suspension log's own "Reason" field — Academic Matters/Learning Needs
 // aren't suspension-worthy reasons, so they're not added there).
@@ -588,6 +625,7 @@ async function confirmDeleteYes() {
   state.confirmDeleteTarget = null;
   if (target.type === "incident") await deleteIncident(target.id);
   else if (target.type === "suspension") await deleteSuspension(target.id);
+  else if (target.type === "timeOut") await deleteTimeOut(target.id);
   else if (target.type === "parentMeeting") await deleteParentMeeting(target.id);
   else if (target.type === "publicHoliday") {
     const remaining = (state.holidays?.publicHolidayEntries || []).filter((e) => e.id !== target.id);
@@ -891,7 +929,7 @@ function renderDuplicateConfirmModal() {
 }
 // Same-day, same-student duplicate detectors for each log, keyed on
 // name+class (studentKey) so a same-named student in a different class
-// isn't flagged. Grooming/Parent Meeting match on a single date;
+// isn't flagged. Grooming/Parent Meet match on a single date;
 // Suspension matches when the new suspension's day range overlaps an
 // existing one, since suspensions span multiple days. `excludeId` lets an
 // edit-save check for a collision with some *other* entry without always
@@ -910,6 +948,16 @@ function findDuplicateSuspension(name, studentClass, dates, excludeId) {
   return state.suspensions.find((s) => {
     if (s.deleted || s.id === excludeId || studentKey(s.studentName, s.studentClass) !== key) return false;
     return suspensionDayEntries(s).some((e) => dateSet.has(e.date));
+  }) || null;
+}
+// Time Outs share the suspension record shape (per-day ISS/OSS entries),
+// so the same overlap check applies — just against the Time Out log only.
+function findDuplicateTimeOut(name, studentClass, dates, excludeId) {
+  const key = studentKey(name, studentClass);
+  const dateSet = new Set(dates);
+  return state.timeOuts.find((t) => {
+    if (t.deleted || t.id === excludeId || studentKey(t.studentName, t.studentClass) !== key) return false;
+    return suspensionDayEntries(t).some((e) => dateSet.has(e.date));
   }) || null;
 }
 
@@ -1011,6 +1059,20 @@ const state = {
   editingSuspensionId: null,
   _suspDraft: null,
 
+  // Time Out log — mirrors the Suspension log's state one-for-one.
+  timeOuts: [],
+  toLoaded: false,
+  toTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed'
+  toQuery: "",
+  selectedToId: null,
+  showNewToForm: false,
+  editingTimeOutId: null,
+  _toDraft: null,
+  toFormError: "",
+  timeOutExpandedLevel: null, // read by renderLevelBreakdown("timeOut", …)
+  timeOutSelectedClass: null, // read by renderClassPillsRow("timeOut", …)
+  chartIncludeTimeOut: true,
+
   parentMeetings: [],
   pmLoaded: false,
   pmTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed' | 'Deleted'
@@ -1031,6 +1093,7 @@ const state = {
 const root = document.getElementById("app");
 let unsubIncidents = null;
 let unsubSuspensions = null;
+let unsubTimeOuts = null;
 let unsubHolidays = null;
 let unsubParentMeetings = null;
 let unsubUsers = null;
@@ -1076,6 +1139,7 @@ onAuthStateChanged(auth, async (u) => {
   state.authReady = true;
   if (unsubIncidents) { unsubIncidents(); unsubIncidents = null; }
   if (unsubSuspensions) { unsubSuspensions(); unsubSuspensions = null; }
+  if (unsubTimeOuts) { unsubTimeOuts(); unsubTimeOuts = null; }
   if (unsubHolidays) { unsubHolidays(); unsubHolidays = null; }
   if (unsubParentMeetings) { unsubParentMeetings(); unsubParentMeetings = null; }
   if (unsubUsers) { unsubUsers(); unsubUsers = null; }
@@ -1185,6 +1249,7 @@ function ensureAccessSubscriptions() {
 function startListening() {
   state.dataLoaded = false;
   state.suspLoaded = false;
+  state.toLoaded = false;
   state.pmLoaded = false;
   if (unsubUsers) unsubUsers();
   unsubUsers = onSnapshot(
@@ -1214,6 +1279,24 @@ function startListening() {
       render();
     },
     (err) => { if (!handleRealtimePermissionError(err)) { state.dataLoaded = true; render(); } }
+  );
+  unsubTimeOuts = onSnapshot(
+    collection(db, "timeOuts"),
+    (snap) => {
+      state.timeOuts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      state.toLoaded = true;
+      writeBackupSnapshot();
+      render();
+    },
+    // Unlike the other three logs this collection is new, so until the
+    // updated firestore.rules are published every read is denied. Treat
+    // that as "no Time Outs yet" rather than signing everyone out — the
+    // permission-denied from a missing rule would otherwise be read as
+    // "your access was revoked" by handleRealtimePermissionError.
+    // Leaves whatever was already loaded in place rather than blanking it,
+    // so a transient failure can't wipe the list (or the backup snapshot,
+    // which is written from this same state).
+    (err) => { state.toLoaded = true; console.error("Time Out log listener failed:", err); render(); }
   );
   unsubSuspensions = onSnapshot(
     collection(db, "suspensions"),
@@ -1332,7 +1415,7 @@ async function syncPublicHolidaysFromDataGovSg() {
 
 let backupTimer = null;
 function writeBackupSnapshot() {
-  if (!state.dataLoaded || !state.suspLoaded || !state.pmLoaded) return;
+  if (!state.dataLoaded || !state.suspLoaded || !state.toLoaded || !state.pmLoaded) return;
   clearTimeout(backupTimer);
   backupTimer = setTimeout(async () => {
     try {
@@ -1340,6 +1423,7 @@ function writeBackupSnapshot() {
         updatedAt: Date.now(),
         incidents: state.incidents,
         suspensions: state.suspensions,
+        timeOuts: state.timeOuts,
         parentMeetings: state.parentMeetings,
       });
     } catch (e) { /* non-fatal */ }
@@ -1350,6 +1434,7 @@ function downloadBackupFile() {
     exportedAt: new Date().toISOString(),
     incidents: state.incidents,
     suspensions: state.suspensions,
+    timeOuts: state.timeOuts,
     parentMeetings: state.parentMeetings,
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -1380,7 +1465,7 @@ function handleNameSubmit(e) {
 
 // ==================== DISCIPLINE LOG ====================
 function freshIncidentDraft() {
-  return { studentName: "", studentClass: "", date: todayISO(), selectedIssues: [], othersText: "", linkedSuspensionIds: [], linkedPmIds: [], extraStudents: [] };
+  return { studentName: "", studentClass: "", date: todayISO(), selectedIssues: [], othersText: "", linkedSuspensionIds: [], linkedTimeOutIds: [], linkedPmIds: [], extraStudents: [] };
 }
 // Compute a fresh issue object for a newly-picked grooming issue type,
 // starting at 1st Warning with its deadline computed from that issue's
@@ -1527,25 +1612,32 @@ async function saveIncidentIssueUpdate(entry) {
 }
 function findRelatedRecords(studentName) {
   const name = normalizeName(studentName);
-  if (!name) return { suspensions: [], parentMeetings: [] };
+  if (!name) return { suspensions: [], timeOuts: [], parentMeetings: [] };
   return {
     suspensions: state.suspensions.filter((s) => !s.deleted && normalizeName(s.studentName) === name),
+    timeOuts: state.timeOuts.filter((t) => !t.deleted && normalizeName(t.studentName) === name),
     parentMeetings: state.parentMeetings.filter((m) => !m.deleted && normalizeName(m.studentName) === name),
   };
 }
 
-// ---------- New Case wizard: Discipline -> Suspension? -> Parent Meeting? -> Submit ----------
+// ---------- New Case wizard: Discipline -> Suspension? -> Parent Meet? -> Submit ----------
 // Creates one grooming incident doc for a single student (issues shared
 // across a multi-student batch save) and syncs it to the Sheet. Used both
 // for the form's primary student and for every "also logging" extra
 // student — factored out so a batch save doesn't repeat the same block
 // per student.
-async function createIncidentDocForStudent(name, studentClass, date, selectedIssues, othersText, now) {
+// `links` carries the related records ticked in the form — only ever passed
+// for the primary student. It used to be hard-coded empty here, so the
+// grooming entry's own "Related" box never showed the links even though the
+// suspension/meeting side had them.
+async function createIncidentDocForStudent(name, studentClass, date, selectedIssues, othersText, now, links) {
   const issues = selectedIssues.map((type) => freshGroomingIssue(type, othersText, date, classLevel(studentClass)));
   const issueSummary = issues.map((x) => groomingIssueLabel(x)).join(", ");
   const docRef = await addDoc(collection(db, "incidents"), {
     studentName: name, studentClass, date, issues,
-    linkedSuspensionIds: [], linkedPmIds: [],
+    linkedSuspensionIds: (links?.suspensionIds || []).slice(),
+    linkedTimeOutIds: (links?.timeOutIds || []).slice(),
+    linkedPmIds: (links?.pmIds || []).slice(),
     loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
     history: [{ id: uid(), type: "created", detail: `Entry created — ${issueSummary}`, by: teacherName(), at: now }],
   });
@@ -1593,7 +1685,9 @@ async function submitNewIncident() {
     render();
     try {
       const now = Date.now();
-      const { docRef, issueSummary } = await createIncidentDocForStudent(studentName, studentClass, date, selectedIssues, d.othersText, now);
+      const { docRef, issueSummary } = await createIncidentDocForStudent(studentName, studentClass, date, selectedIssues, d.othersText, now, {
+        suspensionIds: d.linkedSuspensionIds, timeOutIds: d.linkedTimeOutIds || [], pmIds: d.linkedPmIds,
+      });
       // Reflect the link on the other side too, so it shows up on the
       // suspension/meeting record itself, not just this new entry.
       // (Only the primary student's entry can carry these — the related-
@@ -1601,6 +1695,14 @@ async function submitNewIncident() {
       for (const sId of d.linkedSuspensionIds) {
         try {
           await updateDoc(doc(db, "suspensions", sId), {
+            linkedIncidentIds: arrayUnion(docRef.id),
+            history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to grooming entry: "${issueSummary}"`, by: teacherName(), at: now }),
+          });
+        } catch (err) { /* non-fatal, main entry already saved */ }
+      }
+      for (const tId of (d.linkedTimeOutIds || [])) {
+        try {
+          await updateDoc(doc(db, "timeOuts", tId), {
             linkedIncidentIds: arrayUnion(docRef.id),
             history: arrayUnion({ id: uid(), type: "linked", detail: `Linked to grooming entry: "${issueSummary}"`, by: teacherName(), at: now }),
           });
@@ -1734,6 +1836,7 @@ async function undoLastDelete() {
     const restored = { ...t.data, id: t.id, deleted: false };
     if (t.collectionName === "incidents") syncIncidentToSheet(restored);
     else if (t.collectionName === "suspensions") syncSuspensionToSheet(restored);
+    else if (t.collectionName === "timeOuts") syncTimeOutToSheet(restored);
     else if (t.collectionName === "parentMeetings") syncParentMeetingToSheet(restored);
   }
   catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
@@ -1883,6 +1986,10 @@ const LOCATION_CAPACITY = { "General Office": 1, "MPR 1": 4 };
 function locationAbbrev(loc) { return loc === "General Office" ? "GO" : loc; }
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function weekdayName(iso) { return WEEKDAY_NAMES[weekdayOf(iso)]; }
+// Suspension in-school days only: the General Office / MPR 1 room list and
+// its fixed capacity is a Suspension-only concept. A Time Out's location is
+// wherever that student is actually sent that period (a free-text field,
+// not booked from this fixed list), so it has no capacity to track here.
 function locationOccupancyForDate(dateISO, excludeSuspensionId) {
   const occupants = {};
   LOCATION_OPTIONS.forEach((loc) => { occupants[loc] = []; });
@@ -2071,6 +2178,218 @@ async function submitEditSuspension(e) {
   await doSave();
 }
 
+// ==================== TIME OUTS ====================
+// Started as a one-for-one copy of the Suspension log, so a Time Out record
+// has exactly the same shape (total/ISS/OSS days, per-day entries with a
+// booked location for in-school days, reason, optional tagged parent
+// meeting). That means the pure record helpers — suspensionDayEntries,
+// suspensionDateRange, suspensionStatus, regenerateSuspDates — work on it
+// unchanged and are shared rather than duplicated. Everything tied to the
+// collection, state, or wording lives here, so the two logs can diverge
+// independently later.
+function freshTimeOutDraft() {
+  return {
+    studentName: "", studentClass: "", reasonCategory: "", reasonOthersText: "", startDate: todayISO(),
+    toType: "Recess",
+    totalDays: null, issDays: 0, ossDays: 0,
+    ossDates: [], issDates: [], issOverridden: [], issVenues: {}, issAdministrators: {},
+    tagPm: false, pmAttendees: [], pmOthersText: "",
+    pmReasons: [], pmReasonStatuses: {}, pmReasonOthersText: "",
+  };
+}
+// Same day-generation logic as a suspension (regenerateSuspDates), but for
+// Recess/Lesson time outs the in-school/out-of-school split isn't left to
+// the teacher — it's forced to "every day in school" first. Also keeps
+// issAdministrators in step with issVenues as the day list changes, the
+// same way regenerateSuspDates already trims issVenues.
+function regenerateTimeOutDates(d) {
+  if (toTypeInfo(d.toType).alwaysInSchool) {
+    d.issDays = d.totalDays || 0;
+    d.ossDays = 0;
+  }
+  regenerateSuspDates(d);
+  const keptAdmins = {};
+  (d.issDates || []).forEach((dt) => { if (d.issAdministrators && d.issAdministrators[dt]) keptAdmins[dt] = d.issAdministrators[dt]; });
+  d.issAdministrators = keptAdmins;
+  return d;
+}
+async function submitNewTimeOut(e) {
+  e.preventDefault();
+  const f = e.target;
+  const d = state._toDraft;
+  const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
+  const studentClass = f.studentClass.value;
+  const reason = composeReasonValue(f, d);
+  if (!studentName || !studentClass || !reason || !d.totalDays) {
+    state.toFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if (!d.issDates.every((dt) => (d.issVenues[dt] || "").trim() && (d.issAdministrators[dt] || "").trim())) {
+    const done = d.issDates.filter((dt) => (d.issVenues[dt] || "").trim() && (d.issAdministrators[dt] || "").trim()).length;
+    state.toFormError = `Fill in the location and administrator for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${done} of ${d.issDays} done).`;
+    render();
+    return;
+  }
+  const pmReasonData = d.tagPm ? composePmReasonData(d, "pm") : { reasons: [], reason: "" };
+  if (d.tagPm && (d.pmAttendees.length === 0 || pmReasonData.reasons.length === 0)) {
+    state.toFormError = "Fill in who's attending and the reason for the tagged parent meeting.";
+    render();
+    return;
+  }
+  if (d.tagPm && pmReasonData.reasons.some((r) => r.category === "Others") && !(d.pmReasonOthersText || "").trim()) {
+    state.toFormError = "Specify what \"Others\" means for the tagged parent meeting.";
+    render();
+    return;
+  }
+  state.toFormError = "";
+  const ossEntries = d.ossDates.map((date) => ({ date, type: "OSS" }));
+  const issEntries = d.issDates.map((date) => ({
+    date, type: "ISS",
+    venue: (d.issVenues[date] || "").trim(),
+    administrator: (d.issAdministrators[date] || "").trim(),
+  }));
+  const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
+
+  const doSave = async () => {
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      const now = Date.now();
+      const docRef = await addDoc(collection(db, "timeOuts"), {
+        studentName, studentClass, reason, startDate: d.startDate, toType: d.toType,
+        totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
+        days,
+        loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
+        history: [{ id: uid(), type: "created", detail: `${toTypeLabel(d.toType)} created — ${d.totalDays} day${d.totalDays > 1 ? "s" : ""} total (${d.ossDays} out-of-school, ${d.issDays} in-school)`, by: teacherName(), at: now }],
+      });
+      if (d.tagPm) {
+        try {
+          const pmRef = await addDoc(collection(db, "parentMeetings"), {
+            studentName, studentClass, date: d.startDate, attendees: d.pmAttendees.slice(),
+            othersText: d.pmOthersText || "", reason: pmReasonData.reason, reasons: pmReasonData.reasons,
+            linkedTimeOutIds: [docRef.id],
+            loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
+            history: [{ id: uid(), type: "created", detail: "Parent meeting tagged from a time out entry", by: teacherName(), at: now }],
+          });
+          await updateDoc(doc(db, "timeOuts", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
+          syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
+        } catch (err) { /* non-fatal — time out already saved */ }
+      }
+      state.showNewToForm = false;
+      state._toDraft = null;
+      state.section = "timeOuts";
+      state.toTab = "All";
+      state.selectedToId = docRef.id;
+      state.entryExpanded[docRef.id] = true;
+      syncTimeOutToSheet({ id: docRef.id, studentName, studentClass, toType: d.toType, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days, loggedBy: teacherName(), deleted: false });
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
+  };
+
+  const dup = findDuplicateTimeOut(studentName, studentClass, days.map((x) => x.date));
+  if (guardDuplicate(dup, `${studentName} already has an overlapping time out logged (by ${dup?.loggedBy || "another teacher"}). Log another anyway?`, doSave)) return;
+  await doSave();
+}
+async function deleteTimeOut(id) {
+  const entry = state.timeOuts.find((i) => i.id === id);
+  try {
+    await deleteDoc(doc(db, "timeOuts", id));
+    if (entry) {
+      const { id: _drop, ...data } = entry;
+      showUndoToast("timeOuts", id, data);
+      syncTimeOutToSheet({ ...entry, deleted: true });
+    }
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+}
+function openEditTimeOut(id) {
+  const t = state.timeOuts.find((i) => i.id === id);
+  if (!t) return;
+  state.editingTimeOutId = id;
+  const entries = suspensionDayEntries(t);
+  const ossDates = entries.filter((x) => x.type === "OSS").map((x) => x.date).sort();
+  const issEntries = entries.filter((x) => x.type === "ISS").sort((a, b) => a.date.localeCompare(b.date));
+  const issDates = issEntries.map((x) => x.date);
+  const issVenues = {};
+  const issAdministrators = {};
+  issEntries.forEach((x) => { issVenues[x.date] = x.venue || ""; issAdministrators[x.date] = x.administrator || ""; });
+  const reasonSplit = splitSavedReason(t.reason);
+  state._toDraft = {
+    studentName: t.studentName, studentClass: t.studentClass, reasonCategory: reasonSplit.category, reasonOthersText: reasonSplit.othersText,
+    startDate: t.startDate || (entries[0] && entries[0].date) || todayISO(),
+    toType: t.toType || "Recess",
+    totalDays: t.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
+    ossDates, issDates, issOverridden: issDates.map(() => false), issVenues, issAdministrators,
+  };
+  state.toFormError = "";
+  render();
+}
+async function submitEditTimeOut(e) {
+  e.preventDefault();
+  const f = e.target;
+  const id = state.editingTimeOutId;
+  const t = state.timeOuts.find((i) => i.id === id);
+  if (!t) return;
+  const d = state._toDraft;
+  const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
+  const studentClass = f.studentClass.value;
+  const reason = composeReasonValue(f, d);
+  if (!studentName || !studentClass || !reason || !d.totalDays) {
+    state.toFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if (!d.issDates.every((dt) => (d.issVenues[dt] || "").trim() && (d.issAdministrators[dt] || "").trim())) {
+    const done = d.issDates.filter((dt) => (d.issVenues[dt] || "").trim() && (d.issAdministrators[dt] || "").trim()).length;
+    state.toFormError = `Fill in the location and administrator for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${done} of ${d.issDays} done).`;
+    render();
+    return;
+  }
+  state.toFormError = "";
+  const ossEntries = d.ossDates.map((date) => ({ date, type: "OSS" }));
+  const issEntries = d.issDates.map((date) => ({
+    date, type: "ISS",
+    venue: (d.issVenues[date] || "").trim(),
+    administrator: (d.issAdministrators[date] || "").trim(),
+  }));
+  const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
+  const updated = { studentName, studentClass, reason, startDate: d.startDate, toType: d.toType, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days };
+  const changes = diffText(
+    { ...t, toType: toTypeLabel(t.toType) }, { ...updated, toType: toTypeLabel(updated.toType) },
+    [
+      { key: "studentName", label: "Student name" }, { key: "studentClass", label: "Class" },
+      { key: "reason", label: "Reason" }, { key: "totalDays", label: "Total days" },
+      { key: "toType", label: "Type" },
+    ]);
+  const oldDaysKey = JSON.stringify(suspensionDayEntries(t));
+  const newDaysKey = JSON.stringify(days);
+  if (oldDaysKey !== newDaysKey) changes.push("Day-by-day schedule updated");
+  if (changes.length === 0) { state.editingTimeOutId = null; state._toDraft = null; render(); return; }
+
+  const doSave = async () => {
+    const now = Date.now();
+    state.saveError = false;
+    state.saving = true;
+    render();
+    try {
+      await updateDoc(doc(db, "timeOuts", id), {
+        ...updated,
+        history: arrayUnion({ id: uid(), type: "edited", detail: `Time out edited — ${changes.join("; ")}`, by: teacherName(), at: now }),
+      });
+      syncTimeOutToSheet({ ...t, ...updated });
+      state.editingTimeOutId = null;
+      state._toDraft = null;
+    } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+  };
+
+  const identityChanged = studentName !== t.studentName || studentClass !== t.studentClass || oldDaysKey !== newDaysKey;
+  if (identityChanged) {
+    const dup = findDuplicateTimeOut(studentName, studentClass, days.map((x) => x.date), id);
+    if (guardDuplicate(dup, `${studentName} already has an overlapping time out logged (by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
+  }
+  await doSave();
+}
+
 // ==================== PARENT MEETINGS ====================
 function freshPmDraft(m) {
   const r = pmReasonsFromSaved(m);
@@ -2218,7 +2537,7 @@ function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
   if (!state.authUser) { root.innerHTML = renderSignInScreen(); attachSignInListeners(); return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
-  if (!state.dataLoaded || !state.suspLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
+  if (!state.dataLoaded || !state.suspLoaded || !state.toLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
   updateFollowUpBadge();
   root.innerHTML = renderMain();
   attachMainListeners();
@@ -2287,6 +2606,7 @@ function renderMain() {
   else if (state.section === "dashboard") html = renderDashboardSection();
   else if (state.section === "log") html = renderLogSection();
   else if (state.section === "suspensions") html = renderSuspensionSection();
+  else if (state.section === "timeOuts") html = renderTimeOutSection();
   else if (state.section === "settings") html = renderSettingsSection();
   else html = renderParentMeetingSection();
   if (state._publicHolidayDraft) html += renderPublicHolidayModal();
@@ -2309,10 +2629,14 @@ function renderUndoToast() {
 }
 
 function renderNav() {
+  // Each label is split in two so phones can stack it ("Suspension" / "Log")
+  // — four full-length pills don't fit one line at phone width. On wider
+  // screens the two halves sit side by side as before (see .dd-pill-l1/-l2).
   const items = [
-    { key: "log", label: "Grooming Log" },
-    { key: "suspensions", label: "Suspension Log" },
-    { key: "parentMeetings", label: "Parent Meeting" },
+    { key: "log", l1: "Grooming", l2: "Log" },
+    { key: "suspensions", l1: "Suspension", l2: "Log" },
+    { key: "timeOuts", l1: "Time Out", l2: "Log" },
+    { key: "parentMeetings", l1: "Parent", l2: "Meet" },
   ];
   return `
     <div class="dd-header" style="position:relative">
@@ -2337,7 +2661,7 @@ function renderNav() {
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"></path><path d="M5 10v10h14V10"></path></svg>
             ${(() => { const n = computeGroomingFollowUpBuckets().today.length; return n > 0 ? `<span class="dd-nav-badge">${n > 9 ? "9+" : n}</span>` : ""; })()}
           </button>
-          ${items.map((it) => `<button class="dd-pill-tab dd-pill-tab-sm ${state.section === it.key ? "active" : ""}" data-action="set-section" data-section="${it.key}">${it.label}</button>`).join("")}
+          ${items.map((it) => `<button class="dd-pill-tab dd-pill-tab-sm ${state.section === it.key ? "active" : ""}" data-action="set-section" data-section="${it.key}"><span class="dd-pill-l1">${it.l1}</span> <span class="dd-pill-l2">${it.l2}</span></button>`).join("")}
         </div>
       </div>
     </div>
@@ -2362,23 +2686,27 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Suspension Log</div>
-          <p>Set the total number of days, then how many are in-school vs out-of-school — the other side calculates itself. Pick the actual dates for each, and a location for in-school days. You can tag a Parent Meeting to a suspension right after entering its details.</p>
+          <p>Set the total number of days, then how many are in-school vs out-of-school — the other side calculates itself. Pick the actual dates for each, and a location for in-school days. You can tag a Parent Meet to a suspension right after entering its details.</p>
         </div>
         <div class="dd-help-section">
-          <div class="dd-help-heading">Parent Meeting</div>
+          <div class="dd-help-heading">Time Out Log</div>
+          <p>Works exactly like the Suspension Log — total days, in-school vs out-of-school split, dates, and a location for each in-school day, plus an optional tagged Parent Meet. Time Outs and suspensions share the same rooms, so the General Office and MPR 1 availability counts both.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Parent Meet</div>
           <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Same-day duplicate warning</div>
-          <p>Saving a new or edited entry checks whether that student already has something logged for the same day (or, for suspensions, an overlapping day) — you'll see who logged the earlier one and can save anyway if it's intentional.</p>
+          <p>Saving a new or edited entry checks whether that student already has something logged for the same day (or, for suspensions and time outs, an overlapping day) — you'll see who logged the earlier one and can save anyway if it's intentional.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Reports</div>
-          <p>The Annual Report (under the Dashboard) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat-suspension intervals, and day-of-week/term patterns. The Print/Export PDF button opens your device's own print dialog, so "Save as PDF" works the same on phone, tablet, or computer.</p>
+          <p>The Annual Report (under the Dashboard) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat suspension and time out intervals, and day-of-week/term patterns. The Print/Export PDF button opens your device's own print dialog, so "Save as PDF" works the same on phone, tablet, or computer.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Editing, removing, backups</div>
-          <p>Every entry in all three logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorised Teachers List — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
+          <p>Every entry in all four logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorised Teachers List — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
         </div>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
@@ -2405,6 +2733,11 @@ function lastNMonthKeys(n = 11) {
 // Suspension counts by actual day (from suspensionDayEntries), not just
 // the start date, so a multi-day suspension shows on every day it covers.
 const OSS_DOT_COLOR = "#A3372B";
+// Time Outs mirror the suspension ISS/OSS split with their own pair of
+// colours: teal for in-school days (= the Time Out category colour, the
+// way gold doubles as both ISS and the Suspension category), plum for
+// out-of-school days.
+const TO_OSS_DOT_COLOR = "#6B4A8A";
 // For the calendar's day-by-day dots — a multi-day suspension shows a dot
 // on every day it actually covers, split by ISS (gold, matches the
 // Suspension category color) vs OSS (red). This is purely visual; the
@@ -2416,7 +2749,7 @@ function computeDailyCountsForMonth(monthKeyStr) {
   const counts = {};
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
-    counts[iso] = { discipline: 0, suspensionISS: 0, suspensionOSS: 0, parentMeeting: 0 };
+    counts[iso] = { discipline: 0, suspensionISS: 0, suspensionOSS: 0, timeOutISS: 0, timeOutOSS: 0, parentMeeting: 0 };
   }
   state.incidents.forEach((i) => { if (i.deleted) return; if (counts[i.date]) counts[i.date].discipline++; });
   state.suspensions.forEach((s) => {
@@ -2427,11 +2760,22 @@ function computeDailyCountsForMonth(monthKeyStr) {
       else counts[e.date].suspensionISS++;
     });
   });
+  state.timeOuts.forEach((t) => {
+    if (t.deleted) return;
+    suspensionDayEntries(t).forEach((e) => {
+      if (!counts[e.date]) return;
+      if (e.type === "OSS") counts[e.date].timeOutOSS++;
+      else counts[e.date].timeOutISS++;
+    });
+  });
   state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
   return counts;
 }
 function suspensionEntryCountForMonth(monthKeyStr) {
   return state.suspensions.filter((s) => !s.deleted && monthKey(s.startDate) === monthKeyStr).length;
+}
+function timeOutEntryCountForMonth(monthKeyStr) {
+  return state.timeOuts.filter((t) => !t.deleted && monthKey(t.startDate) === monthKeyStr).length;
 }
 function shiftMonthKey(monthKeyStr, delta) {
   const [y, m] = monthKeyStr.split("-").map(Number);
@@ -2501,13 +2845,14 @@ function chartRangeKeys() {
 function computeMonthlyTrend() {
   const keys = chartRangeKeys();
   const counts = {};
-  keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
+  keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
   state.suspensions.forEach((s) => { if (s.deleted) return; const k = monthKey(s.startDate); if (counts[k]) counts[k].suspension++; });
+  state.timeOuts.forEach((t) => { if (t.deleted) return; const k = monthKey(t.startDate); if (counts[k]) counts[k].timeOut++; });
   state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ key: k, label: monthLabelFromKey(k), ...counts[k] }));
 }
-const CHART_COLORS = { discipline: "#1B2A41", suspension: "#B8863B", parentMeeting: "#3C6E47" };
+const CHART_COLORS = { discipline: "#1B2A41", suspension: "#B8863B", timeOut: "#2E6E8E", parentMeeting: "#3C6E47" };
 function niceAxisMax(v) {
   if (v <= 5) return Math.max(v, 1);
   const magnitude = Math.pow(10, Math.floor(Math.log10(v)));
@@ -2535,13 +2880,15 @@ const CHART_RANGE_OPTIONS_SECONDARY = [
 const CATEGORY_META = {
   discipline: { label: "Grooming", checkboxLabel: "Grooming" },
   suspension: { label: "Suspension", checkboxLabel: "Suspension" },
-  parentMeeting: { label: "Parent Meeting", checkboxLabel: "Parent Meeting" },
+  timeOut: { label: "Time Out", checkboxLabel: "Time Out" },
+  parentMeeting: { label: "Parent Meet", checkboxLabel: "Parent Meet" },
 };
 function renderCategoryToggles(incl) {
   const cats = [
-    { key: "discipline", label: "Grooming Issue" },
+    { key: "discipline", label: "Grooming" },
     { key: "suspension", label: "Suspension" },
-    { key: "parentMeeting", label: "Parent Meeting" },
+    { key: "timeOut", label: "Time Out" },
+    { key: "parentMeeting", label: "Parent Meet" },
   ];
   return `
     <div class="dd-show-box">
@@ -2551,7 +2898,7 @@ function renderCategoryToggles(incl) {
       </div>
     </div>`;
 }
-// Shared across Discipline/Suspension/Parent Meeting logs: a row of 6
+// Shared across Discipline/Suspension/Parent Meet logs: a row of 6
 // level counters (P1-P6), one of which can be expanded into a table of
 // that level's classes vs the current year's four school terms. Only one
 // level stays expanded at a time (per page — each page tracks its own).
@@ -2560,6 +2907,7 @@ function availableReportYears() {
   const years = new Set([new Date().getFullYear()]);
   state.incidents.forEach((i) => { if (!i.deleted && i.date) years.add(parseInt(i.date.slice(0, 4), 10)); });
   state.suspensions.forEach((s) => { if (!s.deleted && s.startDate) years.add(parseInt(s.startDate.slice(0, 4), 10)); });
+  state.timeOuts.forEach((t) => { if (!t.deleted && t.startDate) years.add(parseInt(t.startDate.slice(0, 4), 10)); });
   state.parentMeetings.forEach((m) => { if (!m.deleted && m.date) years.add(parseInt(m.date.slice(0, 4), 10)); });
   return Array.from(years).sort((a, b) => b - a);
 }
@@ -2567,38 +2915,49 @@ function computeYearlyCategoryTotals(year) {
   const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
   const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && m.date && m.date.startsWith(`${year}-`)).length;
   const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)).length;
-  return { discipline, suspension, parentMeeting };
+  const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`)).length;
+  return { discipline, suspension, timeOut, parentMeeting };
 }
 function computeYearMonthlyTrend(year) {
   const keys = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
   const counts = {};
-  keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, parentMeeting: 0 }; });
+  keys.forEach((k) => { counts[k] = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 }; });
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
   state.suspensions.forEach((s) => { if (s.deleted) return; const k = monthKey(s.startDate); if (counts[k]) counts[k].suspension++; });
+  state.timeOuts.forEach((t) => { if (t.deleted) return; const k = monthKey(t.startDate); if (counts[k]) counts[k].timeOut++; });
   state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ label: monthLabelFromKey(k), ...counts[k] }));
 }
 function computeYearTermTrend(year) {
   const moe = computeMoeCalendar(year);
-  return moe.terms.map((t) => ({
-    label: t.label,
-    discipline: state.incidents.filter((i) => !i.deleted && i.date >= t.start && i.date <= t.end).length,
-    suspension: state.suspensions.filter((s) => !s.deleted && s.startDate >= t.start && s.startDate <= t.end).length,
-    parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && m.date >= t.start && m.date <= t.end).length,
-  }));
+  return moe.terms.map((t) => {
+    const termTimeOuts = state.timeOuts.filter((x) => !x.deleted && x.startDate >= t.start && x.startDate <= t.end);
+    return {
+      label: t.label,
+      discipline: state.incidents.filter((i) => !i.deleted && i.date >= t.start && i.date <= t.end).length,
+      suspension: state.suspensions.filter((s) => !s.deleted && s.startDate >= t.start && s.startDate <= t.end).length,
+      timeOut: termTimeOuts.length,
+      timeOutByType: timeOutTypeBreakdown(termTimeOuts),
+      parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && m.date >= t.start && m.date <= t.end).length,
+    };
+  });
 }
+// "Cases" for the level/class rankings = grooming + suspensions + time outs
+// (parent meetings are follow-up, not a case in themselves).
 function computeYearLevelRanking(year) {
   return [1, 2, 3, 4, 5, 6].map((lvl) => {
     const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`) && classLevel(i.studentClass) === lvl).length;
     const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`) && classLevel(s.studentClass) === lvl).length;
-    return { label: `P${lvl}`, discipline, suspension, total: discipline + suspension };
+    const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`) && classLevel(t.studentClass) === lvl).length;
+    return { label: `P${lvl}`, discipline, suspension, timeOut, total: discipline + suspension + timeOut };
   }).sort((a, b) => b.total - a.total);
 }
 function computeYearClassRanking(year) {
   return CLASS_OPTIONS.map((cls) => {
     const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`) && i.studentClass === cls).length;
     const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`) && s.studentClass === cls).length;
-    return { label: cls, discipline, suspension, total: discipline + suspension };
+    const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`) && t.studentClass === cls).length;
+    return { label: cls, discipline, suspension, timeOut, total: discipline + suspension + timeOut };
   }).filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
 }
 // Builds the plain-language trend paragraph for the Annual Summary
@@ -2636,19 +2995,19 @@ function computeYearNarrative(year) {
   const terms = computeYearTermTrend(year);
   const thisYear = computeYearlyCategoryTotals(year);
   const lastYear = computeYearlyCategoryTotals(year - 1);
-  const hasLastYear = lastYear.discipline + lastYear.suspension + lastYear.parentMeeting > 0;
+  const hasLastYear = lastYear.discipline + lastYear.suspension + lastYear.timeOut + lastYear.parentMeeting > 0;
   const topIssue = computeTopGroomingIssueType(year);
   const levelRanking = computeYearLevelRanking(year);
   const classRanking = computeYearClassRanking(year);
 
-  const withinYear = terms.every((t) => t.discipline + t.suspension + t.parentMeeting === 0)
-    ? `No grooming, suspension, or parent meeting entries were logged for ${year} yet, so a within-year trend can't be drawn.`
-    : `Across the four terms, grooming issues ${describeTrend(terms[0].discipline, terms[3].discipline)} (Term 1: ${terms[0].discipline}, Term 4: ${terms[3].discipline}), suspensions ${describeTrend(terms[0].suspension, terms[3].suspension)} (Term 1: ${terms[0].suspension}, Term 4: ${terms[3].suspension}), and parent meetings ${describeTrend(terms[0].parentMeeting, terms[3].parentMeeting)} (Term 1: ${terms[0].parentMeeting}, Term 4: ${terms[3].parentMeeting}).` +
+  const withinYear = terms.every((t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting === 0)
+    ? `No grooming, suspension, time out, or parent meeting entries were logged for ${year} yet, so a within-year trend can't be drawn.`
+    : `Across the four terms, grooming issues ${describeTrend(terms[0].discipline, terms[3].discipline)} (Term 1: ${terms[0].discipline}, Term 4: ${terms[3].discipline}), suspensions ${describeTrend(terms[0].suspension, terms[3].suspension)} (Term 1: ${terms[0].suspension}, Term 4: ${terms[3].suspension}), time outs ${describeTrend(terms[0].timeOut, terms[3].timeOut)} (Term 1: ${terms[0].timeOut}, Term 4: ${terms[3].timeOut}), and parent meetings ${describeTrend(terms[0].parentMeeting, terms[3].parentMeeting)} (Term 1: ${terms[0].parentMeeting}, Term 4: ${terms[3].parentMeeting}).` +
       (topIssue ? ` The most common grooming issue this year was ${escapeHtml(topIssue.type)}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "");
 
   const acrossYears = !hasLastYear
     ? `There isn't a prior year on record yet to compare ${year} against.`
-    : `Compared to ${year - 1}, grooming issues are ${pctChangeLabel(lastYear.discipline, thisYear.discipline)}, suspensions are ${pctChangeLabel(lastYear.suspension, thisYear.suspension)}, and parent meetings are ${pctChangeLabel(lastYear.parentMeeting, thisYear.parentMeeting)}.`;
+    : `Compared to ${year - 1}, grooming issues are ${pctChangeLabel(lastYear.discipline, thisYear.discipline)}, suspensions are ${pctChangeLabel(lastYear.suspension, thisYear.suspension)}, time outs are ${pctChangeLabel(lastYear.timeOut, thisYear.timeOut)}, and parent meetings are ${pctChangeLabel(lastYear.parentMeeting, thisYear.parentMeeting)}.`;
 
   const improvements = [];
   const concerns = [];
@@ -2657,12 +3016,18 @@ function computeYearNarrative(year) {
     else if (terms[3].discipline > terms[0].discipline) concerns.push("grooming issues were higher in Term 4 than Term 1 — worth watching whether this continues into next year");
     if (terms[3].suspension < terms[0].suspension) improvements.push("suspensions were less frequent by Term 4");
     else if (terms[3].suspension > terms[0].suspension) concerns.push("suspensions picked up later in the year rather than easing off");
+    if (terms[3].timeOut < terms[0].timeOut) improvements.push("time outs were less frequent by Term 4");
+    else if (terms[3].timeOut > terms[0].timeOut) concerns.push("time outs picked up later in the year rather than easing off");
   }
   if (hasLastYear) {
-    if (thisYear.discipline + thisYear.suspension < lastYear.discipline + lastYear.suspension) improvements.push(`overall discipline cases (grooming + suspensions) are down from ${year - 1}`);
-    else if (thisYear.discipline + thisYear.suspension > lastYear.discipline + lastYear.suspension) concerns.push(`overall discipline cases (grooming + suspensions) are up from ${year - 1}`);
+    const casesThis = thisYear.discipline + thisYear.suspension + thisYear.timeOut;
+    const casesLast = lastYear.discipline + lastYear.suspension + lastYear.timeOut;
+    if (casesThis < casesLast) improvements.push(`overall discipline cases (grooming + suspensions + time outs) are down from ${year - 1}`);
+    else if (casesThis > casesLast) concerns.push(`overall discipline cases (grooming + suspensions + time outs) are up from ${year - 1}`);
   }
-  if (levelRanking.length) concerns.push(`${levelRanking[0].label} recorded the most cases of any level (${levelRanking[0].discipline + levelRanking[0].suspension} combined) and may benefit from closer attention`);
+  // Only when there's actually something to rank — otherwise every level is
+  // tied at 0 and this used to single out P1 as "most cases (0 combined)".
+  if (levelRanking.length && levelRanking[0].total > 0) concerns.push(`${levelRanking[0].label} recorded the most cases of any level (${levelRanking[0].total} combined) and may benefit from closer attention`);
   if (classRanking.length) concerns.push(`${classRanking[0].label} was the single most-flagged class this year (${classRanking[0].total} combined cases)`);
 
   const improvementsPara = improvements.length ? `Improvements: ${improvements.join("; ")}.` : "No clear year-over-year or in-year improvement stood out from the numbers alone.";
@@ -2671,9 +3036,10 @@ function computeYearNarrative(year) {
   return { withinYear, acrossYears, improvementsPara, concernsPara };
 }
 
-function computeYearSuspensionRoster(year) {
+// Per-student tally for any start-dated log (suspensions or time outs).
+function computeYearRoster(records, year) {
   const rows = {};
-  state.suspensions.forEach((s) => {
+  records.forEach((s) => {
     if (s.deleted || !s.startDate || !s.startDate.startsWith(`${year}-`)) return;
     const key = studentKey(s.studentName, s.studentClass);
     rows[key] = rows[key] || { name: s.studentName, cls: s.studentClass, count: 0 };
@@ -2681,12 +3047,15 @@ function computeYearSuspensionRoster(year) {
   });
   return Object.values(rows).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
+function computeYearSuspensionRoster(year) { return computeYearRoster(state.suspensions, year); }
+function computeYearTimeOutRoster(year) { return computeYearRoster(state.timeOuts, year); }
 // How much of this year's load is a few repeat students versus many
 // different students hitting the log once — a school-culture problem
 // and a small-group-needs-support problem look identical in a raw
 // total, but very different once split this way.
 function computeRepeatVsUnique(year) {
   const suspRoster = computeYearSuspensionRoster(year);
+  const toRoster = computeYearTimeOutRoster(year);
   const groomingCounts = {};
   state.incidents.forEach((it) => {
     if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
@@ -2699,6 +3068,11 @@ function computeRepeatVsUnique(year) {
       totalCount: suspRoster.reduce((s, r) => s + r.count, 0),
       uniqueStudents: suspRoster.length,
       repeatStudents: suspRoster.filter((r) => r.count > 1).length,
+    },
+    timeOut: {
+      totalCount: toRoster.reduce((s, r) => s + r.count, 0),
+      uniqueStudents: toRoster.length,
+      repeatStudents: toRoster.filter((r) => r.count > 1).length,
     },
     grooming: {
       totalCount: groomingStudents.reduce((s, c) => s + c, 0),
@@ -2734,9 +3108,11 @@ function computeEscalationRate(year) {
 // a Dec-to-Jan gap shouldn't be invisible just because it crosses a
 // year boundary, but only surfaces students with a suspension that
 // actually falls in this report year.
-function computeRepeatSuspensionIntervals(year) {
+function computeRepeatSuspensionIntervals(year) { return computeRepeatIntervals(state.suspensions, year); }
+function computeRepeatTimeOutIntervals(year) { return computeRepeatIntervals(state.timeOuts, year); }
+function computeRepeatIntervals(records, year) {
   const byStudent = {};
-  state.suspensions.forEach((s) => {
+  records.forEach((s) => {
     if (s.deleted || !s.startDate) return;
     // Deliberately name-only (not name+class) — this tracks a student
     // across their full history, and their class will legitimately
@@ -2769,7 +3145,7 @@ function computeDayOfWeekPattern(year) {
   state.incidents.forEach((it) => {
     if (!it.deleted && Array.isArray(it.issues) && it.date && it.date.startsWith(`${year}-`)) counts[weekdayOf(it.date)]++;
   });
-  state.suspensions.forEach((s) => {
+  [...state.suspensions, ...state.timeOuts].forEach((s) => {
     if (!s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)) counts[weekdayOf(s.startDate)]++;
   });
   return dayNames.map((day, i) => ({ day, count: counts[i] }));
@@ -2796,7 +3172,7 @@ function computeTermPositionPattern(year) {
   state.incidents.forEach((it) => {
     if (!it.deleted && Array.isArray(it.issues) && it.date && it.date.startsWith(`${year}-`)) classify(it.date);
   });
-  state.suspensions.forEach((s) => {
+  [...state.suspensions, ...state.timeOuts].forEach((s) => {
     if (!s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)) classify(s.startDate);
   });
   return buckets;
@@ -2807,9 +3183,11 @@ function computeTermPositionPattern(year) {
 // Parent meetings are deliberately excluded — they're a response to
 // issues rather than an issue themselves, so mixing them in would
 // overstate the incident count.
+// Bands, bottom to top: grooming, suspensions, time outs.
 function renderStackedAreaChart(rows) {
   if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
-  const totals = rows.map((r) => r.discipline + r.suspension);
+  const totals = rows.map((r) => r.discipline + r.suspension + (r.timeOut || 0));
+  const groomPlusSusp = rows.map((r) => r.discipline + r.suspension);
   const axisMax = niceAxisMax(Math.max(1, ...totals));
   const W = 320, H = 158, padL = 26, padB = 20, padT = 16;
   const plotW = W - padL, plotH = H - padB - padT;
@@ -2831,10 +3209,12 @@ function renderStackedAreaChart(rows) {
           <line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="#E4E1D4" stroke-width="1"></line>
           <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" font-family="'IBM Plex Mono', monospace" fill="#8A8571">${t}</text>`).join("")}
         <polygon points="${areaFor(grooming, zeros)}" fill="${CHART_COLORS.discipline}" fill-opacity="0.75"></polygon>
-        <polygon points="${areaFor(totals, grooming)}" fill="${OSS_DOT_COLOR}" fill-opacity="0.85"></polygon>
-        <polyline points="${lineFor(totals)}" fill="none" stroke="${OSS_DOT_COLOR}" stroke-width="1.5"></polyline>
+        <polygon points="${areaFor(groomPlusSusp, grooming)}" fill="${OSS_DOT_COLOR}" fill-opacity="0.85"></polygon>
+        <polygon points="${areaFor(totals, groomPlusSusp)}" fill="${CHART_COLORS.timeOut}" fill-opacity="0.85"></polygon>
+        <polyline points="${lineFor(totals)}" fill="none" stroke="${CHART_COLORS.timeOut}" stroke-width="1.5"></polyline>
+        <polyline points="${lineFor(groomPlusSusp)}" fill="none" stroke="${OSS_DOT_COLOR}" stroke-width="1.5"></polyline>
         <polyline points="${lineFor(grooming)}" fill="none" stroke="${CHART_COLORS.discipline}" stroke-width="1.5"></polyline>
-        ${totals.map((t, i) => `<circle cx="${x(i)}" cy="${y(t)}" r="2.2" fill="#FBFAF6" stroke="${OSS_DOT_COLOR}" stroke-width="1.3"></circle>`).join("")}
+        ${totals.map((t, i) => `<circle cx="${x(i)}" cy="${y(t)}" r="2.2" fill="#FBFAF6" stroke="${CHART_COLORS.timeOut}" stroke-width="1.3"></circle>`).join("")}
         ${totals.map((t, i) => t > 0
           ? `<text x="${x(i)}" y="${y(t) - 6}" text-anchor="middle" font-size="9" font-weight="700" font-family="'IBM Plex Mono', monospace" fill="#1B2A41">${t}</text>`
           : "").join("")}
@@ -2843,8 +3223,9 @@ function renderStackedAreaChart(rows) {
           : "").join("")}
       </svg>
       <div class="dd-cal-legend dd-daytype-legend" style="margin-top:8px;padding-top:8px">
-        <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${CHART_COLORS.discipline}"></span>Grooming Issue</div>
+        <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${CHART_COLORS.discipline}"></span>Grooming</div>
         <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${OSS_DOT_COLOR}"></span>Suspension</div>
+        <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${CHART_COLORS.timeOut}"></span>Time Out</div>
       </div>
     </div>`;
 }
@@ -2854,15 +3235,16 @@ function renderStackedAreaChart(rows) {
 // table nothing is being summed, so showing follow-up volume alongside
 // the load is useful rather than misleading.
 function renderMonthlyBreakdownTable(rows) {
-  const withData = rows.filter((r) => r.discipline + r.suspension + r.parentMeeting > 0);
+  const withData = rows.filter((r) => r.discipline + r.suspension + (r.timeOut || 0) + r.parentMeeting > 0);
   if (!withData.length) return `<div class="dd-dash-empty">Nothing logged this year yet.</div>`;
-  const sum = (k) => rows.reduce((s, r) => s + r[k], 0);
+  const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
   return `
     <div class="dd-level-breakdown" style="margin-top:10px">
       <div class="dd-level-row dd-level-row-header">
         <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">Month</div>
         <div class="dd-level-cell-term">Grooming</div>
         <div class="dd-level-cell-term">Suspension</div>
+        <div class="dd-level-cell-term">Time Out</div>
         <div class="dd-level-cell-term">Meetings</div>
       </div>
       ${withData.map((r) => `
@@ -2870,21 +3252,24 @@ function renderMonthlyBreakdownTable(rows) {
         <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">${escapeHtml(r.label)}</div>
         <div class="dd-level-cell-term">${r.discipline}</div>
         <div class="dd-level-cell-term">${r.suspension}</div>
+        <div class="dd-level-cell-term">${r.timeOut || 0}</div>
         <div class="dd-level-cell-term">${r.parentMeeting}</div>
       </div>`).join("")}
       <div class="dd-level-row dd-level-row-total">
         <div class="dd-level-cell-class" style="width:auto;flex:0.8 1 0">Total</div>
         <div class="dd-level-cell-term">${sum("discipline")}</div>
         <div class="dd-level-cell-term">${sum("suspension")}</div>
+        <div class="dd-level-cell-term">${sum("timeOut")}</div>
         <div class="dd-level-cell-term">${sum("parentMeeting")}</div>
       </div>
     </div>`;
 }
 function renderReportBarRows(rows) {
   const cats = [
-    { key: "discipline", label: "Grooming Issue" },
+    { key: "discipline", label: "Grooming" },
     { key: "suspension", label: "Suspension" },
-    { key: "parentMeeting", label: "Parent Meeting" },
+    { key: "timeOut", label: "Time Out" },
+    { key: "parentMeeting", label: "Parent Meet" },
   ];
   const rawMax = Math.max(1, ...rows.flatMap((r) => cats.map((c) => r[c.key])));
   const axisMax = niceAxisMax(rawMax);
@@ -2920,7 +3305,7 @@ function renderRankingList(rows) {
         <div class="dd-rank-row">
           <div class="dd-rank-label">${escapeHtml(r.label)}</div>
           <div class="dd-rank-total">${r.total}</div>
-          <div class="dd-rank-detail">${r.discipline} discipline · ${r.suspension} suspension</div>
+          <div class="dd-rank-detail">${r.discipline} discipline · ${r.suspension} suspension · ${r.timeOut || 0} time out</div>
         </div>`).join("")}
     </div>`;
 }
@@ -2967,17 +3352,28 @@ function renderSettingsSection() {
         <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
       </div>
       <div id="report-print-area">
-      ${renderTallyGrid(["discipline", "suspension", "parentMeeting"], totals)}
+      ${renderTallyGrid(["discipline", "suspension", "timeOut", "parentMeeting"], totals, timeOutTypeBreakdown(state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`))))}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term</div>
-      <div class="dd-level-breakdown">
+      <div class="dd-level-breakdown dd-level-breakdown-byterm">
         <div class="dd-level-row dd-level-row-header">
           <div class="dd-level-cell-class">Term</div>
-          <div class="dd-level-cell-term">Grooming</div><div class="dd-level-cell-term">Suspension</div><div class="dd-level-cell-term">Meeting</div>
+          <div class="dd-level-cell-term dd-level-cell-term-groom" style="color:${CHART_COLORS.discipline}">Groom</div>
+          <div class="dd-level-cell-term dd-level-cell-term-susp" style="color:${CHART_COLORS.suspension}">Susp</div>
+          <div class="dd-level-cell-term dd-level-cell-term-timeout dd-level-cell-term-timeout-first" style="flex:4;color:${CHART_COLORS.timeOut}">Time Out</div>
+          <div class="dd-level-cell-term dd-level-cell-term-meet" style="color:${CHART_COLORS.parentMeeting}">Meet</div>
+        </div>
+        <div class="dd-level-row dd-level-row-header dd-level-row-subheader">
+          <div class="dd-level-cell-class"></div>
+          <div class="dd-level-cell-term dd-level-cell-term-groom"></div><div class="dd-level-cell-term dd-level-cell-term-susp"></div>
+          ${TO_TYPES.map((t, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}" style="color:${CHART_COLORS.timeOut}">${t.abbrev}</div>`).join("")}
+          <div class="dd-level-cell-term dd-level-cell-term-meet"></div>
         </div>
         ${computeYearTermTrend(year).map((t) => `
           <div class="dd-level-row">
-            <div class="dd-level-cell-class">${t.label}</div>
-            <div class="dd-level-cell-term">${t.discipline}</div><div class="dd-level-cell-term">${t.suspension}</div><div class="dd-level-cell-term">${t.parentMeeting}</div>
+            <div class="dd-level-cell-class">${t.label.replace("Term ", "T")}</div>
+            <div class="dd-level-cell-term dd-level-cell-term-groom">${t.discipline}</div><div class="dd-level-cell-term dd-level-cell-term-susp">${t.suspension}</div>
+            ${TO_TYPES.map((ty, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}">${t.timeOutByType[ty.key] || 0}</div>`).join("")}
+            <div class="dd-level-cell-term dd-level-cell-term-meet">${t.parentMeeting}</div>
           </div>`).join("")}
       </div>
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Discipline load by month</div>
@@ -3002,6 +3398,23 @@ function renderSettingsSection() {
         const ru = computeRepeatVsUnique(year);
         const esc = computeEscalationRate(year);
         const intervals = computeRepeatSuspensionIntervals(year);
+        const toIntervals = computeRepeatTimeOutIntervals(year);
+        const intervalsTable = (list) => `
+      <div class="dd-level-breakdown">
+        <div class="dd-level-row dd-level-row-header">
+          <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">Student</div>
+          <div class="dd-level-cell-term">Times</div>
+          <div class="dd-level-cell-term">Shortest gap</div>
+          <div class="dd-level-cell-term">Average gap</div>
+        </div>
+        ${list.map((r) => `
+        <div class="dd-level-row">
+          <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">${escapeHtml(r.name)} <span class="dd-mono-muted" style="font-size:10px">${escapeHtml(r.studentClass || "")}</span></div>
+          <div class="dd-level-cell-term">${r.count}</div>
+          <div class="dd-level-cell-term">${r.shortestGap}d</div>
+          <div class="dd-level-cell-term">${r.averageGap}d</div>
+        </div>`).join("")}
+      </div>`;
         const dow = computeDayOfWeekPattern(year);
         const termPos = computeTermPositionPattern(year);
         const maxDow = Math.max(1, ...dow.map((d) => d.count));
@@ -3020,6 +3433,9 @@ function renderSettingsSection() {
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 6px">
           <b>Suspensions:</b> ${ru.suspension.totalCount} suspension${ru.suspension.totalCount === 1 ? "" : "s"} across ${ru.suspension.uniqueStudents} student${ru.suspension.uniqueStudents === 1 ? "" : "s"}${ru.suspension.repeatStudents > 0 ? ` — ${ru.suspension.repeatStudents} of them suspended more than once` : ""}.
         </p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 6px">
+          <b>Time Outs:</b> ${ru.timeOut.totalCount} time out${ru.timeOut.totalCount === 1 ? "" : "s"} across ${ru.timeOut.uniqueStudents} student${ru.timeOut.uniqueStudents === 1 ? "" : "s"}${ru.timeOut.repeatStudents > 0 ? ` — ${ru.timeOut.repeatStudents} of them given more than one` : ""}.
+        </p>
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">
           <b>Grooming:</b> ${ru.grooming.totalCount} issue${ru.grooming.totalCount === 1 ? "" : "s"} across ${ru.grooming.uniqueStudents} student${ru.grooming.uniqueStudents === 1 ? "" : "s"}${ru.grooming.repeatStudents > 0 ? ` — ${ru.grooming.repeatStudents} flagged more than once` : ""}.
         </p>
@@ -3034,22 +3450,10 @@ function renderSettingsSection() {
       </div>`}
 
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat suspension intervals</div>
-      ${intervals.length === 0 ? `<div class="dd-dash-empty">No student was suspended more than once.</div>` : `
-      <div class="dd-level-breakdown">
-        <div class="dd-level-row dd-level-row-header">
-          <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">Student</div>
-          <div class="dd-level-cell-term">Times</div>
-          <div class="dd-level-cell-term">Shortest gap</div>
-          <div class="dd-level-cell-term">Average gap</div>
-        </div>
-        ${intervals.map((r) => `
-        <div class="dd-level-row">
-          <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">${escapeHtml(r.name)} <span class="dd-mono-muted" style="font-size:10px">${escapeHtml(r.studentClass || "")}</span></div>
-          <div class="dd-level-cell-term">${r.count}</div>
-          <div class="dd-level-cell-term">${r.shortestGap}d</div>
-          <div class="dd-level-cell-term">${r.averageGap}d</div>
-        </div>`).join("")}
-      </div>`}
+      ${intervals.length === 0 ? `<div class="dd-dash-empty">No student was suspended more than once.</div>` : intervalsTable(intervals)}
+
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat time out intervals</div>
+      ${toIntervals.length === 0 ? `<div class="dd-dash-empty">No student was given more than one time out.</div>` : intervalsTable(toIntervals)}
 
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By day of week</div>
       <div class="dd-panel" style="padding:12px;margin-bottom:4px">
@@ -3077,6 +3481,18 @@ function renderSettingsSection() {
             <div style="display:flex;justify-content:space-between;border-bottom:1px solid #E4E1D4;padding-bottom:6px">
               <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(r.name))}${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">Class ${escapeHtml(r.cls)}</span>` : ""}</div>
               <span class="dd-mono-muted" style="font-size:12px">${r.count} suspension${r.count === 1 ? "" : "s"}</span>
+            </div>`).join("")}
+        </div>`;
+      })()}
+      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">All time outs this year</div>
+      ${(() => {
+        const roster = computeYearTimeOutRoster(year);
+        if (!roster.length) return `<div class="dd-dash-empty">No time outs this year.</div>`;
+        return `<div style="display:flex;flex-direction:column;gap:6px">
+          ${roster.map((r) => `
+            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #E4E1D4;padding-bottom:6px">
+              <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(r.name))}${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">Class ${escapeHtml(r.cls)}</span>` : ""}</div>
+              <span class="dd-mono-muted" style="font-size:12px">${r.count} time out${r.count === 1 ? "" : "s"}</span>
             </div>`).join("")}
         </div>`;
       })()}
@@ -3322,14 +3738,36 @@ function renderLevelBreakdown(pageKey, items, dateField, isActive) {
     </div>`;
   return countersHtml + breakdownHtml;
 }
-function renderTallyGrid(cats, totals) {
+// `timeOutBreakdown`, when given (the Annual Report passes it; the
+// dashboard's tally calls don't), nests the 4 Time Out types as one row of
+// 4 small blocks inside the Time Out tile itself, right under its number —
+// not a separate section below the whole grid. Every block stays the
+// single Time Out teal rather than getting its own color, so it reads as
+// "Time Out, opened up" rather than a second row of categories. Since that
+// extra row makes the Time Out tile taller than the other three, the other
+// three categories' own numbers are sized up (not Time Out's) so their
+// number visually fills down toward the same base the Time Out tile's
+// nested row reaches, instead of leaving a gap of empty space beneath them.
+function renderTallyGrid(cats, totals, timeOutBreakdown) {
   if (!cats.length) return `<div class="dd-dash-empty">Nothing selected above.</div>`;
+  // The "big" number only fits its enlarged size while it's 1-2 digits —
+  // a 3-digit total in the same narrow tile would run into the next
+  // column, so it steps back down toward the normal size as digits grow.
+  const bigSizeClass = (n) => (String(n).length >= 3 ? " dd-tally-number-big-3" : " dd-tally-number-big");
   return `
     <div class="dd-tally-grid" style="grid-template-columns:repeat(${cats.length}, 1fr)">
       ${cats.map((c) => `
         <div class="dd-tally-col">
           <div class="dd-tally-label" style="color:${CHART_COLORS[c]}">${CATEGORY_META[c].label}</div>
-          <div class="dd-tally-number" style="color:${CHART_COLORS[c]}">${totals[c]}</div>
+          <div class="dd-tally-number${c !== "timeOut" && timeOutBreakdown ? bigSizeClass(totals[c]) : ""}" style="color:${CHART_COLORS[c]}">${totals[c]}</div>
+          ${c === "timeOut" && timeOutBreakdown ? `
+          <div class="dd-tally-nested">
+            ${TO_TYPES.map((t) => `
+              <div class="dd-tally-nested-block">
+                <div class="dd-tally-nested-label">${t.abbrev}</div>
+                <div class="dd-tally-nested-number">${timeOutBreakdown[t.key] || 0}</div>
+              </div>`).join("")}
+          </div>` : ""}
         </div>`).join("")}
     </div>`;
 }
@@ -3347,12 +3785,20 @@ function renderDayDetail(dateISO, incl) {
       });
     });
   }
+  if (incl.timeOut) {
+    state.timeOuts.forEach((t) => {
+      if (t.deleted) return;
+      suspensionDayEntries(t).forEach((e) => {
+        if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "toOss" : "toIss", name: t.studentName, cls: t.studentClass, location: e.venue });
+      });
+    });
+  }
   if (incl.parentMeeting) {
     state.parentMeetings.forEach((m) => { if (!m.deleted && m.date === dateISO) items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass }); });
   }
-  const typeOrder = { discipline: 0, iss: 1, oss: 2, parentMeeting: 3 };
+  const typeOrder = { discipline: 0, iss: 1, oss: 2, toIss: 3, toOss: 4, parentMeeting: 5 };
   items.sort((a, b) => (typeOrder[a.type] - typeOrder[b.type]) || (classLevel(a.cls) - classLevel(b.cls)));
-  const typeColor = { discipline: CHART_COLORS.discipline, iss: CHART_COLORS.suspension, oss: OSS_DOT_COLOR, parentMeeting: CHART_COLORS.parentMeeting };
+  const typeColor = { discipline: CHART_COLORS.discipline, iss: CHART_COLORS.suspension, oss: OSS_DOT_COLOR, toIss: CHART_COLORS.timeOut, toOss: TO_OSS_DOT_COLOR, parentMeeting: CHART_COLORS.parentMeeting };
   return `
     <div class="dd-day-detail">
       <div class="dd-day-detail-title">${formatDate(dateISO)}</div>
@@ -3368,11 +3814,15 @@ function renderDayDetail(dateISO, incl) {
 // Per-day breakdown, split ISS/OSS like the month calendar — used for
 // Today, and for each day-cell in the This Week view.
 function computeCountsForDate(dateISO) {
-  const c = { discipline: 0, suspensionISS: 0, suspensionOSS: 0, parentMeeting: 0 };
+  const c = { discipline: 0, suspensionISS: 0, suspensionOSS: 0, timeOutISS: 0, timeOutOSS: 0, parentMeeting: 0 };
   state.incidents.forEach((i) => { if (!i.deleted && i.date === dateISO) c.discipline++; });
   state.suspensions.forEach((s) => {
     if (s.deleted) return;
     suspensionDayEntries(s).forEach((e) => { if (e.date === dateISO) { if (e.type === "OSS") c.suspensionOSS++; else c.suspensionISS++; } });
+  });
+  state.timeOuts.forEach((t) => {
+    if (t.deleted) return;
+    suspensionDayEntries(t).forEach((e) => { if (e.date === dateISO) { if (e.type === "OSS") c.timeOutOSS++; else c.timeOutISS++; } });
   });
   state.parentMeetings.forEach((m) => { if (isPmCounted(m) && m.date === dateISO) c.parentMeeting++; });
   return c;
@@ -3380,13 +3830,18 @@ function computeCountsForDate(dateISO) {
 function suspensionEntryCountForRange(fromISO, toISO) {
   return state.suspensions.filter((s) => !s.deleted && s.startDate >= fromISO && s.startDate <= toISO).length;
 }
+function timeOutEntryCountForRange(fromISO, toISO) {
+  return state.timeOuts.filter((t) => !t.deleted && t.startDate >= fromISO && t.startDate <= toISO).length;
+}
 function renderCalLegend(incl) {
   const legendLeft = [];
   const legendRight = [];
-  if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Grooming Issue" });
-  if (incl.parentMeeting) legendLeft.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meeting" });
+  if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Grooming" });
+  if (incl.parentMeeting) legendLeft.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meet" });
   if (incl.suspension) legendRight.push({ color: CHART_COLORS.suspension, label: "In-School Suspension", square: true });
   if (incl.suspension) legendRight.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension", square: true });
+  if (incl.timeOut) legendRight.push({ color: CHART_COLORS.timeOut, label: "In-School Time Out", square: true });
+  if (incl.timeOut) legendRight.push({ color: TO_OSS_DOT_COLOR, label: "Out-of-School Time Out", square: true });
   const col = (items) => items.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot${li.square ? " dd-cal-dot-suspension" : ""}" style="background:${li.color}"></span>${li.label}</div>`).join("");
   if (!legendLeft.length && !legendRight.length) return "";
   return `<div class="dd-cal-legend dd-cal-legend-2col"><div class="dd-cal-legend-col">${col(legendLeft)}</div><div class="dd-cal-legend-col">${col(legendRight)}</div></div>`;
@@ -3394,8 +3849,8 @@ function renderCalLegend(incl) {
 function renderTodayView(incl) {
   const viewDate = state.dayViewDate || todayISO();
   const c = computeCountsForDate(viewDate);
-  const totals = { discipline: c.discipline, suspension: c.suspensionISS + c.suspensionOSS, parentMeeting: c.parentMeeting };
-  const cats = ["discipline", "suspension", "parentMeeting"].filter((x) => incl[x]);
+  const totals = { discipline: c.discipline, suspension: c.suspensionISS + c.suspensionOSS, timeOut: c.timeOutISS + c.timeOutOSS, parentMeeting: c.parentMeeting };
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((x) => incl[x]);
   return `
     ${renderTallyGrid(cats, totals)}
     <div class="dd-cal-nav">
@@ -3412,14 +3867,15 @@ function renderWeekCalendar(incl) {
   const days = [];
   let cur = monday;
   for (let i = 0; i < 7; i++) { days.push(cur); cur = addDays(cur, 1); }
-  const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  const totals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
   days.forEach((d) => {
     const c = computeCountsForDate(d);
     totals.discipline += c.discipline;
     totals.parentMeeting += c.parentMeeting;
     totals.suspension += c.suspensionISS + c.suspensionOSS;
+    totals.timeOut += c.timeOutISS + c.timeOutOSS;
   });
-  const cats = ["discipline", "suspension", "parentMeeting"].filter((x) => incl[x]);
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((x) => incl[x]);
   const today = todayISO();
   const cells = days.map((d) => {
     const c = computeCountsForDate(d);
@@ -3427,6 +3883,8 @@ function renderWeekCalendar(incl) {
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}"></span>`);
     if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}"></span>`);
     if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${OSS_DOT_COLOR}"></span>`);
+    if (incl.timeOut && c.timeOutISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.timeOut}"></span>`);
+    if (incl.timeOut && c.timeOutOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${TO_OSS_DOT_COLOR}"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}"></span>`);
     const isSelected = state.selectedCalendarDay === d;
     const isWknd = isWeekend(d);
@@ -3491,6 +3949,8 @@ function renderMiniMonth(monthKeyStr, incl) {
     if (incl.discipline && c.discipline > 0) segs.push(CHART_COLORS.discipline);
     if (incl.suspension && c.suspensionISS > 0) segs.push(CHART_COLORS.suspension);
     if (incl.suspension && c.suspensionOSS > 0) segs.push(OSS_DOT_COLOR);
+    if (incl.timeOut && c.timeOutISS > 0) segs.push(CHART_COLORS.timeOut);
+    if (incl.timeOut && c.timeOutOSS > 0) segs.push(TO_OSS_DOT_COLOR);
     if (incl.parentMeeting && c.parentMeeting > 0) segs.push(CHART_COLORS.parentMeeting);
     // Segments are just split evenly by which categories occurred that
     // day, not weighted by how many of each — a day with 3 discipline
@@ -3517,11 +3977,12 @@ function renderMiniMonth(monthKeyStr, incl) {
 }
 function renderYearCalendar(incl) {
   const year = state.yearViewYear || new Date().getFullYear();
-  const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
-  const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
+  const totals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
   totals.discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
   totals.parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && m.date && m.date.startsWith(`${year}-`)).length;
   totals.suspension = suspensionEntryCountForRange(`${year}-01-01`, `${year}-12-31`);
+  totals.timeOut = timeOutEntryCountForRange(`${year}-01-01`, `${year}-12-31`);
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
   return `
     ${renderTallyGrid(cats, totals)}
@@ -3551,11 +4012,12 @@ function renderMonthCalendar(monthKeyStr, incl) {
   const daily = computeDailyCountsForMonth(monthKeyStr);
   const firstDow = weekdayOf(`${monthKeyStr}-01`);
   const daysInMonth = new Date(y, m, 0).getDate();
-  const totals = { discipline: 0, suspension: 0, parentMeeting: 0 };
+  const totals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
   Object.values(daily).forEach((c) => { totals.discipline += c.discipline; totals.parentMeeting += c.parentMeeting; });
   totals.suspension = suspensionEntryCountForMonth(monthKeyStr);
+  totals.timeOut = timeOutEntryCountForMonth(monthKeyStr);
   const today = todayISO();
-  const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
 
   const cells = [];
   for (let i = 0; i < firstDow; i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
@@ -3566,6 +4028,8 @@ function renderMonthCalendar(monthKeyStr, incl) {
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
     if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
     if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${OSS_DOT_COLOR}" title="${c.suspensionOSS} out-of-school suspension"></span>`);
+    if (incl.timeOut && c.timeOutISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.timeOut}" title="${c.timeOutISS} in-school time out"></span>`);
+    if (incl.timeOut && c.timeOutOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${TO_OSS_DOT_COLOR}" title="${c.timeOutOSS} out-of-school time out"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
     const isSelected = state.selectedCalendarDay === iso;
     const isWknd = isWeekend(iso);
@@ -3609,6 +4073,7 @@ function renderMonthlyChart() {
   const incl = {
     discipline: state.chartIncludeDiscipline !== false,
     suspension: state.chartIncludeSuspension !== false,
+    timeOut: state.chartIncludeTimeOut !== false,
     parentMeeting: state.chartIncludeParentMeeting !== false,
   };
   const rangePillsRow = (opts) => `
@@ -3660,14 +4125,14 @@ function renderMonthlyChart() {
   }
 
   const data = computeMonthlyTrend();
-  const cats = ["discipline", "suspension", "parentMeeting"].filter((c) => incl[c]);
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
   const catObjs = cats.map((key) => ({ key, label: CATEGORY_META[key].label }));
   const rawMax = Math.max(1, ...data.flatMap((d) => catObjs.map((c) => d[c.key])));
   const axisMax = niceAxisMax(rawMax);
   const pct = (v) => Math.max(v > 0 ? 3 : 0, Math.round((v / axisMax) * 100));
   const ticks = [0, axisMax * 0.25, axisMax * 0.5, axisMax * 0.75, axisMax].map((n) => Math.round(n));
-  const rangeTotals = { discipline: 0, suspension: 0, parentMeeting: 0 };
-  data.forEach((d) => { rangeTotals.discipline += d.discipline; rangeTotals.suspension += d.suspension; rangeTotals.parentMeeting += d.parentMeeting; });
+  const rangeTotals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
+  data.forEach((d) => { rangeTotals.discipline += d.discipline; rangeTotals.suspension += d.suspension; rangeTotals.timeOut += d.timeOut; rangeTotals.parentMeeting += d.parentMeeting; });
 
   return `
     <div class="dd-panel" style="margin-top:16px">
@@ -3768,6 +4233,7 @@ function renderGroomingFollowUpList() {
 function renderDashboardSection() {
   const activeIncidents = state.incidents.filter((i) => !i.deleted);
   const activeSusp = state.suspensions.filter((s) => !s.deleted);
+  const activeTo = state.timeOuts.filter((t) => !t.deleted);
   const activePm = state.parentMeetings.filter((m) => !m.deleted);
 
   const semester = computeCurrentSemesterBounds();
@@ -3779,7 +4245,7 @@ function renderDashboardSection() {
     const isLegacy = !Array.isArray(i.issues);
     const maxStage = isLegacy ? 0 : groomingEntryMaxStage(i);
     const key = studentKey(i.studentName, i.studentClass);
-    watchCounts[key] = watchCounts[key] || { suspension: 0, second: 0, third: 0 };
+    watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
     if (maxStage >= 3) watchCounts[key].third++;
     else if (maxStage >= 2) watchCounts[key].second++;
     watchClass[key] = i.studentClass || watchClass[key];
@@ -3788,10 +4254,22 @@ function renderDashboardSection() {
   activeSusp.forEach((s) => {
     if (s.startDate < semester.start || s.startDate > semester.end) return;
     const key = studentKey(s.studentName, s.studentClass);
-    watchCounts[key] = watchCounts[key] || { suspension: 0, second: 0, third: 0 };
+    watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
     watchCounts[key].suspension++;
     watchClass[key] = s.studentClass || watchClass[key];
     watchName[key] = s.studentName || watchName[key];
+  });
+  // Time outs are tallied and shown on each watchlisted student, but do NOT
+  // (yet) move anyone between risk tiers — the tier thresholds below are
+  // school policy defined in terms of suspensions and warnings, and how
+  // much a time out should weigh hasn't been decided.
+  activeTo.forEach((t) => {
+    if (t.startDate < semester.start || t.startDate > semester.end) return;
+    const key = studentKey(t.studentName, t.studentClass);
+    watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
+    watchCounts[key].timeOut++;
+    watchClass[key] = t.studentClass || watchClass[key];
+    watchName[key] = t.studentName || watchName[key];
   });
   // Risk tiers (per semester, counted by entry not by issue), checked in
   // priority order so someone qualifying for a higher tier is never also
@@ -3815,9 +4293,10 @@ function renderDashboardSection() {
         ${!state.classConfig?.classesByYear?.[String(new Date().getFullYear())] ? `
         <div class="dd-error" style="margin-bottom:12px" data-action="goto-classes-for-year">Classes for ${new Date().getFullYear()} haven't been reviewed yet — <button type="button" class="dd-back-link" data-action="goto-classes-for-year" style="text-decoration:underline">tap here to set them up</button>.</div>` : ""}
         <div class="dd-new-entry-row">
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ Grooming Issue</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ Grooming</button>
           <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ Suspension</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parent Meeting</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-to-only" style="flex:1">+ Time Out</button>
+          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parent Meet</button>
         </div>
 
         ${renderGroomingFollowUpList()}
@@ -3843,6 +4322,7 @@ function renderDashboardSection() {
             ${watchlist.map((t) => {
               const stats = [];
               if (t.suspension > 0) stats.push(`${t.suspension} suspension${t.suspension === 1 ? "" : "s"}`);
+              if (t.timeOut > 0) stats.push(`${t.timeOut} time out${t.timeOut === 1 ? "" : "s"}`);
               if (t.third > 0) stats.push(`${t.third} final warning${t.third === 1 ? "" : "s"}`);
               if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
               return `
@@ -3857,6 +4337,7 @@ function renderDashboardSection() {
       </div>
       ${state.showNewForm ? renderNewForm() : ""}
       ${state.showNewSuspForm ? renderSuspForm(false) : ""}
+      ${state.showNewToForm ? renderTimeOutForm(false) : ""}
       ${state.showNewPmForm ? renderPmForm(false) : ""}
     </div>`;
 }
@@ -3952,8 +4433,9 @@ function renderStudentView() {
   const matches = (rec) => studentKey(rec.studentName, rec.studentClass) === studentKey(name, cls);
   const grooming = state.incidents.filter((i) => !i.deleted && matches(i)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const suspensions = state.suspensions.filter((s) => !s.deleted && matches(s)).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+  const timeOuts = state.timeOuts.filter((t) => !t.deleted && matches(t)).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
   const meetings = state.parentMeetings.filter((m) => !m.deleted && matches(m)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const latestClass = (grooming[0]?.studentClass) || (suspensions[0]?.studentClass) || (meetings[0]?.studentClass) || cls;
+  const latestClass = (grooming[0]?.studentClass) || (suspensions[0]?.studentClass) || (timeOuts[0]?.studentClass) || (meetings[0]?.studentClass) || cls;
   const sectionBlock = (title, count, items, renderFn) => `
     <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:20px 0 8px">${title} (${count})</div>
     ${count === 0 ? `<div class="dd-dash-empty">Nothing on file.</div>` : `<div style="display:flex;flex-direction:column;gap:12px">${items.map(renderFn).join("")}</div>`}`;
@@ -3963,13 +4445,15 @@ function renderStudentView() {
       <div class="dd-main">
         <button type="button" class="dd-back-link" data-action="student-view-back">‹ Back</button>
         <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">${escapeHtml(name)}${latestClass ? ` <span class="dd-mono-muted" style="font-size:14px;font-weight:400">${escapeHtml(latestClass)}</span>` : ""}</div>
-        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:6px">Everything on file for this student, across all three logs.</div>
+        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:6px">Everything on file for this student, across all four logs.</div>
         ${sectionBlock("Grooming Log", grooming.length, grooming, renderIncidentDetail)}
         ${sectionBlock("Suspension Log", suspensions.length, suspensions, renderSuspensionDetail)}
-        ${sectionBlock("Parent Meetings", meetings.length, meetings, renderParentMeetingDetail)}
+        ${sectionBlock("Time Out Log", timeOuts.length, timeOuts, renderTimeOutDetail)}
+        ${sectionBlock("Parent Meets", meetings.length, meetings, renderParentMeetingDetail)}
       </div>
       ${state.editingIncidentId ? renderEditIncidentForm() : ""}
       ${state.editingSuspensionId ? renderSuspForm(true) : ""}
+      ${state.editingTimeOutId ? renderTimeOutForm(true) : ""}
       ${state.editingPmId ? renderPmForm(true) : ""}
     </div>`;
 }
@@ -3983,6 +4467,7 @@ function renderIncidentDetail(it) {
   const followUps = it.followUps || [];
   const history = it.history || [];
   const linkedSusp = (it.linkedSuspensionIds || []).map((id) => state.suspensions.find((x) => x.id === id)).filter(Boolean);
+  const linkedTo = (it.linkedTimeOutIds || []).map((id) => state.timeOuts.find((x) => x.id === id)).filter(Boolean);
   const linkedPm = (it.linkedPmIds || []).map((id) => state.parentMeetings.find((x) => x.id === id)).filter(Boolean);
   const expanded = !!state.entryExpanded[it.id];
   const today = todayISO();
@@ -4001,11 +4486,12 @@ function renderIncidentDetail(it) {
         </div>
       </div>
       ${expanded ? `
-      ${linkedSusp.length || linkedPm.length ? `
+      ${linkedSusp.length || linkedTo.length || linkedPm.length ? `
       <div class="dd-related-box" style="margin-top:12px">
         <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:6px">Related records</div>
         ${linkedSusp.map((x) => `<div class="dd-related-link" data-action="jump-to-suspension" data-id="${x.id}">Suspension — ${formatDateShort(x.startDate)} — ${escapeHtml(truncateName(x.reason || "", 30))}</div>`).join("")}
-        ${linkedPm.map((x) => `<div class="dd-related-link" data-action="jump-to-pm" data-id="${x.id}">Parent Meeting — ${formatDateShort(x.date)} — ${escapeHtml(truncateName(x.reason || "", 30))}</div>`).join("")}
+        ${linkedTo.map((x) => `<div class="dd-related-link" data-action="jump-to-timeout" data-id="${x.id}">Time Out — ${formatDateShort(x.startDate)} — ${escapeHtml(truncateName(x.reason || "", 30))}</div>`).join("")}
+        ${linkedPm.map((x) => `<div class="dd-related-link" data-action="jump-to-pm" data-id="${x.id}">Parent Meet — ${formatDateShort(x.date)} — ${escapeHtml(truncateName(x.reason || "", 30))}</div>`).join("")}
       </div>` : ""}
       ${isLegacy ? `
       <div class="dd-mono-muted" style="font-size:12px;font-style:italic;margin:12px 0">This is an entry from before the Grooming Log rework — no per-issue tracking available for it.</div>
@@ -4123,6 +4609,7 @@ function renderKnownStudentsDatalist() {
   });
   addAll(state.incidents);
   addAll(state.suspensions);
+  addAll(state.timeOuts);
   addAll(state.parentMeetings);
   names.sort((a, b) => a.localeCompare(b));
   return `<datalist id="known-students">${names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("")}</datalist>`;
@@ -4139,7 +4626,7 @@ function classOptionsHtml(selected) {
 function renderNewForm() {
   const d = state._newIncidentDraft;
   const related = findRelatedRecords(d.studentName);
-  const hasRelated = related.suspensions.length > 0 || related.parentMeetings.length > 0;
+  const hasRelated = related.suspensions.length > 0 || related.timeOuts.length > 0 || related.parentMeetings.length > 0;
   return `
     <div class="dd-modal-backdrop" id="modal-backdrop">
       <div class="dd-modal" id="new-form">
@@ -4154,10 +4641,15 @@ function renderNewForm() {
               <input type="checkbox" class="dd-link-susp-cb" value="${s.id}" ${d.linkedSuspensionIds.includes(s.id) ? "checked" : ""} />
               <span>Suspension — ${formatDateShort(s.startDate)} — ${escapeHtml(truncateName(s.reason || "", 30))}</span>
             </label>`).join("")}
+          ${related.timeOuts.map((t) => `
+            <label class="dd-checkbox-pill" style="display:flex;margin-bottom:4px">
+              <input type="checkbox" class="dd-link-to-cb" value="${t.id}" ${(d.linkedTimeOutIds || []).includes(t.id) ? "checked" : ""} />
+              <span>Time Out — ${formatDateShort(t.startDate)} — ${escapeHtml(truncateName(t.reason || "", 30))}</span>
+            </label>`).join("")}
           ${related.parentMeetings.map((m) => `
             <label class="dd-checkbox-pill" style="display:flex;margin-bottom:4px">
               <input type="checkbox" class="dd-link-pm-cb" value="${m.id}" ${d.linkedPmIds.includes(m.id) ? "checked" : ""} />
-              <span>Parent Meeting — ${formatDateShort(m.date)} — ${escapeHtml(truncateName(m.reason || "", 30))}</span>
+              <span>Parent Meet — ${formatDateShort(m.date)} — ${escapeHtml(truncateName(m.reason || "", 30))}</span>
             </label>`).join("")}
         </div>` : ""}
         <label class="dd-label">Class</label>
@@ -4342,7 +4834,10 @@ function renderSuspensionDetail(s) {
     </div>`;
 }
 
-function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
+// Suspension-only now — Time Out grew its own type selector, free-text
+// location and administrator field, so it forked into
+// renderTimeOutFieldsBody instead of sharing this one.
+function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId, noun = "suspension") {
   const totalOptions = Array.from({ length: 14 }, (_, i) => i + 1);
   const dayCountOptions = (max) => Array.from({ length: max + 1 }, (_, i) => i);
   const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
@@ -4357,7 +4852,7 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
           <span class="dd-sans" style="font-size:15px">${formatDate(d.startDate)}</span>
         </div>
 
-        <label class="dd-label">Total days of suspension</label>
+        <label class="dd-label">Total days of ${noun}</label>
         <select class="dd-input" id="${idPrefix}-total-days">
           <option value="">Select total days…</option>
           ${totalOptions.map((n) => `<option value="${n}" ${d.totalDays === n ? "selected" : ""}>${n} day${n > 1 ? "s" : ""}</option>`).join("")}
@@ -4443,7 +4938,7 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
 function renderKeepingModalScroll() {
   const modal = document.querySelector(".dd-modal");
   const scrollTop = modal ? modal.scrollTop : null;
-  // The Parent Meeting "Reason(s) for meeting" checklist scrolls inside
+  // The Parent Meet "Reason(s) for meeting" checklist scrolls inside
   // its own box, nested inside the modal — a fresh element after every
   // re-render starts back at scrollTop 0, which is what made it keep
   // jumping back to the top of the list on every tap. Preserved
@@ -4522,6 +5017,7 @@ function attachSuspFieldListeners(form, idPrefix, d, rawOnChange) {
       if (d.issVenues[date] === location) delete d.issVenues[date];
       else d.issVenues[date] = location;
       if (idPrefix === "susp") state.suspFormError = "";
+      else if (idPrefix === "to") state.toFormError = "";
       onChange();
     }));
   form.querySelectorAll(`[data-action="${idPrefix}-unbook-iss"]`).forEach((el) =>
@@ -4567,7 +5063,283 @@ function renderSuspForm(isEdit) {
     </div>`;
 }
 
-// ---------- Parent Meeting ----------
+// ---------- Time Out Log ----------
+// Mirrors the Suspension Log page. suspensionWeekCategory/suspensionStatus
+// only read the record's dates, so they apply to Time Outs unchanged.
+function filteredTimeOuts() {
+  let list = state.timeOuts.map((t) => ({ ...t, _week: suspensionWeekCategory(t) })).filter((t) => !t.deleted);
+  if (state.toTab !== "All") list = list.filter((t) => t._week === state.toTab);
+  if (state.timeOutExpandedLevel) {
+    list = list.filter((t) => classLevel(t.studentClass) === state.timeOutExpandedLevel);
+    if (state.timeOutSelectedClass) list = list.filter((t) => t.studentClass === state.timeOutSelectedClass);
+  }
+  if (state.toQuery.trim()) {
+    const q = state.toQuery.trim().toLowerCase();
+    list = list.filter((t) =>
+      t.studentName.toLowerCase().includes(q) ||
+      (t.studentClass || "").toLowerCase().includes(q) ||
+      (t.loggedBy || "").toLowerCase().includes(q) ||
+      (t.reason || "").toLowerCase().includes(q));
+  }
+  return [...list].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+}
+function timeOutCounts() {
+  const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
+  state.timeOuts.forEach((t) => { if (t.deleted) { c.Deleted++; return; } c[suspensionWeekCategory(t)]++; });
+  return c;
+}
+function renderTimeOutSection() {
+  const list = filteredTimeOuts();
+  const c = timeOutCounts();
+  return `
+    <div class="dd-app">
+      ${renderNav()}
+      <div class="dd-main">
+        ${renderLevelBreakdown("timeOut", state.timeOuts, "startDate")}
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.toTab === t ? "active" : ""}" data-action="set-to-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
+        </div>
+        ${state.timeOutExpandedLevel ? renderClassPillsRow("timeOut", state.timeOutExpandedLevel) : ""}
+        <div class="dd-panel">
+          <div class="dd-search-wrap">
+            <input class="dd-input dd-search" id="to-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.toQuery)}" />
+          </div>
+          ${list.length === 0 ? `<div class="dd-empty">${state.timeOuts.length === 0 ? "No time outs logged yet." : "No entries match this filter."}</div>` : `
+          <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderTimeOutDetail).join("")}</div>`}
+        </div>
+        ${state.saveError ? `<div class="dd-toast" style="color:#A3372B">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
+        ${state.saving ? `<div class="dd-mono-muted" style="font-size:12px;margin-top:8px">Saving…</div>` : ""}
+      </div>
+      ${state.showNewToForm ? renderTimeOutForm(false) : ""}
+      ${state.editingTimeOutId ? renderTimeOutForm(true) : ""}
+    </div>`;
+}
+function renderTimeOutDetail(t) {
+  const statusStyle = t.deleted ? { ink: "#8A8571", label: "REMOVED" } : SUSP_STATUS_STYLE[suspensionStatus(t)];
+  const entries = suspensionDayEntries(t).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const history = t.history || [];
+  const linkedIncidents = (t.linkedIncidentIds || []).map((id) => state.incidents.find((x) => x.id === id)).filter(Boolean);
+  const expanded = !!state.entryExpanded[t.id];
+  return `
+    <div class="dd-detail-card">
+      <div class="dd-detail-head">
+        <div style="min-width:0">
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.studentName)}" data-class="${escapeHtml(t.studentClass || "")}">${escapeHtml(t.studentName)}</div>
+          <div class="dd-card-meta dd-card-meta-primary">${t.startDate ? formatDate(t.startDate) : ""}${t.studentClass ? ` · ${escapeHtml(t.studentClass)}` : ""}${t.toType ? ` · ${escapeHtml(toTypeLabel(t.toType))}` : ""}</div>
+          <div class="dd-card-meta">logged by ${escapeHtml(t.loggedBy)}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;flex-shrink:0">
+          <span class="dd-status-dot" style="background:${statusStyle.ink}" title="${escapeHtml(statusStyle.label)}"></span>
+          <button class="dd-expand-toggle" data-action="toggle-entry-expanded" data-id="${t.id}" title="${expanded ? "Collapse" : "Expand"}">${expanded ? "▲" : "▼"}</button>
+        </div>
+      </div>
+      ${expanded ? `
+      ${linkedIncidents.length ? `
+      <div class="dd-related-box" style="margin-top:12px">
+        <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:6px">Related grooming entries</div>
+        ${linkedIncidents.map((x) => `<div class="dd-related-link" data-action="jump-to-incident" data-id="${x.id}">${formatDateShort(x.date)} — ${escapeHtml(truncateName(incidentSummaryLabel(x), 30))}</div>`).join("")}
+      </div>` : ""}
+      <div style="margin:12px 0">
+        <div class="dd-field-label">Type</div>
+        <div class="dd-field-value">${escapeHtml(toTypeLabel(t.toType))}</div>
+      </div>
+      <div style="margin:12px 0">
+        <div class="dd-field-label">Reason</div>
+        <div class="dd-field-value">${escapeHtml(t.reason || "")}</div>
+      </div>
+      <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Day-by-day (${entries.length} day${entries.length === 1 ? "" : "s"})</div>
+      <div class="dd-followups" style="margin-bottom:16px">
+        ${entries.map((e) => `<div class="dd-followup"><div class="dd-followup-note">${SUSP_TYPE_STYLE[e.type].label}${e.type === "ISS" && e.venue ? ` — ${escapeHtml(e.venue)}${e.administrator ? ` (${escapeHtml(e.administrator)})` : ""}` : ""}</div><div class="dd-followup-meta">${formatDate(e.date)}</div></div>`).join("")}
+      </div>
+      <button class="dd-history-toggle" data-action="toggle-to-history" data-id="${t.id}">${state.historyOpen[t.id] ? "Hide audit trail" : "Show audit trail"}</button>
+      ${state.historyOpen[t.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
+      <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="dd-add-btn" data-action="edit-timeout" data-id="${t.id}">Edit entry</button>
+        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-timeout" data-id="${t.id}">Delete Entry</button>
+      </div>` : ""}
+    </div>`;
+}
+// Time Out's own field body — forked from the shared Suspension one once
+// the two diverged: a Time Out's location is wherever the student is
+// actually sent that period (free text, no fixed room list or capacity),
+// and it needs to record who is administering it, which a suspension never
+// asked for. Recess/Lesson time outs are always in-school, so their
+// in-school/out-of-school split is hidden rather than left editable.
+function renderTimeOutFieldsBody(d, idPrefix) {
+  const totalOptions = Array.from({ length: 14 }, (_, i) => i + 1);
+  const dayCountOptions = (max) => Array.from({ length: max + 1 }, (_, i) => i);
+  const typeInfo = toTypeInfo(d.toType);
+  const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
+  return `
+        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
+        <label class="dd-label">Type of time out</label>
+        <select class="dd-input" id="${idPrefix}-to-type">
+          ${TO_TYPES.map((t) => `<option value="${t.key}" ${d.toType === t.key ? "selected" : ""}>${t.label}</option>`).join("")}
+        </select>
+
+        <label class="dd-label">Start date (used to suggest default days)</label>
+        <div class="dd-issue-due-row">
+          <div class="dd-date-icon-btn" title="Change the start date">
+            <input class="dd-input" type="date" id="${idPrefix}-start-date" value="${d.startDate}" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+          </div>
+          <span class="dd-sans" style="font-size:15px">${formatDate(d.startDate)}</span>
+        </div>
+
+        <label class="dd-label">Total days of time out</label>
+        <select class="dd-input" id="${idPrefix}-total-days">
+          <option value="">Select total days…</option>
+          ${totalOptions.map((n) => `<option value="${n}" ${d.totalDays === n ? "selected" : ""}>${n} day${n > 1 ? "s" : ""}</option>`).join("")}
+        </select>
+
+        ${d.totalDays && !typeInfo.alwaysInSchool ? `
+        <div class="dd-grid2" style="margin-top:10px">
+          <div>
+            <label class="dd-label">In-school days</label>
+            <select class="dd-input" id="${idPrefix}-iss-days">
+              ${dayCountOptions(d.totalDays).map((n) => `<option value="${n}" ${d.issDays === n ? "selected" : ""}>${n}</option>`).join("")}
+            </select>
+          </div>
+          <div>
+            <label class="dd-label">Out-of-school days</label>
+            <select class="dd-input" id="${idPrefix}-oss-days">
+              ${dayCountOptions(d.totalDays).map((n) => `<option value="${n}" ${d.ossDays === n ? "selected" : ""}>${n}</option>`).join("")}
+            </select>
+          </div>
+        </div>` : ""}
+        ${d.totalDays && typeInfo.alwaysInSchool ? `
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:10px">${escapeHtml(typeInfo.label)} keeps the student in school every day — all ${d.totalDays} day${d.totalDays > 1 ? "s" : ""} need a location and who's administering it.</div>` : ""}
+
+        ${showDatePickers && d.ossDays > 0 ? `
+        <label class="dd-label" style="margin-top:12px">Out-of-school dates</label>
+        <div id="${idPrefix}-oss-date-rows">
+          ${d.ossDates.map((dt, i) => `
+            <div class="dd-venue-row">
+              <div class="dd-date-icon-btn" title="Change this day's date">
+                <input type="date" class="${idPrefix}-oss-date-input" data-idx="${i}" value="${dt}" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+              </div>
+              <span class="dd-venue-date">${formatDate(dt)}</span>
+            </div>`).join("")}
+        </div>` : ""}
+
+        ${showDatePickers && d.issDays > 0 ? (() => {
+          const bookedCount = d.issDates.filter((dt) => (d.issVenues[dt] || "").trim() && (d.issAdministrators[dt] || "").trim()).length;
+          const issRows = d.issDates.map((dt, i) => ({ dt, i })).sort((a, b) => a.dt.localeCompare(b.dt));
+          return `
+        <label class="dd-label" style="margin-top:12px">In-school days filled in: ${bookedCount} of ${d.issDays}</label>
+        <div id="${idPrefix}-iss-date-rows" style="display:flex;flex-direction:column;gap:10px">
+          ${issRows.map(({ dt, i }) => `
+            <div class="dd-related-box" style="padding:10px">
+              <div class="dd-venue-row" style="margin-bottom:8px">
+                <div class="dd-date-icon-btn" title="Change this day's date">
+                  <input type="date" class="${idPrefix}-iss-date-input" data-idx="${i}" value="${dt}" />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+                </div>
+                <span class="dd-venue-date">${formatDate(dt)}</span>
+              </div>
+              <label class="dd-label" style="margin-top:0;font-size:11px">Where is the student going?</label>
+              <input class="dd-input ${idPrefix}-iss-venue-input" data-date="${dt}" placeholder="e.g. General Office" value="${escapeHtml(d.issVenues[dt] || "")}" />
+              <label class="dd-label" style="font-size:11px">Who is administering it?</label>
+              <input class="dd-input ${idPrefix}-iss-admin-input" data-date="${dt}" placeholder="Teacher's name" value="${escapeHtml(d.issAdministrators[dt] || "")}" />
+            </div>`).join("")}
+        </div>`;
+        })() : ""}`;
+}
+// Same "avoid re-rendering on every keystroke" pattern as the studentName
+// field's syncField helper — venue/administrator are free text, so a
+// render-on-input would yank focus out of the box after every character.
+function attachTimeOutFieldListeners(form, idPrefix, d) {
+  const onChange = renderKeepingModalScroll;
+  const typeEl = document.getElementById(`${idPrefix}-to-type`);
+  if (typeEl) typeEl.addEventListener("change", () => { d.toType = typeEl.value; regenerateTimeOutDates(d); onChange(); });
+
+  const startDateEl = document.getElementById(`${idPrefix}-start-date`);
+  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateTimeOutDates(d); onChange(); });
+
+  const totalEl = document.getElementById(`${idPrefix}-total-days`);
+  if (totalEl) totalEl.addEventListener("change", () => {
+    const total = parseInt(totalEl.value, 10) || null;
+    d.totalDays = total;
+    if (total) {
+      if (d.issDays + d.ossDays !== total) { d.issDays = total; d.ossDays = 0; }
+      regenerateTimeOutDates(d);
+    } else { d.ossDates = []; d.issDates = []; d.issAdministrators = {}; }
+    onChange();
+  });
+
+  const issEl = document.getElementById(`${idPrefix}-iss-days`);
+  if (issEl) issEl.addEventListener("change", () => {
+    const n = parseInt(issEl.value, 10) || 0;
+    d.issDays = n; d.ossDays = d.totalDays - n;
+    regenerateTimeOutDates(d); onChange();
+  });
+  const ossEl = document.getElementById(`${idPrefix}-oss-days`);
+  if (ossEl) ossEl.addEventListener("change", () => {
+    const n = parseInt(ossEl.value, 10) || 0;
+    d.ossDays = n; d.issDays = d.totalDays - n;
+    regenerateTimeOutDates(d); onChange();
+  });
+
+  form.querySelectorAll(`.${idPrefix}-oss-date-input`).forEach((el) =>
+    el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; regenerateTimeOutDates(d); onChange(); }));
+
+  form.querySelectorAll(`.${idPrefix}-iss-date-input`).forEach((el) =>
+    el.addEventListener("change", () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (!Array.isArray(d.issOverridden)) d.issOverridden = [];
+      d.issDates[idx] = el.value;
+      d.issOverridden[idx] = true;
+      regenerateTimeOutDates(d);
+      onChange();
+    }));
+
+  form.querySelectorAll(`.${idPrefix}-iss-venue-input`).forEach((el) =>
+    el.addEventListener("input", () => { d.issVenues[el.dataset.date] = el.value; state.toFormError = ""; }));
+  form.querySelectorAll(`.${idPrefix}-iss-admin-input`).forEach((el) =>
+    el.addEventListener("input", () => { d.issAdministrators[el.dataset.date] = el.value; state.toFormError = ""; }));
+}
+function renderTimeOutForm(isEdit) {
+  const d = state._toDraft;
+  return `
+    <div class="dd-modal-backdrop" id="to-modal-backdrop">
+      <form class="dd-modal" id="to-form">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">${isEdit ? "Edit time out" : "New time out"}</div>
+          <button type="button" class="dd-modal-close" id="to-modal-close">✕</button>
+        </div>
+        <label class="dd-label">Student name</label>
+        <input class="dd-input" name="studentName" required value="${escapeHtml(d.studentName)}" list="known-students" autocomplete="off" />
+        <label class="dd-label">Class</label>
+        <select class="dd-input" name="studentClass" required>${classOptionsHtml(d.studentClass)}</select>
+        ${renderTimeOutFieldsBody(d, "to")}
+        ${!isEdit ? `
+        <label class="dd-checkbox-pill" style="display:flex;margin-top:14px">
+          <input type="checkbox" id="to-tag-pm-cb" ${d.tagPm ? "checked" : ""} />
+          <span>Meeting Parents</span>
+        </label>
+        ${d.tagPm ? `
+        <div class="dd-related-box" style="margin-top:8px">
+          <label class="dd-label" style="margin-top:0">Who is attending?</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${ATTENDEE_OPTIONS.map((a) => `
+              <label class="dd-checkbox-pill">
+                <input type="checkbox" class="dd-to-pm-attendee-cb" value="${a}" ${d.pmAttendees.includes(a) ? "checked" : ""} />
+                <span>${a}</span>
+              </label>`).join("")}
+          </div>
+          ${d.pmAttendees.includes("Others") ? `<input class="dd-input" id="to-pm-others-text" style="margin-top:8px" placeholder="Please specify" value="${escapeHtml(d.pmOthersText)}" />` : ""}
+          ${renderPmReasonPicker(d, "pm")}
+        </div>` : ""}` : ""}
+        ${state.toFormError ? `<div class="dd-error">${escapeHtml(state.toFormError)}</div>` : ""}
+        ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
+        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
+        <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save time out"}</button>
+      </form>
+    </div>`;
+}
+
+// ---------- Parent Meet ----------
 function parentMeetingWeekCategory(m) {
   const { monday, sunday } = currentWeekBounds();
   if (!m.date) return "This Week";
@@ -4740,6 +5512,8 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.section = "log"; state.selectedIncidentId = el.dataset.id; state.disciplineFilter = "all"; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="jump-to-suspension"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = "suspensions"; state.selectedSuspId = el.dataset.id; state.entryExpanded[el.dataset.id] = true; render(); }));
+  document.querySelectorAll('[data-action="jump-to-timeout"]').forEach((el) =>
+    el.addEventListener("click", () => { state.section = "timeOuts"; state.selectedToId = el.dataset.id; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="jump-to-pm"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = "parentMeetings"; state.selectedPmId = el.dataset.id; state.entryExpanded[el.dataset.id] = true; render(); }));
   document.querySelectorAll('[data-action="toggle-entry-expanded"]').forEach((el) =>
@@ -5090,10 +5864,11 @@ function attachMainListeners() {
   }
 
   if (state.section === "suspensions") attachSuspListeners();
+  else if (state.section === "timeOuts") attachTimeOutListeners();
   else if (state.section === "parentMeetings") attachPmListeners();
   else if (state.section === "log") attachGroomingListeners();
   else if (state.section === "dashboard") attachDashboardListeners();
-  else if (state.section === "studentView") { attachGroomingListeners(); attachSuspListeners(); attachPmListeners(); }
+  else if (state.section === "studentView") { attachGroomingListeners(); attachSuspListeners(); attachTimeOutListeners(); attachPmListeners(); }
 }
 
 // Grooming Log page — filter pills, search, follow-up thread, audit
@@ -5174,7 +5949,7 @@ function attachDashboardListeners() {
     el.addEventListener("click", () => { state.showWatchlistInfo = !state.showWatchlistInfo; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="toggle-chart-cat"]').forEach((el) =>
     el.addEventListener("click", () => {
-      const key = el.dataset.cat === "parentMeeting" ? "chartIncludeParentMeeting" : el.dataset.cat === "suspension" ? "chartIncludeSuspension" : "chartIncludeDiscipline";
+      const key = { parentMeeting: "chartIncludeParentMeeting", suspension: "chartIncludeSuspension", timeOut: "chartIncludeTimeOut" }[el.dataset.cat] || "chartIncludeDiscipline";
       state[key] = !(state[key] !== false);
       renderKeepingPageScroll();
     }));
@@ -5260,6 +6035,14 @@ function attachDashboardListeners() {
     state.suspFormError = "";
     render();
   });
+  const newToOnlyBtn = document.getElementById("btn-new-to-only");
+  if (newToOnlyBtn) newToOnlyBtn.addEventListener("click", () => {
+    state.showNewToForm = true;
+    state.editingTimeOutId = null;
+    state._toDraft = freshTimeOutDraft();
+    state.toFormError = "";
+    render();
+  });
   const newPmOnlyBtn = document.getElementById("btn-new-pm-only");
   if (newPmOnlyBtn) newPmOnlyBtn.addEventListener("click", () => {
     state.showNewPmForm = true;
@@ -5270,6 +6053,7 @@ function attachDashboardListeners() {
   });
 
   attachSuspFormModalListeners();
+  attachTimeOutFormModalListeners();
   attachPmFormModalListeners();
 }
 
@@ -5342,6 +6126,70 @@ function attachSuspFormModalListeners() {
   }
 }
 
+function attachTimeOutListeners() {
+  document.querySelectorAll('[data-action="set-to-tab"]').forEach((el) =>
+    el.addEventListener("click", () => { state.toTab = el.dataset.tab; render(); }));
+
+  const search = document.getElementById("to-search-input");
+  if (search) search.addEventListener("input", debounce(() => {
+    if (!search.isConnected) return; // page re-rendered from elsewhere while the timer was pending
+    state.toQuery = search.value;
+    const cursor = search.selectionStart;
+    render();
+    const ns = document.getElementById("to-search-input");
+    if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
+  }, 300));
+
+  document.querySelectorAll('[data-action="delete-timeout"]').forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("timeOut", el.dataset.id)));
+  document.querySelectorAll('[data-action="edit-timeout"]').forEach((el) =>
+    el.addEventListener("click", () => { openEditTimeOut(el.dataset.id); state.showNewToForm = false; }));
+  document.querySelectorAll('[data-action="toggle-to-history"]').forEach((el) =>
+    el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
+
+  attachTimeOutFormModalListeners();
+}
+
+// Shared between the Time Out Log page (editing), the Dashboard's
+// "+ Time Out" button (creating), and the student cross-log view.
+function attachTimeOutFormModalListeners() {
+  if (state.showNewToForm || state.editingTimeOutId) {
+    // Same guard as the suspension form: the screen that renders this modal
+    // and the one attaching its listeners are decided separately.
+    const form = document.getElementById("to-form");
+    if (!form) return;
+    form.addEventListener("submit", state.editingTimeOutId ? submitEditTimeOut : submitNewTimeOut);
+    document.getElementById("to-modal-close").addEventListener("click", () => { state.showNewToForm = false; state.editingTimeOutId = null; state._toDraft = null; render(); });
+    document.getElementById("to-modal-backdrop").addEventListener("click", (e) => {
+      if (e.target.id === "to-modal-backdrop") { state.showNewToForm = false; state.editingTimeOutId = null; state._toDraft = null; render(); }
+    });
+
+    const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._toDraft[name] = el.value; }); };
+    syncField("studentName");
+    const classEl = form.elements["studentClass"];
+    if (classEl) classEl.addEventListener("change", () => { state._toDraft.studentClass = classEl.value; regenerateSuspDates(state._toDraft); renderKeepingModalScroll(); });
+    const reasonSel = form.elements["reason"];
+    if (reasonSel) reasonSel.addEventListener("change", () => { state._toDraft.reasonCategory = reasonSel.value; renderKeepingModalScroll(); });
+    const reasonOthersEl = form.querySelector(".dd-reason-others-input");
+    if (reasonOthersEl) reasonOthersEl.addEventListener("input", () => { state._toDraft.reasonOthersText = reasonOthersEl.value; });
+
+    attachTimeOutFieldListeners(form, "to", state._toDraft);
+
+    const tagPmCb = document.getElementById("to-tag-pm-cb");
+    if (tagPmCb) tagPmCb.addEventListener("change", () => { state._toDraft.tagPm = tagPmCb.checked; renderKeepingModalScroll(); });
+    form.querySelectorAll(".dd-to-pm-attendee-cb").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        const list = state._toDraft.pmAttendees;
+        if (cb.checked) { if (!list.includes(cb.value)) list.push(cb.value); }
+        else { state._toDraft.pmAttendees = list.filter((x) => x !== cb.value); }
+        renderKeepingModalScroll();
+      }));
+    const pmOthersEl = document.getElementById("to-pm-others-text");
+    if (pmOthersEl) pmOthersEl.addEventListener("input", () => { state._toDraft.pmOthersText = pmOthersEl.value; });
+    attachPmReasonPickerListeners(form, state._toDraft, "pm");
+  }
+}
+
 function attachPmListeners() {
   const search = document.getElementById("pm-search-input");
   if (search) search.addEventListener("input", debounce(() => {
@@ -5368,7 +6216,7 @@ function attachPmListeners() {
 
 // Attaches listeners for the multi-select "Reason(s) for meeting"
 // checklist rendered by renderPmReasonPicker — shared by the standalone
-// Parent Meeting form and the Suspension form's tagged-parent-meeting
+// Parent Meet form and the Suspension form's tagged-parent-meeting
 // block. `prefix` ("" or "pm") picks which draft fields to mutate,
 // matching renderPmReasonPicker/composePmReasonData.
 function attachPmReasonPickerListeners(form, d, prefix) {
@@ -5396,7 +6244,7 @@ function attachPmReasonPickerListeners(form, d, prefix) {
   if (othersEl) othersEl.addEventListener("input", () => { d[othersKey] = othersEl.value; });
 }
 
-// Shared between the Parent Meeting Log page (editing) and the Dashboard's
+// Shared between the Parent Meet Log page (editing) and the Dashboard's
 // "+ New Meeting Only" button (creating standalone, no discipline entry).
 function attachPmFormModalListeners() {
   if (state.showNewPmForm || state.editingPmId) {
@@ -5540,7 +6388,7 @@ function handleDelegatedTap(e) {
   const noBtn = e.target.closest && e.target.closest("#btn-confirm-delete-no");
   if (noBtn) { runDelegatedAction("confirm-delete-no", () => cancelDeleteConfirmation()); return; }
   // Same-day duplicate-entry warning — shared across Grooming, Suspension
-  // and Parent Meeting "new entry" saves (see guardDuplicate), so it's
+  // and Parent Meet "new entry" saves (see guardDuplicate), so it's
   // wired here in the one handler that's always live, rather than in any
   // one section's per-render attach*Listeners.
   const dupYesBtn = e.target.closest && e.target.closest("#btn-confirm-duplicate-yes");
@@ -5623,5 +6471,28 @@ function handleDelegatedTap(e) {
 }
 document.addEventListener("touchend", handleDelegatedTap);
 document.addEventListener("click", handleDelegatedTap);
+
+// New grooming entry → "Related records found — tick any to link". These
+// checkboxes previously had no listener at all, so a tick was never written
+// to the draft: it vanished on the next re-render and was never saved, and
+// no link was ever created. Delegated on document (like the rest of this
+// form's controls) since the modal is re-rendered from scratch constantly.
+// No render() needed: the checkbox already shows its own state, and any
+// later re-render reads it back from the draft.
+const LINK_CHECKBOX_FIELDS = {
+  "dd-link-susp-cb": "linkedSuspensionIds",
+  "dd-link-to-cb": "linkedTimeOutIds",
+  "dd-link-pm-cb": "linkedPmIds",
+};
+document.addEventListener("change", (e) => {
+  const cb = e.target;
+  const d = state._newIncidentDraft;
+  if (!d || !cb || !cb.classList) return;
+  const cls = Object.keys(LINK_CHECKBOX_FIELDS).find((c) => cb.classList.contains(c));
+  if (!cls) return;
+  const field = LINK_CHECKBOX_FIELDS[cls];
+  const list = Array.isArray(d[field]) ? d[field] : [];
+  d[field] = cb.checked ? [...new Set([...list, cb.value])] : list.filter((id) => id !== cb.value);
+});
 
 render();
