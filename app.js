@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.1.0";
+const APP_VERSION = "3.3.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2825,7 +2825,7 @@ function renderPostponeDateField(m) {
 // original meeting date can't be picked.
 // Re-render without losing the scroll position of the Edit meeting form
 // (when open) or of the page underneath.
-function ppRender() { if (state._pmDraft && (state.editingPmId || state.showNewPmForm)) renderKeepingModalScroll(); else renderKeepingPageScroll(); }
+function ppRender() { if (document.querySelector(".dd-modal:not(.dd-pp-modal):not(.dd-tp-modal)")) renderKeepingModalScroll(); else renderKeepingPageScroll(); }
 function openPostponePicker(mode, pmId) {
   let original, current;
   if (mode === "draft") {
@@ -2853,10 +2853,24 @@ function openPostponePicker(mode, pmId) {
 // which can't show holidays). ✓ writes the date into the form's hidden
 // date input and fires its usual "change" handling.
 function openFieldDatePicker(input) {
-  const form = input.closest("form");
+  // A grooming issue's follow-up deadline (on the Grooming Log entry card).
+  if (input.classList.contains("dd-issue-override-input")) {
+    const it = state.incidents.find((x) => x.id === input.dataset.id);
+    const current = input.value || "";
+    try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
+    state.postponePicker = { mode: "field", context: "grooming", title: "Follow-up deadline",
+      selector: `.dd-issue-override-input[data-id="${input.dataset.id}"][data-issue="${input.dataset.issue}"]`,
+      level: classLevel(it?.studentClass) || null, minExclusive: "", current, selected: current, month: (current || todayISO()).slice(0, 7) };
+    if (current && pickerDayState(current, state.postponePicker).blocked) state.postponePicker.selected = "";
+    ppRender();
+    return;
+  }
+  const form = input.closest("form, #new-form, #edit-form");
   if (!form) return;
-  const context = form.id === "pm-form" ? "pm" : form.id === "susp-form" ? "susp" : "to";
-  const draft = context === "pm" ? state._pmDraft : context === "susp" ? state._suspDraft : state._toDraft;
+  // Keep anything typed on the new grooming form before the re-render.
+  if (form.id === "new-form") syncNewIncidentDraftFromDom();
+  const context = form.id === "pm-form" ? "pm" : form.id === "susp-form" ? "susp" : form.id === "to-form" ? "to" : "grooming";
+  const draft = { "pm-form": state._pmDraft, "susp-form": state._suspDraft, "to-form": state._toDraft, "new-form": state._newIncidentDraft, "edit-form": state._editIncidentDraft }[form.id];
   const selector = input.id ? `#${input.id}`
     : input.name ? `#${form.id} [name="${input.name}"]`
     : `#${form.id} .${input.classList[0]}[data-idx="${input.dataset.idx}"]`;
@@ -2932,7 +2946,7 @@ function renderPostponePicker() {
     <div class="dd-modal-backdrop" id="pp-backdrop">
       <div class="dd-modal dd-pp-modal" role="dialog" aria-label="${isField ? "Choose a date" : "Choose the postponed meeting date"}">
         <div class="dd-modal-head">
-          <div class="dd-modal-title">${isField ? "Choose a date" : "Postponed meeting date"}</div>
+          <div class="dd-modal-title">${isField ? (pp.title || "Choose a date") : "Postponed meeting date"}</div>
           <button type="button" class="dd-modal-close" data-pp="cancel">✕</button>
         </div>
         ${isField ? "" : `<div class="dd-mono-muted" style="font-size:11px;margin:-6px 0 10px">Original meeting: ${formatDate(pp.minExclusive)}</div>`}
@@ -2982,7 +2996,12 @@ function confirmPostponePick() {
   state.postponePicker = null;
   if (pp.mode === "field") {
     const input = document.querySelector(pp.selector);
-    if (input) { input.value = pp.selected; input.dispatchEvent(new Event("change", { bubbles: true })); }
+    if (input) {
+      input.value = pp.selected;
+      // The new grooming form reads its fields from state, not change events.
+      if (input.closest("#new-form") && state._newIncidentDraft) state._newIncidentDraft.date = pp.selected;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     if (document.getElementById("pp-backdrop")) ppRender();
     return;
   }
@@ -3010,7 +3029,7 @@ function confirmPostponePick() {
 // cancelled, so the tap on ✓ can't also land on the confirmation's Yes
 // button that appears in the same spot.
 function handlePostponePickerTap(e) {
-  const fieldBtn = e.target.closest && e.target.closest("#pm-form .dd-date-icon-btn, #susp-form .dd-date-icon-btn, #to-form .dd-date-icon-btn");
+  const fieldBtn = e.target.closest && e.target.closest("#pm-form .dd-date-icon-btn, #susp-form .dd-date-icon-btn, #to-form .dd-date-icon-btn, #new-form .dd-date-icon-btn, #edit-form .dd-date-icon-btn, .dd-issue-due-row .dd-date-icon-btn");
   const fieldInput = fieldBtn && fieldBtn.querySelector('input[type="date"]');
   if (fieldInput) {
     if (e.type === "touchend") e.preventDefault();
@@ -3479,7 +3498,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Choosing dates</div>
-          <p>Date fields on the Suspension, Time Out and Parent Meet forms open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen.</p>
+          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -7252,6 +7271,30 @@ function runDelegatedAction(key, fn) {
   lastDelegatedActionAt[key] = now;
   fn();
 }
+function syncNewIncidentDraftFromDom() {
+  if (state._newIncidentDraft) {
+    const container = document.getElementById("new-form");
+    if (container) {
+      const nameEl = container.querySelector("#new-incident-student-name");
+      if (nameEl) state._newIncidentDraft.studentName = nameEl.value;
+      const classEl = container.querySelector('[name="studentClass"]');
+      if (classEl) state._newIncidentDraft.studentClass = classEl.value;
+      const dateEl = container.querySelector('[name="date"]');
+      if (dateEl) state._newIncidentDraft.date = dateEl.value;
+      const othersEl = container.querySelector("#new-incident-others-text");
+      if (othersEl) state._newIncidentDraft.othersText = othersEl.value;
+      const extraStudents = state._newIncidentDraft.extraStudents || [];
+      container.querySelectorAll(".dd-extra-student-name").forEach((el) => {
+        const idx = parseInt(el.dataset.idx, 10);
+        if (extraStudents[idx]) extraStudents[idx].name = el.value;
+      });
+      container.querySelectorAll(".dd-extra-student-class").forEach((el) => {
+        const idx = parseInt(el.dataset.idx, 10);
+        if (extraStudents[idx]) extraStudents[idx].studentClass = el.value;
+      });
+    }
+  }
+}
 function handleDelegatedTap(e) {
   if (handleRoomTap(e)) return;
   if (handlePostponePickerTap(e)) return;
@@ -7291,28 +7334,7 @@ function handleDelegatedTap(e) {
   // typed or picked can ever be wiped out by a stale value lingering in
   // state. Same fix as the name field, applied to every field in this
   // form rather than just the one we happened to notice first.
-  if (state._newIncidentDraft) {
-    const container = document.getElementById("new-form");
-    if (container) {
-      const nameEl = container.querySelector("#new-incident-student-name");
-      if (nameEl) state._newIncidentDraft.studentName = nameEl.value;
-      const classEl = container.querySelector('[name="studentClass"]');
-      if (classEl) state._newIncidentDraft.studentClass = classEl.value;
-      const dateEl = container.querySelector('[name="date"]');
-      if (dateEl) state._newIncidentDraft.date = dateEl.value;
-      const othersEl = container.querySelector("#new-incident-others-text");
-      if (othersEl) state._newIncidentDraft.othersText = othersEl.value;
-      const extraStudents = state._newIncidentDraft.extraStudents || [];
-      container.querySelectorAll(".dd-extra-student-name").forEach((el) => {
-        const idx = parseInt(el.dataset.idx, 10);
-        if (extraStudents[idx]) extraStudents[idx].name = el.value;
-      });
-      container.querySelectorAll(".dd-extra-student-class").forEach((el) => {
-        const idx = parseInt(el.dataset.idx, 10);
-        if (extraStudents[idx]) extraStudents[idx].studentClass = el.value;
-      });
-    }
-  }
+  syncNewIncidentDraftFromDom();
   const addStudentBtn = e.target.closest && e.target.closest("#btn-add-extra-student");
   if (addStudentBtn && state._newIncidentDraft) {
     runDelegatedAction("add-extra-student", () => {

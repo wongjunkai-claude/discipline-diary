@@ -95,8 +95,8 @@ later; older meetings can stay blank. The Sheet shows time and room in the
 Date column (no Apps Script change needed). Rules: `roomClash()` /
 `pmBooking()` in `app.js`.
 
-**Choosing dates.** Date fields on the Parent Meet, Suspension and Time Out
-forms (and a postponed meeting's new date) use an in-app calendar instead of
+**Choosing dates.** Date fields on the Grooming, Parent Meet, Suspension and
+Time Out forms, a grooming issue's follow-up deadline and a postponed meeting's new date use an in-app calendar instead of
 the phone's own date picker, so it can show holidays: weekends (grey),
 public holidays (pink) and school holidays (yellow) are named and can't be
 picked. Closure/HBL days (blue) are shown everywhere: blocked for the
