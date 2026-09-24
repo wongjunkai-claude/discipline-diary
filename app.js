@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.96.0";
+const APP_VERSION = "2.99.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -101,8 +101,8 @@ function syncParentMeetingToSheet(m) {
     recordType: "ParentMeeting", id: m.id,
     studentName: m.studentName, studentClass: m.studentClass,
     attendeesText: formatAttendeesForSheet(m.attendees, m.othersText),
-    date: m.date,
-    reason: (m.deleted ? "Removed — " : "") + (m.pmStatus === "Cancelled" ? "[Cancelled] " : m.pmStatus === "Postponed" ? (m.postponedTo ? `[Postponed to ${formatDate(m.postponedTo)}] ` : "[Postponed] ") : "") + (m.reason || ""),
+    date: [m.date, formatTimeRange(m.time, m.endTime), m.location].filter(Boolean).join(" · "),
+    reason: (m.deleted ? "Removed — " : "") + (m.pmStatus === "Cancelled" ? "[Cancelled] " : m.pmStatus === "Postponed" ? (m.postponedTo ? `[Postponed to ${formatDate(m.postponedTo)}${m.postponedTime ? `, ${pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation)}` : ""}] ` : "[Postponed] ") : "") + (m.reason || ""),
     loggedBy: m.loggedBy,
   });
 }
@@ -693,7 +693,7 @@ async function confirmDeleteYes() {
   const target = state.confirmDeleteTarget;
   if (!target) return;
   state.confirmDeleteTarget = null;
-  if (target.type === "setPostponeDate") { render(); await setPmPostponedDate(target.id, target.date || ""); return; }
+  if (target.type === "setPostponeDate") { render(); await setPmPostponedDate(target.id, target.date || "", target.slot); return; }
   if (target.type === "incident") await deleteIncident(target.id);
   else if (target.type === "suspension") await deleteSuspension(target.id);
   else if (target.type === "timeOut") await deleteTimeOut(target.id);
@@ -924,7 +924,8 @@ function renderDeleteConfirmModal() {
   return `
     <div class="dd-modal-backdrop" id="confirm-delete-backdrop">
       <div class="dd-modal" style="max-width:340px;text-align:center">
-        <div class="dd-modal-title" style="margin-bottom:18px">${escapeHtml(msg)}</div>
+        <div class="dd-modal-title" style="margin-bottom:${state.confirmDeleteTarget?.details ? "12px" : "18px"}">${escapeHtml(msg)}</div>
+        ${state.confirmDeleteTarget?.details ? `<div class="dd-confirm-details">${state.confirmDeleteTarget.details.map(([k, val]) => `<div class="dd-confirm-k">${escapeHtml(k)}</div><div class="dd-confirm-v">${escapeHtml(val)}</div>`).join("")}</div>` : ""}
         <div style="display:flex;gap:8px">
           <button class="dd-add-btn" style="flex:1;background:#8A8571" id="btn-confirm-delete-no">No</button>
           <button class="dd-add-btn" style="flex:1;background:${state.confirmDeleteTarget?.tone === "confirm" ? "#1B2A41" : "#A3372B"}" id="btn-confirm-delete-yes">Yes</button>
@@ -1095,6 +1096,7 @@ const state = {
   showWatchlistInfo: false,
   backupError: "",
   postponePicker: null,
+  timePop: null,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
   dayViewDate: null, // set on first render to today
@@ -2062,6 +2064,7 @@ function freshSuspDraft() {
     ossDates: [], issDates: [], issOverridden: [], issVenues: {},
     tagPm: false, pmAttendees: [], pmOthersText: "",
     pmReasons: [], pmReasonStatuses: {}, pmReasonOthersText: "",
+    pmTime: "", pmEndTime: "", pmLocation: "",
   };
 }
 // OSS dates are chosen (default to the earliest school days from the start
@@ -2175,6 +2178,11 @@ async function submitNewSuspension(e) {
     render();
     return;
   }
+  if (d.tagPm && slotError("susp-pm", true)) {
+    state.suspFormError = slotError("susp-pm", true);
+    render();
+    return;
+  }
   if (d.tagPm && pmReasonData.reasons.some((r) => r.category === "Others") && !(d.pmReasonOthersText || "").trim()) {
     state.suspFormError = "Specify what \"Others\" means for the tagged parent meeting.";
     render();
@@ -2204,14 +2212,14 @@ async function submitNewSuspension(e) {
       if (d.tagPm) {
         try {
           const pmRef = await addDoc(collection(db, "parentMeetings"), {
-            studentName, studentClass, date: d.startDate, attendees: d.pmAttendees.slice(),
+            studentName, studentClass, date: d.startDate, time: d.pmTime, endTime: d.pmEndTime, location: d.pmLocation, attendees: d.pmAttendees.slice(),
             othersText: d.pmOthersText || "", reason: pmReasonData.reason, reasons: pmReasonData.reasons,
             linkedSuspensionIds: [docRef.id],
             loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
             history: [{ id: uid(), type: "created", detail: "Parent meeting tagged from a suspension entry", by: teacherName(), at: now }],
           });
           await updateDoc(doc(db, "suspensions", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
-          syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
+          syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, time: d.pmTime, endTime: d.pmEndTime, location: d.pmLocation, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
         } catch (err) { /* non-fatal — suspension already saved */ }
       }
       state.showNewSuspForm = false;
@@ -2345,6 +2353,7 @@ function freshTimeOutDraft() {
     ossDates: [], issDates: [], issOverridden: [], issVenues: {}, issAdministrators: {},
     tagPm: false, pmAttendees: [], pmOthersText: "",
     pmReasons: [], pmReasonStatuses: {}, pmReasonOthersText: "",
+    pmTime: "", pmEndTime: "", pmLocation: "",
   };
 }
 // Same day-generation logic as a suspension (regenerateSuspDates), but for
@@ -2392,6 +2401,11 @@ async function submitNewTimeOut(e) {
     render();
     return;
   }
+  if (d.tagPm && slotError("to-pm", true)) {
+    state.toFormError = slotError("to-pm", true);
+    render();
+    return;
+  }
   if (d.tagPm && pmReasonData.reasons.some((r) => r.category === "Others") && !(d.pmReasonOthersText || "").trim()) {
     state.toFormError = "Specify what \"Others\" means for the tagged parent meeting.";
     render();
@@ -2422,14 +2436,14 @@ async function submitNewTimeOut(e) {
       if (d.tagPm) {
         try {
           const pmRef = await addDoc(collection(db, "parentMeetings"), {
-            studentName, studentClass, date: d.startDate, attendees: d.pmAttendees.slice(),
+            studentName, studentClass, date: d.startDate, time: d.pmTime, endTime: d.pmEndTime, location: d.pmLocation, attendees: d.pmAttendees.slice(),
             othersText: d.pmOthersText || "", reason: pmReasonData.reason, reasons: pmReasonData.reasons,
             linkedTimeOutIds: [docRef.id],
             loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
             history: [{ id: uid(), type: "created", detail: "Parent meeting tagged from a time out entry", by: teacherName(), at: now }],
           });
           await updateDoc(doc(db, "timeOuts", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
-          syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
+          syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, time: d.pmTime, endTime: d.pmEndTime, location: d.pmLocation, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
         } catch (err) { /* non-fatal — time out already saved */ }
       }
       state.showNewToForm = false;
@@ -2559,7 +2573,9 @@ function freshPmDraft(m) {
     reasons: r.selected, reasonStatuses: r.statuses, reasonOthersText: r.othersText,
     attendees: (m?.attendees || []).slice(), othersText: m?.othersText || "",
     meetingStatus: m?.pmStatus || "Scheduled",
+    time: m?.time || "", endTime: m?.endTime || "", location: m?.location || "",
     postponedTo: m?.postponedTo || "",
+    postponedTime: m?.postponedTime || "", postponedEndTime: m?.postponedEndTime || "", postponedLocation: m?.postponedLocation || "",
   };
 }
 async function submitNewParentMeeting(e) {
@@ -2573,6 +2589,15 @@ async function submitNewParentMeeting(e) {
   const othersText = state._pmDraft.othersText.trim();
   const pmStatus = state._pmDraft.meetingStatus || "Scheduled";
   const postponedTo = pmStatus === "Postponed" ? (state._pmDraft.postponedTo || "") : "";
+  const dd = state._pmDraft;
+  const slotFields = pmStatus === "Scheduled" ? { time: dd.time || "", endTime: dd.endTime || "", location: dd.location || "" } : { time: "", endTime: "", location: "" };
+  const postponedSlot = postponedTo ? { postponedTime: dd.postponedTime || "", postponedEndTime: dd.postponedEndTime || "", postponedLocation: dd.postponedLocation || "" } : { postponedTime: "", postponedEndTime: "", postponedLocation: "" };
+  const slotProblem = pmStatus === "Scheduled" ? slotError("pm", true) : postponedTo ? postponedDraftError(dd, null) : "";
+  if (studentName && studentClass && date && slotProblem) {
+    state.pmFormError = slotProblem;
+    render();
+    return;
+  }
   if (!studentName || !studentClass || !date || reasons.length === 0 || attendees.length === 0) {
     state.pmFormError = attendees.length === 0 ? "Select at least one attendee before saving."
       : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
@@ -2595,9 +2620,9 @@ async function submitNewParentMeeting(e) {
       const now = Date.now();
       const attendeeSummaryStr = attendees.map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
       const docRef = await addDoc(collection(db, "parentMeetings"), {
-        studentName, studentClass, date, reason, reasons, attendees, othersText, pmStatus, postponedTo,
+        studentName, studentClass, date, reason, reasons, attendees, othersText, pmStatus, postponedTo, ...slotFields, ...postponedSlot,
         loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}${pmStatus !== "Scheduled" ? ` (${pmStatus}${postponedTo ? ` to ${formatDate(postponedTo)}` : ""})` : ""}`, by: teacherName(), at: now }],
+        history: [{ id: uid(), type: "created", detail: `Meeting logged — ${slotFields.time ? `${pmSlotLabel(slotFields.time, slotFields.endTime, slotFields.location)}, ` : ""}attendees: ${attendeeSummaryStr}${pmStatus !== "Scheduled" ? ` (${pmStatus}${postponedTo ? ` to ${formatDate(postponedTo)}` : ""})` : ""}`, by: teacherName(), at: now }],
       });
       state.showNewPmForm = false;
       state._pmDraft = null;
@@ -2605,7 +2630,7 @@ async function submitNewParentMeeting(e) {
       state.pmTab = "All";
       state.selectedPmId = docRef.id;
       state.entryExpanded[docRef.id] = true;
-      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, pmStatus, postponedTo, loggedBy: teacherName(), deleted: false });
+      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, pmStatus, postponedTo, ...slotFields, ...postponedSlot, loggedBy: teacherName(), deleted: false });
     } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
 
@@ -2621,6 +2646,15 @@ function openEditParentMeeting(id) {
   state.pmFormError = "";
   render();
 }
+// Re-checks a postponed meeting's new slot (set via the picker) at save time.
+function postponedDraftError(d, excludeId) {
+  if (!d.postponedTo) return "";
+  if (!d.postponedTime || !d.postponedEndTime || !d.postponedLocation) return "Set the postponed meeting's time and location (tap the calendar next to \"Postponed to\").";
+  const clash = roomClash(d.postponedLocation, d.postponedTo, d.postponedTime, d.postponedEndTime, excludeId);
+  if (!clash) return "";
+  const cb = pmBooking(clash);
+  return `${d.postponedLocation} is already booked ${formatTimeRange(cb.start, cb.end)} on ${formatDate(d.postponedTo)} (${clash.studentName}). Pick another time or room for the postponed meeting.`;
+}
 async function submitEditParentMeeting(e) {
   e.preventDefault();
   const f = e.target;
@@ -2635,6 +2669,18 @@ async function submitEditParentMeeting(e) {
     pmStatus: state._pmDraft.meetingStatus || "Scheduled",
   };
   updated.postponedTo = updated.pmStatus === "Postponed" ? (state._pmDraft.postponedTo || "") : "";
+  const dd = state._pmDraft;
+  Object.assign(updated, {
+    time: dd.time || "", endTime: dd.endTime || "", location: dd.location || "",
+    postponedTime: updated.postponedTo ? (dd.postponedTime || "") : "",
+    postponedEndTime: updated.postponedTo ? (dd.postponedEndTime || "") : "",
+    postponedLocation: updated.postponedTo ? (dd.postponedLocation || "") : "",
+  });
+  // Time and room are required for a scheduled meeting that's today or later
+  // (older meetings logged before this field existed can be left blank).
+  const slotProblem = updated.pmStatus === "Scheduled" ? slotError("pm", updated.date >= todayISO())
+    : updated.postponedTo ? postponedDraftError(dd, id) : "";
+  if (slotProblem) { state.pmFormError = slotProblem; render(); return; }
   if (!updated.studentName || !updated.studentClass || !updated.date || reasons.length === 0 || updated.attendees.length === 0) {
     state.pmFormError = updated.attendees.length === 0 ? "Select at least one attendee before saving."
       : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
@@ -2651,9 +2697,12 @@ async function submitEditParentMeeting(e) {
   const changes = diffText({ ...m, pmStatus: m.pmStatus || "Scheduled" }, updated, [
     { key: "studentName", label: "Student name" }, { key: "studentClass", label: "Class" },
     { key: "date", label: "Date" }, { key: "reason", label: "Reason" }, { key: "pmStatus", label: "Meeting status" },
+    { key: "time", label: "Start time" }, { key: "endTime", label: "End time" }, { key: "location", label: "Location" },
   ]);
   if (JSON.stringify((m.attendees || []).slice().sort()) !== JSON.stringify(updated.attendees.slice().sort())) changes.push("Attendees updated");
-  if ((m.postponedTo || "") !== updated.postponedTo) changes.push(updated.postponedTo ? `Postponed meeting date set to ${formatDate(updated.postponedTo)}` : "Postponed meeting date cleared");
+  const oldPp = [m.postponedTo || "", m.postponedTime || "", m.postponedEndTime || "", m.postponedLocation || ""].join("|");
+  const newPp = [updated.postponedTo, updated.postponedTime, updated.postponedEndTime, updated.postponedLocation].join("|");
+  if (oldPp !== newPp) changes.push(updated.postponedTo ? `Postponed meeting set to ${formatDate(updated.postponedTo)}, ${pmSlotLabel(updated.postponedTime, updated.postponedEndTime, updated.postponedLocation)}` : "Postponed meeting date cleared");
   if (changes.length === 0) { state.editingPmId = null; state._pmDraft = null; render(); return; }
 
   const doSave = async () => {
@@ -2698,7 +2747,7 @@ async function setPmStatusQuick(id, status) {
   // The postponed-to date only means something while the meeting is
   // Postponed, so it's cleared when the status moves away from that.
   const patch = { pmStatus: next };
-  if (next !== "Postponed" && m.postponedTo) patch.postponedTo = "";
+  if (next !== "Postponed" && (m.postponedTo || m.postponedTime || m.postponedLocation)) Object.assign(patch, { postponedTo: "", postponedTime: "", postponedEndTime: "", postponedLocation: "" });
   try {
     await updateDoc(doc(db, "parentMeetings", id), {
       ...patch,
@@ -2710,19 +2759,33 @@ async function setPmStatusQuick(id, status) {
 // Sets (or clears, with "") the new date for a postponed meeting — used by
 // the date box on the log card and on the Dashboard's "Pending Parent
 // Meeting Date" list. Optional: a postponed meeting can wait without one.
-async function setPmPostponedDate(id, date) {
+async function setPmPostponedDate(id, date, slot) {
   const m = state.parentMeetings.find((x) => x.id === id);
   if (!m || m.deleted || m.pmStatus !== "Postponed") return;
   date = date || "";
-  if ((m.postponedTo || "") === date) return;
+  const sl = date ? (slot || {}) : {};
+  const patch = { postponedTo: date, postponedTime: sl.time || "", postponedEndTime: sl.endTime || "", postponedLocation: sl.location || "" };
+  if ((m.postponedTo || "") === patch.postponedTo && (m.postponedTime || "") === patch.postponedTime && (m.postponedEndTime || "") === patch.postponedEndTime && (m.postponedLocation || "") === patch.postponedLocation) return;
+  // Hard booking: re-check against the latest bookings right before saving,
+  // in case another teacher took the room while the picker was open.
+  if (date) {
+    const clash = roomClash(patch.postponedLocation, date, patch.postponedTime, patch.postponedEndTime, id);
+    if (clash) {
+      const cb = pmBooking(clash);
+      state.saveError = true;
+      state.saveErrorDetail = `${patch.postponedLocation} was just booked ${formatTimeRange(cb.start, cb.end)} on ${formatDate(date)} (${clash.studentName}) — pick another time or room`;
+      render();
+      return;
+    }
+  }
   const now = Date.now();
   state.saveError = false;
   try {
     await updateDoc(doc(db, "parentMeetings", id), {
-      postponedTo: date,
-      history: arrayUnion({ id: uid(), type: "edited", detail: date ? `Postponed meeting date set to ${formatDate(date)}` : "Postponed meeting date cleared", by: teacherName(), at: now }),
+      ...patch,
+      history: arrayUnion({ id: uid(), type: "edited", detail: date ? `Postponed meeting set to ${formatDate(date)}, ${pmSlotLabel(patch.postponedTime, patch.postponedEndTime, patch.postponedLocation)}` : "Postponed meeting date cleared", by: teacherName(), at: now }),
     });
-    syncParentMeetingToSheet({ ...m, postponedTo: date });
+    syncParentMeetingToSheet({ ...m, ...patch });
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 // "Postponed to" control (log card + Dashboard). Opens the in-app date
@@ -2738,7 +2801,7 @@ function renderPostponeDateField(m) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
       </button>
       ${m.postponedTo
-        ? `<span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" data-pp-clear="save" data-id="${m.id}" title="Clear this date">✕</button>`
+        ? `<span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}${m.postponedTime ? ` · ${escapeHtml(pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation))}` : ""}</span>`
         : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
     </div>`;
 }
@@ -2766,7 +2829,12 @@ function openPostponePicker(mode, pmId) {
   }
   const start = current || [todayISO(), addDays(original, 1)].sort().pop();
   try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
-  state.postponePicker = { mode, pmId: pmId || null, minExclusive: original, current, selected: "", month: start.slice(0, 7) };
+  // Time and room start from the current new slot (if any) — only the date
+  // is never pre-selected.
+  const src = mode === "draft" ? { t: state._pmDraft.postponedTime, e: state._pmDraft.postponedEndTime, l: state._pmDraft.postponedLocation }
+    : (() => { const m = state.parentMeetings.find((x) => x.id === pmId); return { t: m.postponedTime, e: m.postponedEndTime, l: m.postponedLocation }; })();
+  state.postponePicker = { mode, pmId: pmId || null, minExclusive: original, current, selected: "", month: start.slice(0, 7),
+    time: src.t || "", endTime: src.e || "", location: src.l || "" };
   ppRender();
 }
 function renderPostponePicker() {
@@ -2800,13 +2868,22 @@ function renderPostponePicker() {
           ${["S", "M", "T", "W", "T", "F", "S"].map((w) => `<span class="dd-pp-wd">${w}</span>`).join("")}
           ${cells.join("")}
         </div>
-        <div class="dd-pp-picked">${pp.selected ? `Selected: <b>${formatDate(pp.selected)}</b>` : "Tap a date, then ✓"}</div>
-        <div style="display:flex;gap:8px;margin-top:10px">
+        <div style="margin-top:14px">${renderSlotPicker("pp")}</div>
+        <div style="display:flex;gap:8px;margin-top:12px">
           <button type="button" class="dd-add-btn" style="flex:1;background:#8A8571" data-pp="cancel">Cancel</button>
-          <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-pp="ok" ${pp.selected ? "" : "disabled"} title="Use this date">✓</button>
+          <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-pp="ok" ${postponeReady() ? "" : "disabled"} title="Use this date, time and room">✓</button>
         </div>
       </div>
     </div>`;
+}
+// ✓ needs a date plus a complete, free time slot and room.
+function postponeReady() {
+  const pp = state.postponePicker;
+  return !!(pp && pp.selected && !slotError("pp", true));
+}
+function updatePostponeOkButton() {
+  const ok = document.querySelector('[data-pp="ok"]');
+  if (ok) ok.disabled = !postponeReady();
 }
 function shiftPickerMonth(delta) {
   const pp = state.postponePicker;
@@ -2817,37 +2894,37 @@ function shiftPickerMonth(delta) {
 }
 function confirmPostponePick() {
   const pp = state.postponePicker;
-  if (!pp || !pp.selected) return;
+  if (!pp || !postponeReady()) return;
   state.postponePicker = null;
+  const slot = { time: pp.time, endTime: pp.endTime, location: pp.location };
   if (pp.mode === "draft") {
-    if (state._pmDraft) state._pmDraft.postponedTo = pp.selected;
+    if (state._pmDraft) Object.assign(state._pmDraft, { postponedTo: pp.selected, postponedTime: slot.time, postponedEndTime: slot.endTime, postponedLocation: slot.location });
     ppRender();
     return;
   }
   const m = state.parentMeetings.find((x) => x.id === pp.pmId);
   if (!m) { ppRender(); return; }
   requestDeleteConfirmation("setPostponeDate", pp.pmId, {
-    date: pp.selected, tone: "confirm",
-    message: `Set ${m.studentName}'s postponed parent meeting to ${formatDate(pp.selected)}?`,
+    date: pp.selected, slot, tone: "confirm",
+    message: "Confirm this meeting booking?",
+    details: [
+      ["Student", `${m.studentName}${m.studentClass ? ` (${m.studentClass})` : ""}`],
+      ["Date", `${formatDate(pp.selected)} (${weekdayName(pp.selected)})`],
+      ["Time", formatTimeRange(slot.time, slot.endTime)],
+      ["Location", slot.location],
+    ],
   });
-}
-function requestClearPostponeDate(mode, pmId) {
-  if (mode === "draft") { if (state._pmDraft) state._pmDraft.postponedTo = ""; ppRender(); return; }
-  const m = state.parentMeetings.find((x) => x.id === pmId);
-  if (!m) return;
-  requestDeleteConfirmation("setPostponeDate", pmId, { date: "", message: `Clear the postponed meeting date for ${m.studentName}?` });
 }
 // Picker taps go through the always-live delegated handler (like the other
 // pop-up confirmations). On touch devices the follow-up "click" is
 // cancelled, so the tap on ✓ can't also land on the confirmation's Yes
 // button that appears in the same spot.
 function handlePostponePickerTap(e) {
-  const el = e.target.closest && e.target.closest("[data-pp],[data-pp-open],[data-pp-clear]");
+  const el = e.target.closest && e.target.closest("[data-pp],[data-pp-open]");
   if (!el) return false;
   if (e.type === "touchend") e.preventDefault();
   if (el.disabled) return true;
   if (el.dataset.ppOpen) { runDelegatedAction("pp-open", () => openPostponePicker(el.dataset.ppOpen, el.dataset.id)); return true; }
-  if (el.dataset.ppClear) { runDelegatedAction("pp-clear", () => requestClearPostponeDate(el.dataset.ppClear, el.dataset.id)); return true; }
   if (!state.postponePicker) return true;
   const a = el.dataset.pp;
   if (a === "day") runDelegatedAction("pp-day-" + el.dataset.date, () => { state.postponePicker.selected = el.dataset.date; ppRender(); });
@@ -2869,6 +2946,263 @@ async function deleteParentMeeting(id) {
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
 
+// ---------- Parent meeting time + room booking ----------
+// Every parent meeting set-up (Parent Meet form, the "Meeting Parents" tag
+// on Suspension/Time Out forms, and a postponed meeting's new date) picks a
+// start and end time on scroll wheels (24-hour, 15-minute steps) and one of
+// two rooms. Each room holds one meeting at a time: a room is unavailable
+// for any time that overlaps an existing booking on the same day, and an
+// unavailable room can't be selected (checked again when saving).
+// Cancelled meetings, and postponed ones with no new date yet, free their
+// room; a rescheduled meeting holds its room at the new date and time.
+const PM_ROOMS = ["Conference Room", "Meeting Room"];
+const WHEEL_HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+const WHEEL_MINUTES = ["00", "15", "30", "45"];
+const WHEEL_ITEM_H = 44;
+const LAST_SLOT_MIN = 23 * 60 + 45;
+function timeToMin(t) { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; }
+function minToTime(n) { return `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`; }
+function formatTimeRange(start, end) { return start && end ? `${start}–${end}` : ""; }
+
+// The room booking a meeting currently holds, or null if it holds none.
+function pmBooking(m) {
+  if (!m || !isPmCounted(m)) return null;
+  const b = isPmRescheduled(m)
+    ? { date: m.postponedTo, start: m.postponedTime, end: m.postponedEndTime, location: m.postponedLocation }
+    : { date: m.date, start: m.time, end: m.endTime, location: m.location };
+  return b.date && b.start && b.end && b.location ? b : null;
+}
+// The meeting already holding `room` at an overlapping time that day, if any.
+function roomClash(room, date, start, end, excludeId) {
+  if (!room || !date || !start || !end) return null;
+  const s = timeToMin(start), e = timeToMin(end);
+  return state.parentMeetings.find((m) => {
+    if (m.id === excludeId) return false;
+    const b = pmBooking(m);
+    return b && b.location === room && b.date === date && timeToMin(b.start) < e && s < timeToMin(b.end);
+  }) || null;
+}
+// "14:00–15:00 · Conference Room" for a meeting's original or new slot.
+function pmSlotLabel(start, end, location) {
+  return [formatTimeRange(start, end), location || ""].filter(Boolean).join(" · ");
+}
+
+// Where each picker reads/writes its values, which date it books on, and
+// which meeting (if any) to ignore when checking clashes (itself).
+function slotBinding(key) {
+  if (key === "pm") {
+    const d = state._pmDraft; if (!d) return null;
+    return { obj: d, f: { start: "time", end: "endTime", loc: "location" }, date: d.date, excludeId: state.editingPmId || null };
+  }
+  if (key === "susp-pm" || key === "to-pm") {
+    const d = key === "susp-pm" ? state._suspDraft : state._toDraft; if (!d) return null;
+    return { obj: d, f: { start: "pmTime", end: "pmEndTime", loc: "pmLocation" }, date: d.startDate, excludeId: null };
+  }
+  if (key === "pp") {
+    const p = state.postponePicker; if (!p) return null;
+    return { obj: p, f: { start: "time", end: "endTime", loc: "location" }, date: p.selected, excludeId: p.pmId || state.editingPmId || null };
+  }
+  return null;
+}
+function slotValues(key) {
+  const b = slotBinding(key);
+  if (!b) return null;
+  return { b, start: b.obj[b.f.start] || "", end: b.obj[b.f.end] || "", loc: b.obj[b.f.loc] || "" };
+}
+// "" when the slot is complete, free and valid; otherwise the problem.
+// With required=false an entirely empty slot is also fine.
+function slotError(key, required) {
+  const v = slotValues(key);
+  if (!v) return "";
+  if (!v.start && !v.end && !v.loc && !required) return "";
+  if (!v.start || !v.end) return "Set the meeting's start and end time.";
+  if (timeToMin(v.end) <= timeToMin(v.start)) return "The meeting's end time must be after its start time.";
+  if (!v.loc) return "Choose where the meeting will be held (Conference Room or Meeting Room).";
+  if (!v.b.date) return "Choose the meeting date first.";
+  const clash = roomClash(v.loc, v.b.date, v.start, v.end, v.b.excludeId);
+  if (clash) {
+    const cb = pmBooking(clash);
+    return `${v.loc} is already booked ${formatTimeRange(cb.start, cb.end)} on ${formatDate(v.b.date)} (${clash.studentName}). Pick another time or room.`;
+  }
+  return "";
+}
+
+function renderSlotPicker(key) {
+  const v = slotValues(key);
+  if (!v) return "";
+  const box = (which, value, placeholder) => `
+    <button type="button" class="dd-time-box${value ? " set" : ""}" data-tp-open="${key}" data-which="${which}" aria-label="${placeholder}${value ? `: ${value}` : ""}">${value || placeholder}</button>`;
+  return `
+    <div class="dd-slot" data-slot-root="${key}">
+      <label class="dd-label" style="margin-top:0">Meeting Time</label>
+      <div class="dd-time-boxes">
+        ${box("start", v.start, "Start Time")}
+        <span class="dd-time-arrow" aria-hidden="true">→</span>
+        ${box("end", v.end, "End Time")}
+      </div>
+      <label class="dd-label">Location</label>
+      <div class="dd-room-row" data-slot-rooms="${key}">${renderRoomButtons(key)}</div>
+    </div>`;
+}
+// Rooms use the same colours as the Suspension location selector: green =
+// available, red = not available (and can't be tapped), navy = chosen.
+function renderRoomButtons(key) {
+  const v = slotValues(key);
+  const timeOk = v.start && v.end && timeToMin(v.end) > timeToMin(v.start);
+  return PM_ROOMS.map((r) => {
+    const clash = timeOk && v.b.date ? roomClash(r, v.b.date, v.start, v.end, v.b.excludeId) : null;
+    const disabled = !v.b.date || !timeOk || !!clash;
+    const status = !v.b.date ? "Choose a date first" : !timeOk ? "Set the time first" : clash ? "Not available" : "Available";
+    const selected = v.loc === r && !disabled;
+    const cls = selected ? "dd-avail-chip-selected" : clash ? "dd-avail-chip-full" : disabled ? "dd-room-waiting" : "dd-avail-chip-free";
+    return `<button type="button" class="dd-room-btn ${cls}" data-room-slot="${key}" data-room="${r}" ${disabled ? "disabled" : ""} aria-pressed="${selected}">
+      <span class="dd-room-name">${r}</span><span class="dd-room-status">${status}</span></button>`;
+  }).join("");
+}
+// Refreshes a picker's rooms (and the postponed picker's ✓) in place.
+function updateSlotDom(key) {
+  const v = slotValues(key);
+  if (!v) return;
+  // A room that's become unavailable for the new time is dropped.
+  if (v.loc && (!v.start || !v.end || timeToMin(v.end) <= timeToMin(v.start) || roomClash(v.loc, v.b.date, v.start, v.end, v.b.excludeId))) v.b.obj[v.b.f.loc] = "";
+  const rooms = document.querySelector(`[data-slot-rooms="${key}"]`);
+  if (rooms) rooms.innerHTML = renderRoomButtons(key);
+  if (key === "pp") updatePostponeOkButton();
+}
+
+// ---- Pop-up time selector (one per box: Start Time / End Time) ----
+// Apple-style wheels (hour 00–23, minutes 00/15/30/45) in a small pop-up;
+// nothing changes until ✓. The End Time ✓ stays disabled unless the time
+// is after the start.
+function openTimePop(key, which) {
+  const v = slotValues(key);
+  if (!v) return;
+  const current = which === "start" ? v.start : v.end;
+  const fallback = which === "start" ? "08:00" : minToTime(Math.min(timeToMin(v.start || "08:00") + 60, LAST_SLOT_MIN));
+  const t = current || fallback;
+  try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
+  state.timePop = { key, which, h: t.slice(0, 2), m: t.slice(3) };
+  renderKeepingModalScroll();
+}
+function timePopValue() { const tp = state.timePop; return `${tp.h}:${tp.m}`; }
+function timePopProblem() {
+  const tp = state.timePop;
+  if (!tp || tp.which !== "end") return "";
+  const v = slotValues(tp.key);
+  return v && v.start && timeToMin(timePopValue()) <= timeToMin(v.start) ? `End time must be after ${v.start}` : "";
+}
+function renderTimePop() {
+  const tp = state.timePop;
+  const wheel = (part, values, current) => `
+    <div class="dd-wheel-wrap"><div class="dd-wheel" data-part="${part}" data-current="${current}" aria-label="${part === "h" ? "Hour" : "Minutes"}">
+      ${values.map((x) => `<div class="dd-wheel-item" data-v="${x}">${x}</div>`).join("")}
+    </div></div>`;
+  const problem = timePopProblem();
+  return `
+    <div class="dd-modal-backdrop dd-tp-backdrop" id="tp-backdrop">
+      <div class="dd-modal dd-tp-modal" role="dialog" aria-label="${tp.which === "start" ? "Start Time" : "End Time"}">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">${tp.which === "start" ? "Start Time" : "End Time"}</div>
+          <button type="button" class="dd-modal-close" data-tp="cancel">✕</button>
+        </div>
+        <div class="dd-wheel-pair">${wheel("h", WHEEL_HOURS, tp.h)}<span class="dd-wheel-colon">:</span>${wheel("m", WHEEL_MINUTES, tp.m)}</div>
+        <div class="dd-tp-note" data-tp-note>${escapeHtml(problem)}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button type="button" class="dd-add-btn" style="flex:1;background:#8A8571" data-tp="cancel">Cancel</button>
+          <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-tp="ok" ${problem ? "disabled" : ""} title="Use this time">✓</button>
+        </div>
+      </div>
+    </div>`;
+}
+function confirmTimePop() {
+  const tp = state.timePop;
+  if (!tp || timePopProblem()) return;
+  const v = slotValues(tp.key);
+  const t = timePopValue();
+  state.timePop = null;
+  if (v) {
+    if (tp.which === "start") {
+      v.b.obj[v.b.f.start] = t;
+      // A start at/after the current end pushes the end to an hour later.
+      const end = v.b.obj[v.b.f.end];
+      if (end && timeToMin(end) <= timeToMin(t)) v.b.obj[v.b.f.end] = minToTime(Math.min(timeToMin(t) + 60, LAST_SLOT_MIN));
+    } else {
+      v.b.obj[v.b.f.end] = t;
+    }
+    const n = slotValues(tp.key);
+    if (n.loc && (!n.start || !n.end || roomClash(n.loc, n.b.date, n.start, n.end, n.b.excludeId))) n.b.obj[n.b.f.loc] = "";
+  }
+  renderKeepingModalScroll();
+}
+function wheelIndex(el) {
+  const n = el.querySelectorAll(".dd-wheel-item").length;
+  return Math.max(0, Math.min(n - 1, Math.round(el.scrollTop / WHEEL_ITEM_H)));
+}
+function setWheel(el, value) {
+  const items = [...el.querySelectorAll(".dd-wheel-item")];
+  const i = Math.max(0, items.findIndex((x) => x.dataset.v === value));
+  // Remember where the app itself put the wheel, so the scroll event this
+  // causes isn't mistaken for a choice.
+  el._progTop = i * WHEEL_ITEM_H;
+  el.scrollTop = el._progTop;
+  items.forEach((x, j) => x.classList.toggle("on", j === i));
+}
+// A wheel in the pop-up came to rest (or an item was tapped).
+function commitTimePopWheel(el) {
+  const tp = state.timePop;
+  if (!tp) return;
+  const i = wheelIndex(el);
+  const items = el.querySelectorAll(".dd-wheel-item");
+  items.forEach((x, j) => x.classList.toggle("on", j === i));
+  tp[el.dataset.part] = items[i].dataset.v;
+  const problem = timePopProblem();
+  const note = document.querySelector("[data-tp-note]");
+  if (note) note.textContent = problem;
+  const ok = document.querySelector('[data-tp="ok"]');
+  if (ok) ok.disabled = !!problem;
+}
+// Runs after every render: puts the pop-up's wheels on their values and
+// listens for the scroll settling (scroll-snap does the "click into place").
+function attachSlotPickers() {
+  document.querySelectorAll(".dd-tp-modal .dd-wheel").forEach((el) => {
+    setWheel(el, el.dataset.current);
+    let t = null;
+    el.addEventListener("scroll", () => {
+      if (Math.abs(el.scrollTop - (el._progTop ?? -999)) < 1 && !t) return;
+      clearTimeout(t);
+      t = setTimeout(() => { t = null; commitTimePopWheel(el); }, 140);
+    }, { passive: true });
+    el.querySelectorAll(".dd-wheel-item").forEach((item) => item.addEventListener("click", () => {
+      setWheel(el, item.dataset.v);
+      commitTimePopWheel(el);
+    }));
+  });
+}
+// Box taps, pop-up buttons and room taps. Touch "click" follow-ups are
+// cancelled for the box/pop-up buttons so a tap can't fall through onto
+// whatever the pop-up opens or closes over. Rooms react to click only, so
+// a scroll that ends on a room button doesn't count.
+function handleRoomTap(e) {
+  const tpEl = e.target.closest && e.target.closest("[data-tp-open],[data-tp]");
+  if (tpEl) {
+    if (e.type === "touchend") e.preventDefault();
+    if (tpEl.disabled) return true;
+    if (tpEl.dataset.tpOpen) runDelegatedAction("tp-open", () => openTimePop(tpEl.dataset.tpOpen, tpEl.dataset.which));
+    else if (tpEl.dataset.tp === "ok") runDelegatedAction("tp-ok", () => confirmTimePop());
+    else if (tpEl.dataset.tp === "cancel") runDelegatedAction("tp-cancel", () => { state.timePop = null; renderKeepingModalScroll(); });
+    return true;
+  }
+  if (e.type !== "click") return false;
+  const el = e.target.closest && e.target.closest("[data-room-slot]");
+  if (!el) return false;
+  if (el.disabled) return true;
+  const v = slotValues(el.dataset.roomSlot);
+  if (!v) return true;
+  v.b.obj[v.b.f.loc] = v.loc === el.dataset.room ? "" : el.dataset.room;
+  updateSlotDom(el.dataset.roomSlot);
+  return true;
+}
+
 // ==================== RENDER ====================
 // Which access-error message we've already scrolled into view (see render()).
 let lastScrolledAccessError = "";
@@ -2886,6 +3220,7 @@ function render() {
   updateFollowUpBadge();
   root.innerHTML = renderMain();
   attachMainListeners();
+  attachSlotPickers();
   // The Authorised Teachers List's add/remove/promote actions can fail
   // silently-looking otherwise (e.g. a rules rejection) — the confirm
   // modal closes either way, so without this the only sign of trouble is
@@ -2960,6 +3295,7 @@ function renderMain() {
   if (state._closureModalDraft) html += renderClosureDayModal();
   html += state.memberActionTarget ? renderMemberActionModal() : "";
   html += state.postponePicker ? renderPostponePicker() : "";
+  html += state.timePop ? renderTimePop() : "";
   html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
   html += state.pendingDuplicateConfirm ? renderDuplicateConfirmModal() : "";
   html += state.undoToast ? renderUndoToast() : "";
@@ -3042,7 +3378,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meet</div>
-          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, tap ✓, then confirm. Once set, the meeting leaves that list, and any later change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Every meeting needs a Meeting Time (tap Start Time or End Time to pick it on a 24-hour wheel, in 15-minute steps) and a room: Conference Room or Meeting Room. A room holds one meeting at a time, so a room that's already booked for any overlapping time shows "Not available" and can't be chosen. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, set the time and room, tap ✓, then confirm. Once set, the meeting leaves that list, and any later change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -4150,11 +4486,11 @@ function renderDayDetail(dateISO, incl) {
       if (m.deleted) return;
       if (m.date === dateISO) {
         const note = m.pmStatus === "Cancelled" ? "(Cancelled)" : m.pmStatus === "Postponed" ? (m.postponedTo ? `(Postponed to ${formatDate(m.postponedTo)})` : "(Postponed)") : "";
-        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note });
+        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note, location: note ? "" : pmSlotLabel(m.time, m.endTime, m.location) });
       }
       // The rescheduled meeting itself, on its new date.
       if (isPmRescheduled(m) && m.postponedTo === dateISO && m.date !== dateISO) {
-        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note: `(Postponed from ${formatDate(m.date)})`, noteKind: "moved" });
+        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note: `(Postponed from ${formatDate(m.date)})`, noteKind: "moved", location: pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation) });
       }
     });
   }
@@ -4628,7 +4964,7 @@ function renderPendingPmDates() {
           ${m.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:1px">${escapeHtml(m.studentClass)}</div>` : ""}
           <div class="dd-pending-pm-grid">
             <div class="dd-field-label">Original meeting</div>
-            <div class="dd-sans" style="font-size:14px">${formatDate(m.date)}</div>
+            <div class="dd-sans" style="font-size:14px">${formatDate(m.date)}${m.time ? `<div class="dd-mono-muted" style="font-size:11px">${escapeHtml(pmSlotLabel(m.time, m.endTime, m.location))}</div>` : ""}</div>
             <div class="dd-field-label">Postponed to</div>
             <div>${renderPostponeDateField(m)}</div>
           </div>
@@ -5463,6 +5799,8 @@ function renderSuspForm(isEdit) {
                 <span>${a}</span>
               </label>`).join("")}
           </div>
+          <div class="dd-mono-muted" style="font-size:11px;margin:12px 0 6px">Meeting date: ${formatDate(d.startDate)}</div>
+          ${renderSlotPicker("susp-pm")}
           ${d.pmAttendees.includes("Others") ? `<input class="dd-input" id="susp-pm-others-text" style="margin-top:8px" placeholder="Please specify" value="${escapeHtml(d.pmOthersText)}" />` : ""}
           ${renderPmReasonPicker(d, "pm")}
         </div>` : ""}` : ""}
@@ -5739,6 +6077,8 @@ function renderTimeOutForm(isEdit) {
                 <span>${a}</span>
               </label>`).join("")}
           </div>
+          <div class="dd-mono-muted" style="font-size:11px;margin:12px 0 6px">Meeting date: ${formatDate(d.startDate)}</div>
+          ${renderSlotPicker("to-pm")}
           ${d.pmAttendees.includes("Others") ? `<input class="dd-input" id="to-pm-others-text" style="margin-top:8px" placeholder="Please specify" value="${escapeHtml(d.pmOthersText)}" />` : ""}
           ${renderPmReasonPicker(d, "pm")}
         </div>` : ""}` : ""}
@@ -5833,6 +6173,7 @@ function renderParentMeetingDetail(m) {
         <div style="min-width:0">
           <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(m.studentName)}${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
           <div class="dd-card-meta dd-card-meta-primary">${isPmRescheduled(m) ? `<s>${formatDate(m.date)}</s> → ${formatDate(m.postponedTo)}` : formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
+          ${(() => { const sl = isPmRescheduled(m) ? pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation) : m.pmStatus === "Scheduled" || !m.pmStatus ? pmSlotLabel(m.time, m.endTime, m.location) : ""; return sl ? `<div class="dd-card-meta dd-card-meta-primary">${escapeHtml(sl)}</div>` : ""; })()}
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;flex-shrink:0">
@@ -5846,7 +6187,7 @@ function renderParentMeetingDetail(m) {
       </div>
       ${m.pmStatus === "Postponed" ? `
       <div class="dd-pm-postpone-block">
-        <div class="dd-field-label" style="margin-bottom:4px">Postponed to <span style="text-transform:none;letter-spacing:0">(optional — add when known)</span></div>
+        <div class="dd-field-label" style="margin-bottom:4px">Postponed to</div>
         ${renderPostponeDateField(m)}
       </div>` : ""}` : ""}
       ${expanded ? `
@@ -5893,13 +6234,15 @@ function renderPmForm(isEdit) {
         <div class="dd-pm-status-row" style="margin-bottom:12px">
           ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill ${(d.meetingStatus || "Scheduled") === s ? "active" : ""}" style="${(d.meetingStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-meeting-status" data-status="${s}">${s}</button>`).join("")}
         </div>
+        ${(d.meetingStatus || "Scheduled") === "Scheduled" ? `
+        ${renderSlotPicker("pm")}` : ""}
         ${d.meetingStatus === "Postponed" ? `
-        <label class="dd-label" style="margin-top:0">Postponed to <span class="dd-mono-muted" style="font-size:11px;text-transform:none">optional — add when known</span></label>
+        <label class="dd-label" style="margin-top:0">Postponed to</label>
         <div class="dd-issue-due-row" style="margin-bottom:12px">
           <button type="button" class="dd-date-icon-btn" data-pp-open="draft" id="pm-postponed-to-btn" title="Choose the postponed meeting date">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
           </button>
-          ${d.postponedTo ? `<span class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" data-pp-clear="draft" title="Clear this date">✕</button>` : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
+          ${d.postponedTo ? `<span class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}${d.postponedTime ? ` · ${pmSlotLabel(d.postponedTime, d.postponedEndTime, d.postponedLocation)}` : ""}</span>` : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
         </div>` : ""}
         ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>
@@ -6809,6 +7152,7 @@ function runDelegatedAction(key, fn) {
   fn();
 }
 function handleDelegatedTap(e) {
+  if (handleRoomTap(e)) return;
   if (handlePostponePickerTap(e)) return;
   const yesBtn = e.target.closest && e.target.closest("#btn-confirm-delete-yes");
   if (yesBtn) { runDelegatedAction("confirm-delete-yes", () => confirmDeleteYes()); return; }

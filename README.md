@@ -81,6 +81,20 @@ audit trail (every create, edit and status change, with who and when).
   phone's own date picker. The Dashboard can set it once; later changes are
   made in the Parent Meet log.
 
+**Meeting time and room.** Every parent meeting set-up (the Parent Meet
+form, "Meeting Parents" on the Suspension and Time Out forms, and a
+postponed meeting's new date) has a "Meeting Time" of two boxes, Start Time
+→ End Time, each opening a pop-up wheel (24-hour, 15-minute steps) and a room: Conference Room or Meeting Room. Fields:
+`time`, `endTime`, `location`; for the new date of a postponed meeting,
+`postponedTime`, `postponedEndTime`, `postponedLocation`. A room holds one
+meeting at a time: any overlapping booking on the same day makes it "Not
+available", and it can't be chosen. Availability is checked again when
+saving. Cancelled meetings, and postponed ones with no new date, free their
+room. Required for new meetings and for scheduled meetings dated today or
+later; older meetings can stay blank. The Sheet shows time and room in the
+Date column (no Apps Script change needed). Rules: `roomClash()` /
+`pmBooking()` in `app.js`.
+
 **Status dots** on entry cards: green = completed, orange = ongoing
 (upcoming, active or in progress), red = cancelled, or postponed with no
 new date yet.

@@ -654,6 +654,53 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-pp-day.current { border: 2px dashed #B8863B; }
 .dd-pp-day.selected { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 .dd-pp-day:disabled { color: #C9C4B4; background: #F2EFE6; cursor: default; }
-.dd-pp-picked { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: #4A4536; margin-top: 10px; text-align: center; }
 .dd-pp-ok { background: #1B2A41; font-size: 18px; }
 .dd-pp-ok:disabled { opacity: 0.35; cursor: default; }
+
+/* ---- Parent meeting time + room booking ----
+   "Meeting Time": two boxes (Start Time → End Time); each opens a small
+   pop-up with Apple-style wheels. Rooms use the Suspension location
+   selector's colours (.dd-avail-chip-free / -full / -selected). */
+.dd-slot { margin-bottom: 4px; }
+.dd-time-boxes { display: flex; align-items: center; gap: 8px; }
+.dd-time-box {
+  flex: 1; min-width: 0; height: 44px; border: 1px solid #C9C4B4; border-radius: 6px; background: #fff; cursor: pointer;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; color: #8A8571;
+}
+.dd-time-box.set { font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600; color: #1B2A41; border-color: #1B2A41; }
+.dd-time-arrow { font-size: 18px; color: #8A8571; flex-shrink: 0; }
+.dd-room-row { display: flex; gap: 8px; }
+.dd-room-btn {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 8px 10px; border: 1px solid; border-radius: 4px; cursor: pointer;
+}
+.dd-room-name { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 600; }
+.dd-room-status { font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.9; }
+.dd-room-btn.dd-avail-chip-full { cursor: not-allowed; }
+.dd-room-waiting { background: #F2EFE6; color: #8A8571; border-color: #E4E1D4; cursor: default; }
+/* Pop-up time selector */
+.dd-tp-modal { max-width: 280px; }
+.dd-wheel-pair { display: flex; align-items: center; justify-content: center; gap: 6px; background: #fff; border: 1px solid #C9C4B4; border-radius: 10px; padding: 0 10px; }
+.dd-wheel-colon { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; color: #1B2A41; }
+.dd-wheel-wrap { position: relative; width: 64px; }
+.dd-wheel-wrap::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 44px; height: 44px; pointer-events: none;
+  border-top: 1px solid #C9C4B4; border-bottom: 1px solid #C9C4B4; background: rgba(27,42,65,0.05);
+}
+.dd-wheel {
+  height: 132px; overflow-y: auto; scroll-snap-type: y mandatory; padding: 44px 0; box-sizing: border-box;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 30%, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 30%, #000 70%, transparent 100%);
+}
+.dd-wheel::-webkit-scrollbar { display: none; }
+.dd-wheel-item {
+  height: 44px; line-height: 44px; text-align: center; scroll-snap-align: center;
+  font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #8A8571; cursor: pointer; user-select: none;
+}
+.dd-wheel-item.on { color: #1B2A41; font-weight: 600; font-size: 22px; }
+.dd-tp-note { min-height: 18px; margin-top: 8px; text-align: center; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; color: #A3372B; }
+/* Booking details in the final confirmation */
+.dd-confirm-details { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; text-align: left; margin: 0 0 16px; padding: 10px 12px; background: #fff; border: 1px solid #E4E1D4; border-radius: 4px; }
+.dd-confirm-k { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
+.dd-confirm-v { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; color: #1B2A41; }
