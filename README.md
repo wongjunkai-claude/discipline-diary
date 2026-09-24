@@ -47,7 +47,10 @@ hosted free on GitHub Pages. Everything can be maintained from a browser.
   - **Admins** can add and remove authorised teachers.
   - **Authorised teachers** can use every log.
 - The rules check access on every request, so removing someone cuts them off
-  immediately, even mid-session.
+  immediately, even mid-session. Removing someone also deletes their
+  sign-in record (`users/{uid}`), so they disappear completely and don't
+  reappear under "Add Existing Users". If they're added back later, they're
+  asked for their name again at sign-in.
 
 ## The four logs (Firestore collections)
 
@@ -56,7 +59,9 @@ audit trail (every create, edit and status change, with who and when).
 
 - **Grooming Log** (`incidents`): student, class, date, and `issues` — one or
   more grooming issues (Long Hair, Uniform, …), each with its own
-  1st / 2nd / Final Warning stage and deadline. Also follow-ups and links to
+  1st / 2nd / Final Warning stage and deadline. Deadlines always fall on a
+  school day: one that would land on a weekend, holiday or the student's
+  HBL/closure day moves to the next school day (`computeGroomingDeadline()`). Also follow-ups and links to
   related suspensions, time outs and meetings. A few very old entries use an
   earlier single-`issue` format; they still display, but don't count toward
   the watchlist.
@@ -101,7 +106,11 @@ the phone's own date picker, so it can show holidays: weekends (grey),
 public holidays (pink) and school holidays (yellow) are named and can't be
 picked. Closure/HBL days (blue) are shown everywhere: blocked for the
 affected levels on Suspension/Time Out, a note only (still pickable) for
-parent meetings. Overlapping closure/HBL entries are combined per day, with
+parent meetings. On Grooming, Suspension and Time Out the class must be
+chosen before any date, since closure days depend on the level; changing a
+suspension's or time out's start date or class lays its days out again
+from the new start. Settings and the chart's Custom range use the phone's
+own date picker. Overlapping closure/HBL entries are combined per day, with
 levels always in order (P3/P4 on 24–29 Sep + P5 on 24–25 Sep → "P3/P4/P5
 HBL" on 24–25, "P3/P4 HBL" on 28–29). See
 `calendarDayInfo()` / `pickerDayState()` in `app.js`.
@@ -120,7 +129,8 @@ To rename an offence without breaking older records, add the old name to
 
 ## Students' Watchlist
 
-This semester's records only (Terms 1–2 or Terms 3–4). Grooming entries count
+This semester's records only: Terms 1–2 until Term 3 starts (so through
+the June holidays), then Terms 3–4. Grooming entries count
 once each, at the highest warning any of their issues reached. A student
 needs to meet just **one** criterion in a tier and is shown in the highest
 tier they qualify for.

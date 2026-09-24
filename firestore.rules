@@ -126,12 +126,15 @@ service cloud.firestore {
 
     // One doc per signed-in teacher, holding their chosen display name
     // and confirmed school email — read by everyone (used to show "signed
-    // in as X" against the Authorized Teachers list), but each person can
-    // only ever write their own doc.
+    // in as X" against the Authorized Teachers list). Each person can only
+    // write their own doc, and only with their own sign-in email. Admins
+    // (and the owner) delete it when they remove someone, so a removed
+    // teacher disappears completely.
     match /users/{uid} {
       allow read: if isMoeUser();
-      allow create, update: if isMoeUser() && request.auth.uid == uid;
-      allow delete: if false;
+      allow create, update: if isMoeUser() && request.auth.uid == uid
+        && request.resource.data.get('email', '').lower() == emailLower();
+      allow delete: if isAdmin();
     }
 
     // The roster of who may sign in at all. Every authorized teacher can

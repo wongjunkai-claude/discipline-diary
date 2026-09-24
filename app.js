@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.4.1";
+const APP_VERSION = "3.5.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -110,13 +110,8 @@ function syncParentMeetingToSheet(m) {
 // ---------- Constants ----------
 // "Open" removed as a selectable status — new entries default straight to
 // "In Progress" (internally "Monitoring", kept for backward compatibility
-// with existing data). STATUS_STYLE/STATUS_TEXT still map Open for display,
-// so any pre-existing "Open" entries keep rendering correctly.
-const STATUS_STYLE = {
-  Open: { ink: "#A3372B", label: "OPEN" },
-  Monitoring: { ink: "#B8863B", label: "IN PROGRESS" },
-  Resolved: { ink: "#3C6E47", label: "RESOLVED" },
-};
+// with existing data). STATUS_TEXT still maps Open for display, so any
+// pre-existing "Open" entries keep rendering correctly.
 const STATUS_TEXT = { Open: "Open", Monitoring: "In Progress", Resolved: "Resolved" };
 const SUSP_TYPE_STYLE = {
   ISS: { ink: "#B8863B", label: "IN-SCHOOL" },
@@ -137,16 +132,17 @@ const LOCATION_OPTIONS = ["General Office", "MPR 1"];
 // way (stay in school under supervision, or simply not attend), so those
 // keep the same editable in-school/out-of-school day split a suspension has.
 const TO_TYPES = [
-  { key: "Recess", label: "Time Out (Recess)", shortLabel: "Recess", abbrev: "R", alwaysInSchool: true },
-  { key: "Lesson", label: "Time Out (Lesson)", shortLabel: "Lesson", abbrev: "L", alwaysInSchool: true },
-  { key: "CCA", label: "Time Out (CCA)", shortLabel: "CCA", abbrev: "CCA", alwaysInSchool: false },
-  { key: "LearningExperience", label: "Time Out (Learning Experience)", shortLabel: "Learning Exp.", abbrev: "LE", alwaysInSchool: false },
+  { key: "Recess", label: "Time Out (Recess)", abbrev: "R", alwaysInSchool: true },
+  { key: "Lesson", label: "Time Out (Lesson)", abbrev: "L", alwaysInSchool: true },
+  { key: "CCA", label: "Time Out (CCA)", abbrev: "CCA", alwaysInSchool: false },
+  { key: "LearningExperience", label: "Time Out (Learning Experience)", abbrev: "LE", dashLabel: "Time Out (LE)", alwaysInSchool: false },
 ];
 function toTypeInfo(key) { return TO_TYPES.find((t) => t.key === key) || TO_TYPES[0]; }
+// Dashboard day list: "Time Out (CCA)", with Learning Experience shortened to "Time Out (LE)".
+function toTypeDashLabel(key) { const t = toTypeInfo(key); return t.dashLabel || t.label; }
 function toTypeLabel(key) { return toTypeInfo(key).label; }
-// Tallies a list of already-filtered Time Out records by type — used
-// wherever a "Time Out" total is entry-counted (one record = one count),
-// i.e. Month/Year/Chart/Annual Report. An unrecognized/missing toType (old
+// Tallies a list of already-filtered Time Out records by type (one record
+// = one count) for the level/term table and the Annual Report. An unrecognized/missing toType (old
 // data from before types existed) is folded into Recess rather than
 // dropped, so the breakdown's total always matches the plain count.
 function timeOutTypeBreakdown(records) {
@@ -786,9 +782,24 @@ async function addAuthorizedEmail(rawEmail) {
   render();
 }
 async function removeAuthorizedEmail(email) {
-  try { await deleteDoc(doc(db, "authorizedUsers", email)); }
-  catch (err) { console.error("removeAuthorizedEmail failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  try {
+    await deleteDoc(doc(db, "authorizedUsers", email));
+    await purgeUserDocs(email);
+  } catch (err) { console.error("removeAuthorizedEmail failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
+}
+// Removing someone also deletes their sign-in record (users/{uid}: name
+// and email), so they disappear from the app completely and don't come
+// back under "Add Existing Users". Skipped while they're still an admin
+// or the owner (they keep access that way). If they're added again later,
+// they're asked for their name the next time they sign in.
+async function purgeUserDocs(email) {
+  const e = (email || "").toLowerCase();
+  const owner = (state.currentOwnerEmail || OWNER_EMAIL).toLowerCase();
+  if (!e || e === owner || e === OWNER_EMAIL.toLowerCase()) return;
+  if ((state.adminsList || []).some((a) => a.id === e) && !state.isOwner) return;
+  const uids = (state.userList || []).filter((u) => (u.email || "").toLowerCase() === e && u._uid).map((u) => u._uid);
+  await Promise.all(uids.map((id) => deleteDoc(doc(db, "users", id))));
 }
 // "Remove User" from the Authorised Teachers List's "⋮" menu — a full
 // revoke, distinct from "Remove Admin" (which only demotes and leaves
@@ -804,6 +815,7 @@ async function removeMemberFully(email) {
       deleteDoc(doc(db, "authorizedUsers", email)).catch((err) => console.warn("removeMemberFully: authorizedUsers delete failed (may not exist):", err)),
       deleteDoc(doc(db, "admins", email)).catch((err) => console.warn("removeMemberFully: admins delete failed (expected if caller isn't Owner):", err)),
     ]);
+    await purgeUserDocs(email);
   } catch (err) { console.error("removeMemberFully failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
@@ -1044,7 +1056,10 @@ function findDuplicateGroomingEntry(name, studentClass, date, excludeId) {
 }
 function findDuplicateParentMeeting(name, studentClass, date, excludeId) {
   const key = studentKey(name, studentClass);
-  return state.parentMeetings.find((m) => !m.deleted && m.id !== excludeId && m.date === date && studentKey(m.studentName, m.studentClass) === key) || null;
+  // Uses the date the meeting actually happens on (a rescheduled meeting
+  // counts on its new date); cancelled meetings, and postponed ones with
+  // no new date yet, aren't duplicates.
+  return state.parentMeetings.find((m) => m.id !== excludeId && isPmCounted(m) && pmDate(m) === date && studentKey(m.studentName, m.studentClass) === key) || null;
 }
 function findDuplicateSuspension(name, studentClass, dates, excludeId) {
   const key = studentKey(name, studentClass);
@@ -1128,6 +1143,7 @@ const state = {
   showWatchlistInfo: false,
   backupError: "",
   postponePicker: null,
+  pmQuickError: null, // { id, message } — shown on that meeting's card
   timePop: null,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
@@ -1361,7 +1377,7 @@ function startListening() {
   if (unsubUsers) unsubUsers();
   unsubUsers = onSnapshot(
     collection(db, "users"),
-    (snap) => { state.userList = snap.docs.map((d) => d.data()); render(); },
+    (snap) => { state.userList = snap.docs.map((d) => ({ ...d.data(), _uid: d.id })); render(); },
     (err) => { handleRealtimePermissionError(err); }
   );
   if (unsubOwner) unsubOwner();
@@ -1650,14 +1666,13 @@ function freshIncidentDraft() {
 // deadline is the student's next school day after the coming weekend,
 // not a flat day count. If that Monday happens to be a public holiday
 // or school holiday, it rolls forward to whichever day school actually
-// resumes. Any other duration is just added as calendar days, as before.
+// resumes. Any other duration is added as calendar days, and a deadline
+// that lands on a weekend, holiday or the student's HBL/closure day moves
+// to the next school day.
 function computeGroomingDeadline(cfg, stage, catchDate, level) {
-  if (cfg.days[stage - 1] === 4) {
-    let d = strictNextWeekday(catchDate, 1);
-    while (isNonSchoolDay(d, level)) d = nextSchoolDay(d, level);
-    return d;
-  }
-  return addDays(catchDate, cfg.days[stage - 1]);
+  let d = cfg.days[stage - 1] === 4 ? strictNextWeekday(catchDate, 1) : addDays(catchDate, cfg.days[stage - 1]);
+  while (isNonSchoolDay(d, level)) d = nextSchoolDay(d, level);
+  return d;
 }
 function freshGroomingIssue(type, othersText, catchDate, level) {
   const cfg = GROOMING_ISSUE_CONFIG[type] || GROOMING_ISSUE_CONFIG.Others;
@@ -1913,8 +1928,8 @@ async function submitNewIncident() {
 
   if (dupNames.length > 0) {
     const message = dupNames.length === 1
-      ? `${dupNames[0]} already has a grooming entry logged today. Log another anyway?`
-      : `${dupNames.join(", ")} already have a grooming entry logged today. Log anyway for all of them?`;
+      ? `${dupNames[0]} already has a grooming entry on ${formatDate(date)}. Log another anyway?`
+      : `${dupNames.join(", ")} already have a grooming entry on ${formatDate(date)}. Log anyway for all of them?`;
     if (guardDuplicate(true, message, doSave)) return;
   }
   await doSave();
@@ -2106,6 +2121,15 @@ function freshSuspDraft() {
 // manually overridden via its own calendar icon (tracked in
 // d.issOverridden by slot index); an overridden slot keeps its date across
 // further recalculation, while every other slot keeps auto-deriving.
+// A new start date or class re-lays every day from the new start (for the
+// new class's school days), dropping any hand-picked dates, so no
+// out-of-school or in-school day is left behind on the old dates.
+function resetSuspDays(d) {
+  d.ossDates = [];
+  d.issDates = [];
+  d.issOverridden = [];
+  return d;
+}
 function regenerateSuspDates(d) {
   const total = d.totalDays || 0;
   if (!total) { d.ossDates = []; d.issDates = []; d.issOverridden = []; d.issVenues = {}; return d; }
@@ -2370,9 +2394,9 @@ async function submitEditSuspension(e) {
 
 // ==================== TIME OUTS ====================
 // Started as a one-for-one copy of the Suspension log, so a Time Out record
-// has exactly the same shape (total/ISS/OSS days, per-day entries with a
-// booked location for in-school days, reason, optional tagged parent
-// meeting). That means the pure record helpers — suspensionDayEntries,
+// has the same shape (total/ISS/OSS days, per-day entries, reasons,
+// optional tagged parent meeting); in-school days take a free-text
+// location and supervising administrator instead of a booked room. That means the pure record helpers — suspensionDayEntries,
 // suspensionDateRange, suspensionStatus, regenerateSuspDates — work on it
 // unchanged and are shared rather than duplicated. Everything tied to the
 // collection, state, or wording lives here, so the two logs can diverge
@@ -2667,12 +2691,13 @@ async function submitNewParentMeeting(e) {
   };
 
   const dup = findDuplicateParentMeeting(studentName, studentClass, date);
-  if (guardDuplicate(dup, `${studentName} already has a parent meeting logged today (by ${dup?.loggedBy || "another teacher"}). Log another anyway?`, doSave)) return;
+  if (guardDuplicate(dup, `${studentName} already has a parent meeting on ${formatDate(date)} (logged by ${dup?.loggedBy || "another teacher"}). Log another anyway?`, doSave)) return;
   await doSave();
 }
 function openEditParentMeeting(id) {
   const m = state.parentMeetings.find((i) => i.id === id);
   if (!m) return;
+  state.pmQuickError = null;
   state.editingPmId = id;
   state._pmDraft = freshPmDraft(m);
   state.pmFormError = "";
@@ -2759,7 +2784,7 @@ async function submitEditParentMeeting(e) {
   const identityChanged = updated.studentName !== m.studentName || updated.studentClass !== m.studentClass || updated.date !== m.date;
   if (identityChanged) {
     const dup = findDuplicateParentMeeting(updated.studentName, updated.studentClass, updated.date, id);
-    if (guardDuplicate(dup, `${updated.studentName} already has a parent meeting logged on ${formatDate(updated.date)} (by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
+    if (guardDuplicate(dup, `${updated.studentName} already has a parent meeting on ${formatDate(updated.date)} (logged by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
   }
   await doSave();
 }
@@ -2773,6 +2798,17 @@ async function setPmStatusQuick(id, status) {
   const current = m.pmStatus || "Scheduled";
   const next = current === status ? "Scheduled" : status;
   if (next === current) return;
+  // Going back to Scheduled takes the original time and room again, so
+  // make sure nobody else has booked that slot in the meantime.
+  if (next === "Scheduled") {
+    const clash = roomClash(m.location, m.date, m.time, m.endTime, m.id);
+    if (clash) {
+      state.pmQuickError = { id, message: `Can't set back to scheduled: the ${m.location} is already booked at ${formatTimeRange(pmBooking(clash).start, pmBooking(clash).end)} on ${formatDate(m.date)} (${clash.studentName || "another meeting"}). Tap Edit entry to choose another time or room.` };
+      render();
+      return;
+    }
+  }
+  state.pmQuickError = null;
   const now = Date.now();
   state.saveError = false;
   render();
@@ -2865,7 +2901,7 @@ function openPostponePicker(mode, pmId) {
   // already selected, so the teacher changes from there.
   const src = mode === "draft" ? { t: state._pmDraft.postponedTime, e: state._pmDraft.postponedEndTime, l: state._pmDraft.postponedLocation }
     : (() => { const m = state.parentMeetings.find((x) => x.id === pmId); return { t: m.postponedTime, e: m.postponedEndTime, l: m.postponedLocation }; })();
-  state.postponePicker = { mode, context: "pm", pmId: pmId || null, minExclusive: original, current, selected: current || "", month: start.slice(0, 7),
+  state.postponePicker = { mode, context: "pm", pmId: pmId || null, minExclusive: original, selected: current || "", month: start.slice(0, 7),
     time: src.t || "", endTime: src.e || "", location: src.l || "" };
   ppRender();
 }
@@ -2881,7 +2917,7 @@ function openFieldDatePicker(input) {
     try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
     state.postponePicker = { mode: "field", context: "grooming", title: "Follow-up deadline",
       selector: `.dd-issue-override-input[data-id="${input.dataset.id}"][data-issue="${input.dataset.issue}"]`,
-      level: classLevel(it?.studentClass) || null, minExclusive: "", current, selected: current, month: (current || todayISO()).slice(0, 7) };
+      level: classLevel(it?.studentClass) || null, minExclusive: "", selected: current, month: (current || todayISO()).slice(0, 7) };
     if (current && pickerDayState(current, state.postponePicker).blocked) state.postponePicker.selected = "";
     ppRender();
     return;
@@ -2898,8 +2934,15 @@ function openFieldDatePicker(input) {
   const current = input.value || "";
   const start = current || todayISO();
   try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
+  // Suspension, Time Out and Grooming dates depend on the student's level
+  // (HBL / closure days), so the class has to be chosen first.
+  if (context !== "pm" && !draft?.studentClass) {
+    state.postponePicker = { mode: "needClass" };
+    ppRender();
+    return;
+  }
   state.postponePicker = { mode: "field", context, selector, level: classLevel(draft?.studentClass) || null,
-    minExclusive: "", current, selected: current, month: start.slice(0, 7) };
+    minExclusive: "", selected: current, month: start.slice(0, 7) };
   // Don't pre-select a day that can't be chosen (e.g. today is an HBL day
   // for this student's level).
   if (current && pickerDayState(current, state.postponePicker).blocked) state.postponePicker.selected = "";
@@ -2950,6 +2993,19 @@ function pickerDayState(iso, pp) {
 }
 function renderPostponePicker() {
   const pp = state.postponePicker;
+  if (pp.mode === "needClass") return `
+    <div class="dd-modal-backdrop" id="pp-backdrop">
+      <div class="dd-modal dd-pp-modal" role="alertdialog" aria-label="Choose the class first">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Choose the class first</div>
+          <button type="button" class="dd-modal-close" data-pp="cancel">✕</button>
+        </div>
+        <div class="dd-sans" style="font-size:14px;line-height:1.45">Select the student's class before choosing a date, so the calendar can show that level's HBL and school closure days.</div>
+        <div style="display:flex;margin-top:14px">
+          <button type="button" class="dd-add-btn" style="flex:1" data-pp="cancel">OK</button>
+        </div>
+      </div>
+    </div>`;
   const isField = pp.mode === "field";
   const [y, mo] = pp.month.split("-").map(Number);
   const lead = new Date(y, mo - 1, 1).getDay();
@@ -3050,8 +3106,13 @@ function confirmPostponePick() {
 // cancelled, so the tap on ✓ can't also land on the confirmation's Yes
 // button that appears in the same spot.
 function handlePostponePickerTap(e) {
+  // Only the log forms and a grooming issue's follow-up deadline use the
+  // in-app calendar. Settings and the chart's Custom range keep the
+  // phone's own date picker (they set holidays themselves, so there's
+  // nothing to colour or block).
   const fieldBtn = e.target.closest && e.target.closest("#pm-form .dd-date-icon-btn, #susp-form .dd-date-icon-btn, #to-form .dd-date-icon-btn, #new-form .dd-date-icon-btn, #edit-form .dd-date-icon-btn, .dd-issue-due-row .dd-date-icon-btn");
   const fieldInput = fieldBtn && fieldBtn.querySelector('input[type="date"]');
+  if (fieldInput && !fieldInput.closest("#pm-form, #susp-form, #to-form, #new-form, #edit-form") && !fieldInput.classList.contains("dd-issue-override-input")) return false;
   if (fieldInput) {
     if (e.type === "touchend") e.preventDefault();
     runDelegatedAction("pp-field-open", () => openFieldDatePicker(fieldInput));
@@ -3527,11 +3588,11 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Dashboard</div>
-          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings, suspensions and time outs this semester. Tap the ⓘ next to the watchlist heading to see exactly what puts a student in each tier. Tap a student's name anywhere in the app to see everything on file for them across all four logs.</p>
+          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings, suspensions and time outs this semester (Terms 1–2 until Term 3 starts, then Terms 3–4). Tap the ⓘ next to the watchlist heading to see exactly what puts a student in each tier. Tap a student's name anywhere in the app to see everything on file for them across all four logs.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Grooming Log</div>
-          <p>Pick one or more issues when logging an entry (Long Hair, Uniform, etc.) — each gets its own 1st/2nd/Final Warning countdown with its own deadline, and a "same day, over the weekend" rule automatically pushes a 4-day deadline to the next school day. Adding several students at once for the same issue(s) is one tap away ("+ Add another student") — each still gets their own independent entry. Resolve an issue any time, or mark it unresolved to escalate to the next warning; deadlines can be moved if the student or parent proposes a different date. Edit Entry lets you change the student, date, and which issues are selected. An entry only shows Resolved once every issue in it is resolved.</p>
+          <p>Pick one or more issues when logging an entry (Long Hair, Uniform, etc.) — each gets its own 1st/2nd/Final Warning countdown with its own deadline, and a "same day, over the weekend" rule automatically pushes a 4-day deadline to the next school day. Every deadline falls on a school day: one that would land on a weekend, holiday or the student's HBL/closure day moves to the next school day. Adding several students at once for the same issue(s) is one tap away ("+ Add another student") — each still gets their own independent entry. Resolve an issue any time, or mark it unresolved to escalate to the next warning; deadlines can be moved if the student or parent proposes a different date. Edit Entry lets you change the student, date, and which issues are selected. An entry only shows Resolved once every issue in it is resolved.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Suspension Log</div>
@@ -3547,7 +3608,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Choosing dates</div>
-          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen.</p>
+          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen. On Grooming, Suspension and Time Out, choose the student's class first, since HBL and closure days depend on the level. Changing a suspension's or time out's start date or class lays its days out again from the new start.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -3585,7 +3646,6 @@ function lastNMonthKeys(n = 11) {
   }
   return out;
 }
-// All month keys (YYYY-MM) from `fromKey` to `toKey` inclusive.
 // All days of a given YYYY-MM month, each with per-category counts.
 // Suspension counts by actual day (from suspensionDayEntries), not just
 // the start date, so a multi-day suspension shows on every day it covers.
@@ -3661,22 +3721,13 @@ function monthKeysInRange(fromKey, toKey) {
   }
   return out.length ? out : [fromKey];
 }
-// Options for the custom range's From/To dropdowns — 24 months back to 12
-// months ahead of today, a generous span without being unbounded.
-function dateDiffDays(fromISO, toISO) {
-  const [fy, fm, fd] = fromISO.split("-").map(Number);
-  const [ty, tm, td] = toISO.split("-").map(Number);
-  const a = Date.UTC(fy, fm - 1, fd);
-  const b = Date.UTC(ty, tm - 1, td);
-  return Math.round((b - a) / 86400000);
-}
 function weekLabelForMonday(monday) {
   const year = parseInt(monday.slice(0, 4), 10);
   const moe = computeMoeCalendar(year);
   for (let i = 0; i < moe.terms.length; i++) {
     const t = moe.terms[i];
     if (monday >= t.start && monday <= t.end) {
-      const weekNum = Math.floor(dateDiffDays(t.start, monday) / 7) + 1;
+      const weekNum = Math.floor(daysBetween(t.start, monday) / 7) + 1;
       return `Term ${i + 1} Week ${weekNum}`;
     }
   }
@@ -3735,10 +3786,10 @@ const CHART_RANGE_OPTIONS_SECONDARY = [
   { key: "custom", label: "Custom" },
 ];
 const CATEGORY_META = {
-  discipline: { label: "Grooming", checkboxLabel: "Grooming" },
-  suspension: { label: "Suspension", checkboxLabel: "Suspension" },
-  timeOut: { label: "Time Out", checkboxLabel: "Time Out" },
-  parentMeeting: { label: "Parent Meet", checkboxLabel: "Parent Meet" },
+  discipline: { label: "Grooming" },
+  suspension: { label: "Suspension" },
+  timeOut: { label: "Time Out" },
+  parentMeeting: { label: "Parent Meet" },
 };
 function renderCategoryToggles(incl) {
   const cats = [
@@ -3755,10 +3806,6 @@ function renderCategoryToggles(incl) {
       </div>
     </div>`;
 }
-// Shared across Discipline/Suspension/Parent Meet logs: a row of 6
-// level counters (P1-P6), one of which can be expanded into a table of
-// that level's classes vs the current year's four school terms. Only one
-// level stays expanded at a time (per page — each page tracks its own).
 // ---------- Annual Summary Reports ----------
 function availableReportYears() {
   const years = new Set([new Date().getFullYear()]);
@@ -4647,7 +4694,7 @@ function renderDayDetail(dateISO, incl) {
       if (t.deleted) return;
       suspensionDayEntries(t).forEach((e) => {
         if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "toOss" : "toIss", name: t.studentName, cls: t.studentClass,
-          location: e.type === "OSS" ? "Out of School" : `${toTypeInfo(t.toType).shortLabel} | ${timeOutDayLabel(e)}` });
+          location: `${toTypeDashLabel(t.toType)} | ${timeOutDayLabel(e)}` });
       });
     });
   }
@@ -5043,11 +5090,8 @@ function renderMonthlyChart() {
     ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
 }
 
-// ---------- New Case wizard rendering ----------
+// ---------- Students' Watchlist ----------
 
-// A "semester" is 2 terms — Term1+2, or Term3+4 — whichever contains
-// today (falling back to whichever half of the year today is closer to,
-// if today happens to land in a between-term holiday gap).
 // Plain-language watchlist criteria for the info box — must match
 // riskTierFor() in renderDashboardSection.
 const RISK_TIER_CRITERIA = [
@@ -5055,12 +5099,14 @@ const RISK_TIER_CRITERIA = [
   { tier: "Medium Risk", criteria: ["1 suspension", "2 final warnings", "4–6 2nd warnings", "2–3 time outs"] },
   { tier: "Low Risk", criteria: ["1 final warning", "1–3 2nd warnings", "1 time out"] },
 ];
+// A "semester" is 2 terms: Terms 1–2 or Terms 3–4. Terms 1–2 stay in view
+// through the June holidays, until Term 3 starts.
 function computeCurrentSemesterBounds() {
   const year = new Date().getFullYear();
   const moe = computeMoeCalendar(year);
   const today = todayISO();
   const [t1, t2, t3, t4] = moe.terms;
-  if (today <= t2.end) return { start: t1.start, end: t2.end };
+  if (today < t3.start) return { start: t1.start, end: t2.end };
   return { start: t3.start, end: t4.end };
 }
 function renderGroomingFollowUpList() {
@@ -5753,7 +5799,7 @@ function renderSuspensionDetail(s) {
 // Suspension-only now — Time Out grew its own type selector, free-text
 // location and administrator field, so it forked into
 // renderTimeOutFieldsBody instead of sharing this one.
-function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId, noun = "suspension") {
+function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
   const totalOptions = Array.from({ length: 14 }, (_, i) => i + 1);
   const dayCountOptions = (max) => Array.from({ length: max + 1 }, (_, i) => i);
   const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
@@ -5768,7 +5814,7 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId, noun = "suspensi
           <span class="dd-sans" style="font-size:15px">${formatDate(d.startDate)}</span>
         </div>
 
-        <label class="dd-label">Total days of ${noun}</label>
+        <label class="dd-label">Total days of suspension</label>
         <select class="dd-input" id="${idPrefix}-total-days">
           <option value="">Select total days…</option>
           ${totalOptions.map((n) => `<option value="${n}" ${d.totalDays === n ? "selected" : ""}>${n} day${n > 1 ? "s" : ""}</option>`).join("")}
@@ -5882,10 +5928,10 @@ function renderKeepingPageScroll() {
 // Every click here triggers a full re-render, which normally resets scroll
 // to the top of the modal — very disruptive on a long form. This preserves
 // the open modal's scroll position across the re-render.
-function attachSuspFieldListeners(form, idPrefix, d, rawOnChange) {
+function attachSuspFieldListeners(form, idPrefix, d) {
   const onChange = renderKeepingModalScroll;
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
-  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateSuspDates(d); onChange(); });
+  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateSuspDates(resetSuspDays(d)); onChange(); });
 
   const totalEl = document.getElementById(`${idPrefix}-total-days`);
   if (totalEl) totalEl.addEventListener("change", () => {
@@ -6187,9 +6233,6 @@ function renderTimeOutFieldsBody(d, idPrefix) {
         </div>`;
         })() : ""}`;
 }
-// Same "avoid re-rendering on every keystroke" pattern as the studentName
-// field's syncField helper — venue/administrator are free text, so a
-// render-on-input would yank focus out of the box after every character.
 // "Same for all days": every in-school day takes the first day's location
 // and administrator (also re-applied when the day list changes).
 function applyIssSame(d) {
@@ -6204,7 +6247,7 @@ function attachTimeOutFieldListeners(form, idPrefix, d) {
   if (typeEl) typeEl.addEventListener("change", () => { d.toType = typeEl.value; regenerateTimeOutDates(d); onChange(); });
 
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
-  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateTimeOutDates(d); onChange(); });
+  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateTimeOutDates(resetSuspDays(d)); onChange(); });
 
   const totalEl = document.getElementById(`${idPrefix}-total-days`);
   if (totalEl) totalEl.addEventListener("change", () => {
@@ -6390,6 +6433,7 @@ function renderParentMeetingDetail(m) {
       <div class="dd-pm-status-row" style="margin-top:8px">
         ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill dd-pm-status-pill-sm ${(m.pmStatus || "Scheduled") === s ? "active" : ""}" style="${(m.pmStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-status-quick" data-id="${m.id}" data-status="${s}">${s}</button>`).join("")}
       </div>
+      ${state.pmQuickError?.id === m.id ? `<div class="dd-error" role="alert" style="margin-top:6px">${escapeHtml(state.pmQuickError.message)}</div>` : ""}
       ${m.pmStatus === "Postponed" ? `
       <div class="dd-pm-postpone-block">
         <div class="dd-field-label" style="margin-bottom:4px">Postponed to</div>
@@ -7087,10 +7131,10 @@ function attachSuspFormModalListeners() {
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._suspDraft[name] = el.value; }); };
     syncField("studentName");
     const classEl = form.elements["studentClass"];
-    if (classEl) classEl.addEventListener("change", () => { state._suspDraft.studentClass = classEl.value; regenerateSuspDates(state._suspDraft); renderKeepingModalScroll(); });
+    if (classEl) classEl.addEventListener("change", () => { state._suspDraft.studentClass = classEl.value; regenerateSuspDates(resetSuspDays(state._suspDraft)); renderKeepingModalScroll(); });
     attachMultiReasonListeners(form, state._suspDraft);
 
-    attachSuspFieldListeners(form, "susp", state._suspDraft, render);
+    attachSuspFieldListeners(form, "susp", state._suspDraft);
 
     const tagPmCb = document.getElementById("susp-tag-pm-cb");
     if (tagPmCb) tagPmCb.addEventListener("change", () => { state._suspDraft.tagPm = tagPmCb.checked; renderKeepingModalScroll(); });
@@ -7148,7 +7192,7 @@ function attachTimeOutFormModalListeners() {
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._toDraft[name] = el.value; }); };
     syncField("studentName");
     const classEl = form.elements["studentClass"];
-    if (classEl) classEl.addEventListener("change", () => { state._toDraft.studentClass = classEl.value; regenerateSuspDates(state._toDraft); renderKeepingModalScroll(); });
+    if (classEl) classEl.addEventListener("change", () => { state._toDraft.studentClass = classEl.value; regenerateTimeOutDates(resetSuspDays(state._toDraft)); renderKeepingModalScroll(); });
     attachMultiReasonListeners(form, state._toDraft);
 
     attachTimeOutFieldListeners(form, "to", state._toDraft);

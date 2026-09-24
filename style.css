@@ -709,8 +709,8 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 #pm-form .dd-date-icon-btn, #susp-form .dd-date-icon-btn, #to-form .dd-date-icon-btn, #new-form .dd-date-icon-btn, #edit-form .dd-date-icon-btn { cursor: pointer; }
 #pm-form .dd-date-icon-btn input[type="date"], #susp-form .dd-date-icon-btn input[type="date"], #to-form .dd-date-icon-btn input[type="date"],
 #new-form .dd-date-icon-btn input[type="date"], #edit-form .dd-date-icon-btn input[type="date"],
-.dd-issue-due-row .dd-date-icon-btn input[type="date"] { pointer-events: none; }
-.dd-issue-due-row .dd-date-icon-btn { cursor: pointer; }
+.dd-issue-due-row .dd-date-icon-btn input.dd-issue-override-input { pointer-events: none; }
+.dd-issue-due-row .dd-date-icon-btn:has(.dd-issue-override-input) { cursor: pointer; }
 
 /* Calendar day cells: number centred, holiday name small underneath
    (max two lines), coloured like the Dashboard calendar. */
