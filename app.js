@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.0.1";
+const APP_VERSION = "3.0.2";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2857,6 +2857,12 @@ function openFieldDatePicker(input) {
   ppRender();
 }
 
+// Short labels for the school-holiday blocks inside the small calendar cells
+// (Settings keeps the full names).
+const SHORT_HOLIDAY_NAMES = {
+  "March Holidays": "Mar Hols", "June Holidays": "Jun Hols",
+  "September Holidays": "Sep Hols", "December Holidays": "Dec Hols",
+};
 // What a calendar day is, for colouring and blocking in the date pickers:
 // public holiday (pink) / school holiday (yellow) / weekend (grey) /
 // school closure or HBL day (blue) — with the holiday's name where it has one.
@@ -2870,7 +2876,7 @@ function calendarDayInfo(iso) {
     const si = moe.singleDays.indexOf(iso);
     if (si >= 0) return { kind: "school", name: moe.singleDayLabels[si] || "School Holiday" };
     const r = moe.ranges.find((x) => iso >= x.start && iso <= x.end);
-    if (r) return { kind: "school", name: r.label || "School Holiday" };
+    if (r) return { kind: "school", name: SHORT_HOLIDAY_NAMES[r.label] || r.label || "School Holiday" };
     const ex = (state.schoolCalendarOverrides?.[year]?.extraHolidays || []).find((e) => iso >= e.startDate && iso <= e.endDate);
     if (ex) return { kind: "school", name: ex.name || "School Holiday" };
   }

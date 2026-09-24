@@ -719,7 +719,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-pp-hol {
   font-family: 'IBM Plex Sans', sans-serif; font-size: 7.5px; line-height: 1.12; text-align: center; color: #4A4536;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%;
-  word-break: normal; overflow-wrap: anywhere; -webkit-hyphens: auto; hyphens: auto;
+  word-break: normal; overflow-wrap: normal; -webkit-hyphens: none; hyphens: none;
 }
 .dd-pp-day.dd-pp-weekend, .dd-pp-sw.dd-pp-weekend { background: #E4E1D4; border-color: #E4E1D4; }
 .dd-pp-day.dd-pp-school, .dd-pp-sw.dd-pp-school { background: #F5E3A1; border-color: #EBD27F; }
