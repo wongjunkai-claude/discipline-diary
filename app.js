@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.3.0";
+const APP_VERSION = "3.4.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -190,6 +190,13 @@ function renderMultiReasonPicker(selected, othersText, idPrefix) {
         </div>`).join("")}`).join("")}
     </div>`;
 }
+// A suspension's / time out's reasons as display lines (one bullet each).
+function entryReasonLines(rec) {
+  if (Array.isArray(rec.reasons) && rec.reasons.length) {
+    return rec.reasons.map((r) => r === "Others" ? (rec.reasonOthersText ? `Others — ${rec.reasonOthersText}` : "Others") : r);
+  }
+  return String(rec.reason || "").split("; ").filter(Boolean);
+}
 // Composes the display/search `reason` string from a multi-reason draft,
 // in list order ("Assault; Fighting; Others — …"). Existing screens,
 // search, the Sheet sync and reports all keep reading this one string.
@@ -243,7 +250,7 @@ function composePmReasonData(d, prefix) {
   });
   const reason = reasons.map((r) => {
     const label = r.category === "Others" ? (r.othersText ? `Others — ${r.othersText}` : "Others") : r.category;
-    return r.status && r.status !== "NA" ? `${label} (${r.status})` : label;
+    return r.status && r.status !== "NA" ? `${label} (${pmStatusWords(r.status)})` : label;
   }).join("; ");
   return { reasons, reason };
 }
@@ -281,7 +288,7 @@ function renderPmReasonPicker(d, prefix) {
   const statuses = (prefix ? d.pmReasonStatuses : d.reasonStatuses) || {};
   const othersText = (prefix ? d.pmReasonOthersText : d.reasonOthersText) || "";
   return `
-    <label class="dd-label">Reason(s) for meeting <span class="dd-mono-muted" style="font-size:11px;text-transform:none">select all that apply</span></label>
+    <label class="dd-label">Reason(s) for Meeting <span class="dd-mono-muted" style="font-size:11px;text-transform:none">select all that apply</span></label>
     <div class="dd-pm-reason-list">
       ${[...OFFENCE_GROUPS, { title: "", items: PM_REASON_EXTRA_OPTIONS }].map((g) => `
       ${g.title ? `<div class="dd-reason-group-head">${escapeHtml(g.title)}</div>` : `<div class="dd-reason-group-head dd-reason-group-head-blank"></div>`}
@@ -342,6 +349,20 @@ const canonicalReason = (r) => LEGACY_REASON_ALIASES[r] || r;
 // never show or store a Victim/Offender/Both/NA status.
 const NO_STATUS_PM_REASONS = new Set(["Academic Matters", "Learning Needs"]);
 const PM_STATUS_OPTIONS = ["Victim", "Offender", "Both", "NA"];
+// How a reason's status reads outside the picker: "Both" is spelt out.
+function pmStatusWords(status) { return status === "Both" ? "Victim & Offender" : status; }
+// A meeting's reasons as display lines, e.g. "Fighting (Victim & Offender)".
+// Uses the structured `reasons` list; older records only have the combined
+// `reason` text, which is split on "; ".
+function pmReasonLines(m) {
+  if (Array.isArray(m.reasons) && m.reasons.length) {
+    return m.reasons.map((r) => {
+      const label = r.category === "Others" ? (r.othersText ? `Others — ${r.othersText}` : "Others") : r.category;
+      return r.status && r.status !== "NA" ? `${label} (${pmStatusWords(r.status)})` : label;
+    });
+  }
+  return String(m.reason || "").split("; ").filter(Boolean).map((x) => x.replace(/\(Both\)$/, "(Victim & Offender)"));
+}
 // Whether the meeting itself went ahead — separate from the per-reason
 // Victim/Offender/Both/NA status above. Cancelled/Postponed meetings stay
 // visible in the log, but are excluded from every parent-meeting tally
@@ -2598,7 +2619,7 @@ async function submitNewParentMeeting(e) {
   const { reasons, reason } = composePmReasonData(state._pmDraft, "");
   const attendees = state._pmDraft.attendees.slice();
   const othersText = state._pmDraft.othersText.trim();
-  const pmStatus = state._pmDraft.meetingStatus || "Scheduled";
+  const pmStatus = "Scheduled"; // new meetings are always scheduled
   const postponedTo = pmStatus === "Postponed" ? (state._pmDraft.postponedTo || "") : "";
   const dd = state._pmDraft;
   const slotFields = pmStatus === "Scheduled" ? { time: dd.time || "", endTime: dd.endTime || "", location: dd.location || "" } : { time: "", endTime: "", location: "" };
@@ -2965,7 +2986,7 @@ function renderPostponePicker() {
           <span><i class="dd-pp-sw dd-pp-school"></i>School holiday</span>
           <span><i class="dd-pp-sw dd-pp-closure"></i>Closure / HBL</span>
         </div>
-        ${isField ? "" : `<div style="margin-top:14px">${renderSlotPicker("pp")}</div>`}
+        ${isField ? "" : `<div style="margin-top:2px">${renderSlotPicker("pp")}</div>`}
         <div style="display:flex;gap:8px;margin-top:12px">
           <button type="button" class="dd-add-btn" style="flex:1;background:#8A8571" data-pp="cancel">Cancel</button>
           <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-pp="ok" ${postponeReady() ? "" : "disabled"} title="${isField ? "Use this date" : "Use this date, time and room"}">✓</button>
@@ -3150,7 +3171,7 @@ function renderSlotPicker(key) {
     <button type="button" class="dd-time-box${value ? " set" : ""}" data-tp-open="${key}" data-which="${which}" aria-label="${placeholder}${value ? `: ${value}` : ""}">${value || placeholder}</button>`;
   return `
     <div class="dd-slot" data-slot-root="${key}">
-      <label class="dd-label" style="margin-top:0">Meeting Time</label>
+      <label class="dd-label">Meeting Time</label>
       <div class="dd-time-boxes">
         ${box("start", v.start, "Start Time")}
         <span class="dd-time-arrow" aria-hidden="true">→</span>
@@ -3328,15 +3349,43 @@ const OFFLINE_NOTE = `<div class="dd-mono-muted" style="font-size:12px;margin-to
 function isOffline() { return typeof navigator !== "undefined" && navigator.onLine === false; }
 window.addEventListener("online", () => render());
 window.addEventListener("offline", () => render());
+// Every re-render (a tick, a pill, a live update from another teacher)
+// rebuilds the page, which would reset scrolled pop-ups and lists back to
+// the top. Remember each pop-up's and checklist's scroll position and put
+// it back, so lists never "bounce" after a selection.
+const SCROLL_KEEP_SELECTOR = ".dd-modal, .dd-pm-reason-list";
+function scrollKey(el, i) { return el.id || `${el.className}#${i}`; }
+function captureScrollPositions() {
+  const out = {};
+  const seen = {};
+  document.querySelectorAll(SCROLL_KEEP_SELECTOR).forEach((el) => {
+    const c = el.className; seen[c] = (seen[c] || 0);
+    if (el.scrollTop) out[scrollKey(el, seen[c])] = el.scrollTop;
+    seen[c]++;
+  });
+  return out;
+}
+function restoreScrollPositions(saved) {
+  if (!Object.keys(saved).length) return;
+  const seen = {};
+  document.querySelectorAll(SCROLL_KEEP_SELECTOR).forEach((el) => {
+    const c = el.className; seen[c] = (seen[c] || 0);
+    const k = scrollKey(el, seen[c]);
+    if (saved[k] != null) el.scrollTop = saved[k];
+    seen[c]++;
+  });
+}
 function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center" style="flex-direction:column"><div class="dd-mono">Opening the log…</div>${isOffline() ? OFFLINE_NOTE : ""}</div>`; return; }
   if (!state.authUser) { root.innerHTML = renderSignInScreen(); attachSignInListeners(); return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
   if (!state.dataLoaded || !state.suspLoaded || !state.toLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center" style="flex-direction:column"><div class="dd-mono">Loading entries…</div>${isOffline() ? OFFLINE_NOTE : ""}</div>`; return; }
   updateFollowUpBadge();
+  const scrolls = captureScrollPositions();
   root.innerHTML = renderMain();
   attachMainListeners();
   attachSlotPickers();
+  restoreScrollPositions(scrolls);
   // The Authorised Teachers List's add/remove/promote actions can fail
   // silently-looking otherwise (e.g. a rules rejection) — the confirm
   // modal closes either way, so without this the only sign of trouble is
@@ -4597,7 +4646,8 @@ function renderDayDetail(dateISO, incl) {
     state.timeOuts.forEach((t) => {
       if (t.deleted) return;
       suspensionDayEntries(t).forEach((e) => {
-        if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "toOss" : "toIss", name: t.studentName, cls: t.studentClass, location: e.venue });
+        if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "toOss" : "toIss", name: t.studentName, cls: t.studentClass,
+          location: e.type === "OSS" ? "Out of School" : `${toTypeInfo(t.toType).shortLabel} | ${timeOutDayLabel(e)}` });
       });
     });
   }
@@ -5581,7 +5631,6 @@ function renderEditIncidentForm() {
         ${d.selectedIssues.includes("Others") ? `
         <label class="dd-label">Please specify</label>
         <input class="dd-input" id="edit-incident-others-text" value="${escapeHtml(d.othersText)}" />` : ""}
-        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Unticking an issue removes it and its warning history. Ticking a new one starts it fresh at 1st Warning. Issues left ticked keep their current stage untouched.</div>
         ${state.newIncidentFormError ? `<div class="dd-error">${escapeHtml(state.newIncidentFormError)}</div>` : ""}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
         <button class="dd-btn-primary" type="button" id="btn-save-edit-incident" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save changes"}</button>
@@ -5686,7 +5735,7 @@ function renderSuspensionDetail(s) {
       </div>` : ""}
       <div style="margin:12px 0">
         <div class="dd-field-label">Reason(s)</div>
-        <div class="dd-field-value">${escapeHtml(s.reason || "")}</div>
+        <ul class="dd-field-value dd-reason-bullets">${entryReasonLines(s).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>
       </div>
       <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Day-by-day (${entries.length} day${entries.length === 1 ? "" : "s"})</div>
       <div class="dd-followups" style="margin-bottom:16px">
@@ -5926,7 +5975,6 @@ function renderSuspForm(isEdit) {
         </div>` : ""}` : ""}
         ${state.suspFormError ? `<div class="dd-error">${escapeHtml(state.suspFormError)}</div>` : ""}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
-        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save suspension"}</button>
       </form>
     </div>`;
@@ -5994,7 +6042,7 @@ function renderTimeOutDetail(t) {
       <div class="dd-detail-head">
         <div style="min-width:0">
           <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.studentName)}" data-class="${escapeHtml(t.studentClass || "")}">${escapeHtml(t.studentName)}</div>
-          <div class="dd-card-meta dd-card-meta-primary">${t.startDate ? formatDate(t.startDate) : ""}${t.studentClass ? ` · ${escapeHtml(t.studentClass)}` : ""}${t.toType ? ` · ${escapeHtml(toTypeLabel(t.toType))}` : ""}</div>
+          <div class="dd-card-meta dd-card-meta-primary">${t.startDate ? formatDate(t.startDate) : ""}${t.studentClass ? ` · ${escapeHtml(t.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(t.loggedBy)}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;flex-shrink:0">
@@ -6014,11 +6062,11 @@ function renderTimeOutDetail(t) {
       </div>
       <div style="margin:12px 0">
         <div class="dd-field-label">Reason(s)</div>
-        <div class="dd-field-value">${escapeHtml(t.reason || "")}</div>
+        <ul class="dd-field-value dd-reason-bullets">${entryReasonLines(t).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>
       </div>
       <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Day-by-day (${entries.length} day${entries.length === 1 ? "" : "s"})</div>
       <div class="dd-followups" style="margin-bottom:16px">
-        ${entries.map((e) => `<div class="dd-followup"><div class="dd-followup-note">${SUSP_TYPE_STYLE[e.type].label}${e.type === "ISS" && e.venue ? ` — ${escapeHtml(e.venue)}${e.administrator ? ` (${escapeHtml(e.administrator)})` : ""}` : ""}</div><div class="dd-followup-meta">${formatDate(e.date)}</div></div>`).join("")}
+        ${entries.map((e) => `<div class="dd-followup"><div class="dd-followup-note">${escapeHtml(timeOutDayLabel(e))}</div><div class="dd-followup-meta">${formatDate(e.date)}</div></div>`).join("")}
       </div>
       <button class="dd-history-toggle" data-action="toggle-to-history" data-id="${t.id}">${state.historyOpen[t.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[t.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
@@ -6027,6 +6075,13 @@ function renderTimeOutDetail(t) {
         <button class="dd-add-btn" style="background:#A3372B" data-action="delete-timeout" data-id="${t.id}">Delete Entry</button>
       </div>` : ""}
     </div>`;
+}
+// One Time Out day as a short line: "Staff Room with Mdm Tan" for an
+// in-school day, "Out of School" otherwise.
+function timeOutDayLabel(e) {
+  if (e.type === "OSS") return "Out of School";
+  const v = (e.venue || "").trim(), a = (e.administrator || "").trim();
+  return v && a ? `${v} with ${a}` : v || (a ? `In school with ${a}` : "In school");
 }
 // Time Out's own field body — forked from the shared Suspension one once
 // the two diverged: a Time Out's location is wherever the student is
@@ -6076,8 +6131,6 @@ function renderTimeOutFieldsBody(d, idPrefix) {
             </select>
           </div>
         </div>` : ""}
-        ${d.totalDays && typeInfo.alwaysInSchool ? `
-        <div class="dd-mono-muted" style="font-size:11px;margin-top:10px">${escapeHtml(typeInfo.label)} keeps the student in school every day — all ${d.totalDays} day${d.totalDays > 1 ? "s" : ""} need a location and who's administering it.</div>` : ""}
 
         ${showDatePickers && d.ossDays > 0 ? `
         <label class="dd-label" style="margin-top:12px">Out-of-school dates</label>
@@ -6093,12 +6146,31 @@ function renderTimeOutFieldsBody(d, idPrefix) {
         </div>` : ""}
 
         ${showDatePickers && d.issDays > 0 ? (() => {
+          applyIssSame(d);
           const bookedCount = d.issDates.filter((dt) => (d.issVenues[dt] || "").trim() && (d.issAdministrators[dt] || "").trim()).length;
           const issRows = d.issDates.map((dt, i) => ({ dt, i })).sort((a, b) => a.dt.localeCompare(b.dt));
           return `
         <label class="dd-label" style="margin-top:12px">In-school days filled in: ${bookedCount} of ${d.issDays}</label>
+        ${d.issDates.length > 1 ? `
+        <label class="dd-checkbox-pill" style="display:inline-flex;margin-bottom:10px">
+          <input type="checkbox" id="${idPrefix}-iss-same" ${d.issSame ? "checked" : ""} />
+          <span>Same for all days</span>
+        </label>` : ""}
         <div id="${idPrefix}-iss-date-rows" style="display:flex;flex-direction:column;gap:10px">
-          ${issRows.map(({ dt, i }) => `
+          ${d.issSame && d.issDates.length > 1 ? (() => {
+            const sorted = d.issDates.slice().sort();
+            const first = sorted[0];
+            return `
+            <div class="dd-related-box" style="padding:10px">
+              <div class="dd-venue-row" style="margin-bottom:8px">
+                <span class="dd-venue-date" style="width:auto">${formatDate(first)} – ${formatDate(sorted[sorted.length - 1])}</span>
+              </div>
+              <label class="dd-label" style="margin-top:0;font-size:11px">Where is the student going?</label>
+              <input class="dd-input ${idPrefix}-iss-venue-all" placeholder="e.g. General Office" value="${escapeHtml(d.issVenues[first] || "")}" />
+              <label class="dd-label" style="font-size:11px">Who is administering it?</label>
+              <input class="dd-input ${idPrefix}-iss-admin-all" placeholder="Teacher's name" value="${escapeHtml(d.issAdministrators[first] || "")}" />
+            </div>`;
+          })() : issRows.map(({ dt, i }) => `
             <div class="dd-related-box" style="padding:10px">
               <div class="dd-venue-row" style="margin-bottom:8px">
                 <div class="dd-date-icon-btn" title="Change this day's date">
@@ -6118,6 +6190,14 @@ function renderTimeOutFieldsBody(d, idPrefix) {
 // Same "avoid re-rendering on every keystroke" pattern as the studentName
 // field's syncField helper — venue/administrator are free text, so a
 // render-on-input would yank focus out of the box after every character.
+// "Same for all days": every in-school day takes the first day's location
+// and administrator (also re-applied when the day list changes).
+function applyIssSame(d) {
+  if (!d.issSame || !(d.issDates || []).length) return;
+  const first = d.issDates.slice().sort()[0];
+  const v = d.issVenues[first] || "", a = d.issAdministrators[first] || "";
+  d.issDates.forEach((dt) => { d.issVenues[dt] = v; d.issAdministrators[dt] = a; });
+}
 function attachTimeOutFieldListeners(form, idPrefix, d) {
   const onChange = renderKeepingModalScroll;
   const typeEl = document.getElementById(`${idPrefix}-to-type`);
@@ -6165,6 +6245,12 @@ function attachTimeOutFieldListeners(form, idPrefix, d) {
 
   form.querySelectorAll(`.${idPrefix}-iss-venue-input`).forEach((el) =>
     el.addEventListener("input", () => { d.issVenues[el.dataset.date] = el.value; state.toFormError = ""; }));
+  const sameCb = document.getElementById(`${idPrefix}-iss-same`);
+  if (sameCb) sameCb.addEventListener("change", () => { d.issSame = sameCb.checked; applyIssSame(d); onChange(); });
+  const venueAll = form.querySelector(`.${idPrefix}-iss-venue-all`);
+  if (venueAll) venueAll.addEventListener("input", () => { d.issDates.forEach((dt) => { d.issVenues[dt] = venueAll.value; }); state.toFormError = ""; });
+  const adminAll = form.querySelector(`.${idPrefix}-iss-admin-all`);
+  if (adminAll) adminAll.addEventListener("input", () => { d.issDates.forEach((dt) => { d.issAdministrators[dt] = adminAll.value; }); state.toFormError = ""; });
   form.querySelectorAll(`.${idPrefix}-iss-admin-input`).forEach((el) =>
     el.addEventListener("input", () => { d.issAdministrators[el.dataset.date] = el.value; state.toFormError = ""; }));
 }
@@ -6204,7 +6290,6 @@ function renderTimeOutForm(isEdit) {
         </div>` : ""}` : ""}
         ${state.toFormError ? `<div class="dd-error">${escapeHtml(state.toFormError)}</div>` : ""}
         ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
-        <div class="dd-mono-muted" style="font-size:11px;margin-top:8px">Any changes here are recorded in this entry's audit trail.</div>
         <button class="dd-btn-primary" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save time out"}</button>
       </form>
     </div>`;
@@ -6318,7 +6403,7 @@ function renderParentMeetingDetail(m) {
       </div>` : ""}
       <div class="dd-grid2" style="margin:12px 0">
         <div><div class="dd-field-label">Attendees</div><div class="dd-field-value">${escapeHtml(attendeeSummary(m))}</div></div>
-        <div><div class="dd-field-label">Reason for meeting</div><div class="dd-field-value">${escapeHtml(m.reason || "")}</div></div>
+        <div><div class="dd-field-label">Reason(s) for Meeting</div><ul class="dd-field-value dd-reason-bullets">${pmReasonLines(m).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>
       </div>
       <button class="dd-history-toggle" data-action="toggle-pm-history" data-id="${m.id}">${state.historyOpen[m.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[m.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
@@ -6329,6 +6414,8 @@ function renderParentMeetingDetail(m) {
     </div>`;
 }
 
+// A new meeting is always scheduled, so the Meeting status pills only appear
+// when editing an existing meeting (the log card has them too).
 function renderPmForm(isEdit) {
   const d = state._pmDraft;
   return `
@@ -6350,10 +6437,12 @@ function renderPmForm(isEdit) {
           </div>
           <span class="dd-sans" style="font-size:15px">${formatDate(d.date)}</span>
         </div>
-        <label class="dd-label">Meeting status <span class="dd-mono-muted" style="font-size:11px;text-transform:none">cancelled/postponed meetings stay in the log but aren't counted in tallies</span></label>
+        ${isEdit ? `
+        <label class="dd-label">Meeting status</label>
         <div class="dd-pm-status-row" style="margin-bottom:12px">
           ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill ${(d.meetingStatus || "Scheduled") === s ? "active" : ""}" style="${(d.meetingStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-meeting-status" data-status="${s}">${s}</button>`).join("")}
         </div>
+        ` : ""}
         ${(d.meetingStatus || "Scheduled") === "Scheduled" ? `
         ${renderSlotPicker("pm")}` : ""}
         ${d.meetingStatus === "Postponed" ? `

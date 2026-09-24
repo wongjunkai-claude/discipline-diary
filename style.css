@@ -740,3 +740,9 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   .dd-pp-grid { gap: 3px; }
   .dd-pp-hol { font-size: 6.5px; }
 }
+/* Parent meeting reasons on the expanded card: one bullet per reason. */
+.dd-reason-bullets { margin: 0; padding-left: 18px; }
+.dd-reason-bullets li { margin: 2px 0; line-height: 1.35; }
+/* Hints on a field heading ("select all that apply", "tap all that apply")
+   sit on their own line under the heading. */
+.dd-label > .dd-mono-muted { display: block; margin-top: 3px; }
