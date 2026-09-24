@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.5.3";
+const APP_VERSION = "3.6.2";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4111,7 +4111,7 @@ function renderStackedAreaChart(rows) {
       <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">
         ${ticks.map((t) => `
           <line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="#E4E1D4" stroke-width="1"></line>
-          <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" font-family="'IBM Plex Mono', monospace" fill="#8A8571">${t}</text>`).join("")}
+          <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" font-family="Inter, system-ui, -apple-system, sans-serif" fill="#8A8571">${t}</text>`).join("")}
         <polygon points="${areaFor(grooming, zeros)}" fill="${CHART_COLORS.discipline}" fill-opacity="0.75"></polygon>
         <polygon points="${areaFor(groomPlusSusp, grooming)}" fill="${OSS_DOT_COLOR}" fill-opacity="0.85"></polygon>
         <polygon points="${areaFor(totals, groomPlusSusp)}" fill="${CHART_COLORS.timeOut}" fill-opacity="0.85"></polygon>
@@ -4120,10 +4120,10 @@ function renderStackedAreaChart(rows) {
         <polyline points="${lineFor(grooming)}" fill="none" stroke="${CHART_COLORS.discipline}" stroke-width="1.5"></polyline>
         ${totals.map((t, i) => `<circle cx="${x(i)}" cy="${y(t)}" r="2.2" fill="#FBFAF6" stroke="${CHART_COLORS.timeOut}" stroke-width="1.3"></circle>`).join("")}
         ${totals.map((t, i) => t > 0
-          ? `<text x="${x(i)}" y="${y(t) - 6}" text-anchor="middle" font-size="9" font-weight="700" font-family="'IBM Plex Mono', monospace" fill="#1B2A41">${t}</text>`
+          ? `<text x="${x(i)}" y="${y(t) - 6}" text-anchor="middle" font-size="9" font-weight="700" font-family="Inter, system-ui, -apple-system, sans-serif" fill="#1B2A41">${t}</text>`
           : "").join("")}
         ${rows.map((r, i) => i % labelEvery === 0
-          ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="'IBM Plex Mono', monospace" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
+          ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="Inter, system-ui, -apple-system, sans-serif" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
           : "").join("")}
       </svg>
       <div class="dd-cal-legend dd-daytype-legend" style="margin-top:8px;padding-top:8px">
@@ -4663,7 +4663,7 @@ function renderTallyGrid(cats, totals, timeOutBreakdown) {
       ${cats.map((c) => `
         <div class="dd-tally-col">
           <div class="dd-tally-label" style="color:${CHART_COLORS[c]}">${CATEGORY_META[c].label}</div>
-          <div class="dd-tally-number${c !== "timeOut" && timeOutBreakdown ? bigSizeClass(totals[c]) : ""}" style="color:${CHART_COLORS[c]}">${totals[c]}</div>
+          <div class="dd-tally-number${c === "timeOut" && timeOutBreakdown ? "" : bigSizeClass(totals[c])}" style="color:${CHART_COLORS[c]}">${totals[c]}</div>
           ${c === "timeOut" && timeOutBreakdown ? `
           <div class="dd-tally-nested">
             ${TO_TYPES.map((t) => `
