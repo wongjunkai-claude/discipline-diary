@@ -618,3 +618,22 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   background: #F6E3DF; color: #7A2A20; border-bottom: 1px solid #A3372B;
   padding: 10px 16px;
 }
+
+/* Parent Meet status note in the calendar's selected-day list,
+   e.g. "(Postponed to 5 Oct 2026)" / "(Cancelled)". */
+.dd-day-detail-note { color: #A3372B; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 500; }
+/* "Postponed to" date box on a Parent Meet card. */
+.dd-pm-postpone-block { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #E4E1D4; }
+.dd-pm-postpone-row { margin-top: 0; flex-wrap: wrap; }
+/* Dashboard "Pending Parent Meeting Date" rows — not a tap target as a
+   whole (the name and the date box are), so no pointer cursor. */
+.dd-pending-pm-row { cursor: default; }
+.dd-pending-pm-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #E4E1D4; }
+.dd-pending-pm-grid .dd-field-label { margin-bottom: 0; }
+@media (max-width: 380px) {
+  .dd-pending-pm-grid { grid-template-columns: 1fr; gap: 2px; }
+  .dd-pending-pm-grid .dd-field-label:not(:first-child) { margin-top: 6px; }
+}
+/* On the new date of a rescheduled meeting — the meeting does happen that
+   day, so the note is informational rather than red. */
+.dd-day-detail-note-moved { color: #6B6652; font-weight: 400; }

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.91.0";
+const APP_VERSION = "2.93.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -102,7 +102,7 @@ function syncParentMeetingToSheet(m) {
     studentName: m.studentName, studentClass: m.studentClass,
     attendeesText: formatAttendeesForSheet(m.attendees, m.othersText),
     date: m.date,
-    reason: (m.deleted ? "Removed — " : "") + (m.pmStatus === "Cancelled" ? "[Cancelled] " : m.pmStatus === "Postponed" ? "[Postponed] " : "") + (m.reason || ""),
+    reason: (m.deleted ? "Removed — " : "") + (m.pmStatus === "Cancelled" ? "[Cancelled] " : m.pmStatus === "Postponed" ? (m.postponedTo ? `[Postponed to ${formatDate(m.postponedTo)}] ` : "[Postponed] ") : "") + (m.reason || ""),
     loggedBy: m.loggedBy,
   });
 }
@@ -122,10 +122,13 @@ const SUSP_TYPE_STYLE = {
   ISS: { ink: "#B8863B", label: "IN-SCHOOL" },
   OSS: { ink: "#A3372B", label: "OUT-OF-SCHOOL" },
 };
+// Status-dot colours shared by every log: green = completed, orange =
+// ongoing (upcoming, active, in progress), red = postponed or cancelled.
+const STATUS_DOT = { completed: "#3C6E47", ongoing: "#D98F2B", stopped: "#A3372B", removed: "#8A8571" };
 const SUSP_STATUS_STYLE = {
-  Upcoming: { ink: "#D98F2B", label: "UPCOMING" },
-  Active: { ink: "#A3372B", label: "ACTIVE" },
-  Completed: { ink: "#3C6E47", label: "COMPLETED" },
+  Upcoming: { ink: STATUS_DOT.ongoing, label: "UPCOMING" },
+  Active: { ink: STATUS_DOT.ongoing, label: "ACTIVE" },
+  Completed: { ink: STATUS_DOT.completed, label: "COMPLETED" },
 };
 const LOCATION_OPTIONS = ["General Office", "MPR 1"];
 // The four kinds of Time Out. Recess/Lesson time outs have no "sent home"
@@ -353,8 +356,18 @@ const PM_MEETING_STATUS_STYLE = {
   Postponed: { ink: "#B8863B", label: "POSTPONED" },
   Cancelled: { ink: "#8A8571", label: "CANCELLED" },
 };
+// A postponed meeting that has its new date set is a live meeting again —
+// it counts (calendar dot, totals, This Week/Upcoming/Completed, reports)
+// on the NEW date. One with no new date yet, or a cancelled one, doesn't
+// count anywhere. pmDate() is the date a meeting counts on.
+function isPmRescheduled(m) {
+  return m.pmStatus === "Postponed" && !!m.postponedTo;
+}
+function pmDate(m) {
+  return isPmRescheduled(m) ? m.postponedTo : m.date;
+}
 function isPmCounted(m) {
-  return !m.deleted && m.pmStatus !== "Cancelled" && m.pmStatus !== "Postponed";
+  return !m.deleted && m.pmStatus !== "Cancelled" && (m.pmStatus !== "Postponed" || !!m.postponedTo);
 }
 
 // ---------- Grooming Log config ----------
@@ -2544,6 +2557,7 @@ function freshPmDraft(m) {
     reasons: r.selected, reasonStatuses: r.statuses, reasonOthersText: r.othersText,
     attendees: (m?.attendees || []).slice(), othersText: m?.othersText || "",
     meetingStatus: m?.pmStatus || "Scheduled",
+    postponedTo: m?.postponedTo || "",
   };
 }
 async function submitNewParentMeeting(e) {
@@ -2556,6 +2570,7 @@ async function submitNewParentMeeting(e) {
   const attendees = state._pmDraft.attendees.slice();
   const othersText = state._pmDraft.othersText.trim();
   const pmStatus = state._pmDraft.meetingStatus || "Scheduled";
+  const postponedTo = pmStatus === "Postponed" ? (state._pmDraft.postponedTo || "") : "";
   if (!studentName || !studentClass || !date || reasons.length === 0 || attendees.length === 0) {
     state.pmFormError = attendees.length === 0 ? "Select at least one attendee before saving."
       : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
@@ -2578,9 +2593,9 @@ async function submitNewParentMeeting(e) {
       const now = Date.now();
       const attendeeSummaryStr = attendees.map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
       const docRef = await addDoc(collection(db, "parentMeetings"), {
-        studentName, studentClass, date, reason, reasons, attendees, othersText, pmStatus,
+        studentName, studentClass, date, reason, reasons, attendees, othersText, pmStatus, postponedTo,
         loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
-        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}${pmStatus !== "Scheduled" ? ` (${pmStatus})` : ""}`, by: teacherName(), at: now }],
+        history: [{ id: uid(), type: "created", detail: `Meeting logged — attendees: ${attendeeSummaryStr}${pmStatus !== "Scheduled" ? ` (${pmStatus}${postponedTo ? ` to ${formatDate(postponedTo)}` : ""})` : ""}`, by: teacherName(), at: now }],
       });
       state.showNewPmForm = false;
       state._pmDraft = null;
@@ -2588,7 +2603,7 @@ async function submitNewParentMeeting(e) {
       state.pmTab = "All";
       state.selectedPmId = docRef.id;
       state.entryExpanded[docRef.id] = true;
-      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, pmStatus, loggedBy: teacherName(), deleted: false });
+      syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, pmStatus, postponedTo, loggedBy: teacherName(), deleted: false });
     } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
 
@@ -2617,6 +2632,7 @@ async function submitEditParentMeeting(e) {
     attendees: state._pmDraft.attendees.slice(), othersText: state._pmDraft.othersText.trim(),
     pmStatus: state._pmDraft.meetingStatus || "Scheduled",
   };
+  updated.postponedTo = updated.pmStatus === "Postponed" ? (state._pmDraft.postponedTo || "") : "";
   if (!updated.studentName || !updated.studentClass || !updated.date || reasons.length === 0 || updated.attendees.length === 0) {
     state.pmFormError = updated.attendees.length === 0 ? "Select at least one attendee before saving."
       : reasons.length === 0 ? "Select at least one reason for the meeting before saving."
@@ -2635,6 +2651,7 @@ async function submitEditParentMeeting(e) {
     { key: "date", label: "Date" }, { key: "reason", label: "Reason" }, { key: "pmStatus", label: "Meeting status" },
   ]);
   if (JSON.stringify((m.attendees || []).slice().sort()) !== JSON.stringify(updated.attendees.slice().sort())) changes.push("Attendees updated");
+  if ((m.postponedTo || "") !== updated.postponedTo) changes.push(updated.postponedTo ? `Postponed meeting date set to ${formatDate(updated.postponedTo)}` : "Postponed meeting date cleared");
   if (changes.length === 0) { state.editingPmId = null; state._pmDraft = null; render(); return; }
 
   const doSave = async () => {
@@ -2676,13 +2693,55 @@ async function setPmStatusQuick(id, status) {
   const now = Date.now();
   state.saveError = false;
   render();
+  // The postponed-to date only means something while the meeting is
+  // Postponed, so it's cleared when the status moves away from that.
+  const patch = { pmStatus: next };
+  if (next !== "Postponed" && m.postponedTo) patch.postponedTo = "";
   try {
     await updateDoc(doc(db, "parentMeetings", id), {
-      pmStatus: next,
+      ...patch,
       history: arrayUnion({ id: uid(), type: "edited", detail: `Meeting status changed to ${next}`, by: teacherName(), at: now }),
     });
-    syncParentMeetingToSheet({ ...m, pmStatus: next });
+    syncParentMeetingToSheet({ ...m, ...patch });
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+}
+// Sets (or clears, with "") the new date for a postponed meeting — used by
+// the date box on the log card and on the Dashboard's "Pending Parent
+// Meeting Date" list. Optional: a postponed meeting can wait without one.
+async function setPmPostponedDate(id, date) {
+  const m = state.parentMeetings.find((x) => x.id === id);
+  if (!m || m.deleted || m.pmStatus !== "Postponed") return;
+  date = date || "";
+  if ((m.postponedTo || "") === date) return;
+  const now = Date.now();
+  state.saveError = false;
+  try {
+    await updateDoc(doc(db, "parentMeetings", id), {
+      postponedTo: date,
+      history: arrayUnion({ id: uid(), type: "edited", detail: date ? `Postponed meeting date set to ${formatDate(date)}` : "Postponed meeting date cleared", by: teacherName(), at: now }),
+    });
+    syncParentMeetingToSheet({ ...m, postponedTo: date });
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+}
+// Date box for a postponed meeting's new date (card + Dashboard). Same
+// calendar-icon style as the app's other date pickers; clearing is allowed.
+function renderPostponeDateField(m) {
+  return `
+    <div class="dd-issue-due-row dd-pm-postpone-row">
+      <div class="dd-date-icon-btn" title="Set the postponed meeting date">
+        <input type="date" class="dd-input dd-pm-postpone-input" data-id="${m.id}" value="${m.postponedTo || ""}" />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+      </div>
+      ${m.postponedTo
+        ? `<span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" data-action="clear-pm-postpone" data-id="${m.id}" title="Clear this date">✕</button>`
+        : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
+    </div>`;
+}
+function attachPmPostponeListeners() {
+  document.querySelectorAll(".dd-pm-postpone-input").forEach((el) =>
+    el.addEventListener("change", () => setPmPostponedDate(el.dataset.id, el.value)));
+  document.querySelectorAll('[data-action="clear-pm-postpone"]').forEach((el) =>
+    el.addEventListener("click", () => setPmPostponedDate(el.dataset.id, "")));
 }
 async function deleteParentMeeting(id) {
   const entry = state.parentMeetings.find((i) => i.id === id);
@@ -2868,7 +2927,11 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meet</div>
-          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. Postponed and cancelled meetings stay in the log but aren't counted in any totals.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be keyed in too. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Status dots</div>
+          <p>The dot on each entry card works the same in every log: <b style="color:#3C6E47">green</b> = completed, <b style="color:#D98F2B">orange</b> = ongoing (upcoming, active or in progress), <b style="color:#A3372B">red</b> = cancelled, or postponed with no new date yet (once a new date is set, the dot follows that date).</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Same-day duplicate warning</div>
@@ -2942,7 +3005,7 @@ function computeDailyCountsForMonth(monthKeyStr) {
       else counts[e.date].timeOutISS++;
     });
   });
-  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; if (counts[m.date]) counts[m.date].parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const d = pmDate(m); if (counts[d]) counts[d].parentMeeting++; });
   return counts;
 }
 function suspensionEntryCountForMonth(monthKeyStr) {
@@ -3023,7 +3086,7 @@ function computeMonthlyTrend() {
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
   state.suspensions.forEach((s) => { if (s.deleted) return; const k = monthKey(s.startDate); if (counts[k]) counts[k].suspension++; });
   state.timeOuts.forEach((t) => { if (t.deleted) return; const k = monthKey(t.startDate); if (counts[k]) counts[k].timeOut++; });
-  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(pmDate(m)); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ key: k, label: monthLabelFromKey(k), ...counts[k] }));
 }
 const CHART_COLORS = { discipline: "#1B2A41", suspension: "#B8863B", timeOut: "#2E6E8E", parentMeeting: "#3C6E47" };
@@ -3082,12 +3145,12 @@ function availableReportYears() {
   state.incidents.forEach((i) => { if (!i.deleted && i.date) years.add(parseInt(i.date.slice(0, 4), 10)); });
   state.suspensions.forEach((s) => { if (!s.deleted && s.startDate) years.add(parseInt(s.startDate.slice(0, 4), 10)); });
   state.timeOuts.forEach((t) => { if (!t.deleted && t.startDate) years.add(parseInt(t.startDate.slice(0, 4), 10)); });
-  state.parentMeetings.forEach((m) => { if (!m.deleted && m.date) years.add(parseInt(m.date.slice(0, 4), 10)); });
+  state.parentMeetings.forEach((m) => { if (!m.deleted && m.date) years.add(parseInt(m.date.slice(0, 4), 10)); if (!m.deleted && isPmRescheduled(m)) years.add(parseInt(m.postponedTo.slice(0, 4), 10)); });
   return Array.from(years).sort((a, b) => b - a);
 }
 function computeYearlyCategoryTotals(year) {
   const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
-  const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && m.date && m.date.startsWith(`${year}-`)).length;
+  const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && pmDate(m) && pmDate(m).startsWith(`${year}-`)).length;
   const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`)).length;
   const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`)).length;
   return { discipline, suspension, timeOut, parentMeeting };
@@ -3099,7 +3162,7 @@ function computeYearMonthlyTrend(year) {
   state.incidents.forEach((i) => { if (i.deleted) return; const k = monthKey(i.date); if (counts[k]) counts[k].discipline++; });
   state.suspensions.forEach((s) => { if (s.deleted) return; const k = monthKey(s.startDate); if (counts[k]) counts[k].suspension++; });
   state.timeOuts.forEach((t) => { if (t.deleted) return; const k = monthKey(t.startDate); if (counts[k]) counts[k].timeOut++; });
-  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(m.date); if (counts[k]) counts[k].parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(pmDate(m)); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ label: monthLabelFromKey(k), ...counts[k] }));
 }
 function computeYearTermTrend(year) {
@@ -3112,7 +3175,7 @@ function computeYearTermTrend(year) {
       suspension: state.suspensions.filter((s) => !s.deleted && s.startDate >= t.start && s.startDate <= t.end).length,
       timeOut: termTimeOuts.length,
       timeOutByType: timeOutTypeBreakdown(termTimeOuts),
-      parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && m.date >= t.start && m.date <= t.end).length,
+      parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && pmDate(m) >= t.start && pmDate(m) <= t.end).length,
     };
   });
 }
@@ -3968,7 +4031,17 @@ function renderDayDetail(dateISO, incl) {
     });
   }
   if (incl.parentMeeting) {
-    state.parentMeetings.forEach((m) => { if (!m.deleted && m.date === dateISO) items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass }); });
+    state.parentMeetings.forEach((m) => {
+      if (m.deleted) return;
+      if (m.date === dateISO) {
+        const note = m.pmStatus === "Cancelled" ? "(Cancelled)" : m.pmStatus === "Postponed" ? (m.postponedTo ? `(Postponed to ${formatDate(m.postponedTo)})` : "(Postponed)") : "";
+        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note });
+      }
+      // The rescheduled meeting itself, on its new date.
+      if (isPmRescheduled(m) && m.postponedTo === dateISO && m.date !== dateISO) {
+        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note: `(Postponed from ${formatDate(m.date)})`, noteKind: "moved" });
+      }
+    });
   }
   const typeOrder = { discipline: 0, iss: 1, oss: 2, toIss: 3, toOss: 4, parentMeeting: 5 };
   items.sort((a, b) => (typeOrder[a.type] - typeOrder[b.type]) || (classLevel(a.cls) - classLevel(b.cls)));
@@ -3981,6 +4054,7 @@ function renderDayDetail(dateISO, incl) {
           <span class="dd-cal-dot" style="background:${typeColor[it.type]}"></span>
           <span class="dd-day-detail-name">${escapeHtml(it.name)}</span>
           <span class="dd-day-detail-class">${escapeHtml(it.cls || "")}</span>
+          ${it.note ? `<span class="dd-day-detail-note${it.noteKind === "moved" ? " dd-day-detail-note-moved" : ""}">${escapeHtml(it.note)}</span>` : ""}
           ${it.location ? `<span class="dd-day-detail-location">${escapeHtml(it.location)}</span>` : ""}
         </div>`).join("")}
     </div>`;
@@ -3998,7 +4072,7 @@ function computeCountsForDate(dateISO) {
     if (t.deleted) return;
     suspensionDayEntries(t).forEach((e) => { if (e.date === dateISO) { if (e.type === "OSS") c.timeOutOSS++; else c.timeOutISS++; } });
   });
-  state.parentMeetings.forEach((m) => { if (isPmCounted(m) && m.date === dateISO) c.parentMeeting++; });
+  state.parentMeetings.forEach((m) => { if (isPmCounted(m) && pmDate(m) === dateISO) c.parentMeeting++; });
   return c;
 }
 function suspensionEntryCountForRange(fromISO, toISO) {
@@ -4158,7 +4232,7 @@ function renderYearCalendar(incl) {
   const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
   const totals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
   totals.discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`)).length;
-  totals.parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && m.date && m.date.startsWith(`${year}-`)).length;
+  totals.parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && pmDate(m) && pmDate(m).startsWith(`${year}-`)).length;
   totals.suspension = suspensionEntryCountForRange(`${year}-01-01`, `${year}-12-31`);
   totals.timeOut = timeOutEntryCountForRange(`${year}-01-01`, `${year}-12-31`);
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
@@ -4417,6 +4491,36 @@ function renderGroomingFollowUpList() {
       ${renderDaySection("2 Days Later", addDays(today, 2), buckets.dayAfter)}
     </div>`;
 }
+// Postponed parent meetings still waiting to happen: no new date yet, or a
+// new date that hasn't passed. Undated ones come first (they need chasing),
+// then by the new date. Once the new date has passed, the meeting drops off.
+function pendingPostponedMeetings() {
+  const today = todayISO();
+  return state.parentMeetings
+    .filter((m) => !m.deleted && m.pmStatus === "Postponed" && (!m.postponedTo || m.postponedTo >= today))
+    .sort((a, b) => (a.postponedTo ? 1 : 0) - (b.postponedTo ? 1 : 0) || (a.postponedTo || "").localeCompare(b.postponedTo || "") || (a.date || "").localeCompare(b.date || ""));
+}
+function renderPendingPmDates() {
+  const list = pendingPostponedMeetings();
+  return `
+    <div class="dd-panel" style="margin-bottom:16px">
+      <div class="dd-dash-title" style="color:#1B2A41">Pending Parent Meeting Date</div>
+      ${list.length === 0 ? `<div class="dd-dash-empty" style="margin-top:6px">No postponed meetings waiting.</div>` : `
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        ${list.map((m) => `
+        <div class="dd-followup-row-item dd-pending-pm-row">
+          <span class="dd-sans dd-card-student-link" style="font-size:14px;font-weight:600" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(truncateName(m.studentName))}</span>
+          ${m.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:1px">${escapeHtml(m.studentClass)}</div>` : ""}
+          <div class="dd-pending-pm-grid">
+            <div class="dd-field-label">Original meeting</div>
+            <div class="dd-sans" style="font-size:14px">${formatDate(m.date)}</div>
+            <div class="dd-field-label">Postponed to</div>
+            <div>${renderPostponeDateField(m)}</div>
+          </div>
+        </div>`).join("")}
+      </div>`}
+    </div>`;
+}
 function renderDashboardSection() {
   const activeIncidents = state.incidents.filter((i) => !i.deleted);
   const activeSusp = state.suspensions.filter((s) => !s.deleted);
@@ -4487,6 +4591,8 @@ function renderDashboardSection() {
         </div>
 
         ${renderGroomingFollowUpList()}
+
+        ${renderPendingPmDates()}
 
         ${renderMonthlyChart()}
 
@@ -4652,7 +4758,7 @@ function renderIncidentDetail(it) {
   const isLegacy = !Array.isArray(it.issues);
   const issues = isLegacy ? [] : it.issues;
   const resolved = isLegacy ? it.status === "Resolved" : groomingEntryResolved(it);
-  const dotColor = resolved ? "#3C6E47" : "#A3372B";
+  const dotColor = resolved ? STATUS_DOT.completed : STATUS_DOT.ongoing;
   const summaryLabel = isLegacy ? (it.issue || "") : issues.map((x) => groomingIssueLabel(x)).join(", ");
   const followUps = it.followUps || [];
   const history = it.history || [];
@@ -5532,9 +5638,10 @@ function renderTimeOutForm(isEdit) {
 // ---------- Parent Meet ----------
 function parentMeetingWeekCategory(m) {
   const { monday, sunday } = currentWeekBounds();
-  if (!m.date) return "This Week";
-  if (m.date < monday) return "Completed";
-  if (m.date > sunday) return "Upcoming";
+  const d = pmDate(m);
+  if (!d) return "This Week";
+  if (d < monday) return "Completed";
+  if (d > sunday) return "Upcoming";
   return "This Week";
 }
 function filteredParentMeetings() {
@@ -5552,7 +5659,7 @@ function filteredParentMeetings() {
       (m.loggedBy || "").toLowerCase().includes(q) ||
       (m.reason || "").toLowerCase().includes(q));
   }
-  return [...list].sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  return [...list].sort((a, b) => (pmDate(b) + b.createdAt).localeCompare(pmDate(a) + a.createdAt));
 }
 function pmCounts() {
   const c = { "This Week": 0, Upcoming: 0, Completed: 0, Deleted: 0 };
@@ -5571,7 +5678,7 @@ function renderParentMeetingSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        ${renderLevelBreakdown("pm", state.parentMeetings, "date", isPmCounted)}
+        ${renderLevelBreakdown("pm", state.parentMeetings.map((m) => ({ ...m, countDate: pmDate(m) })), "countDate", isPmCounted)}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -5600,14 +5707,17 @@ function renderParentMeetingDetail(m) {
   const linkedIncidents = (m.linkedIncidentIds || []).map((id) => state.incidents.find((x) => x.id === id)).filter(Boolean);
   const expanded = !!state.entryExpanded[m.id];
   const weekCat = parentMeetingWeekCategory(m);
-  const dotColor = m.deleted ? "#8A8571" : weekCat === "Completed" ? "#3C6E47" : weekCat === "Upcoming" ? "#D98F2B" : "#A3372B";
-  const dotLabel = m.deleted ? "Removed" : weekCat;
+  // Red while cancelled, or postponed with no new date yet. Once the new
+  // date is set the meeting is live again, so its dot follows that date.
+  const stopped = m.pmStatus === "Cancelled" || (m.pmStatus === "Postponed" && !m.postponedTo);
+  const dotColor = m.deleted ? STATUS_DOT.removed : stopped ? STATUS_DOT.stopped : weekCat === "Completed" ? STATUS_DOT.completed : STATUS_DOT.ongoing;
+  const dotLabel = m.deleted ? "Removed" : stopped ? m.pmStatus : weekCat;
   return `
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
           <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(m.studentName)}${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
-          <div class="dd-card-meta dd-card-meta-primary">${formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
+          <div class="dd-card-meta dd-card-meta-primary">${isPmRescheduled(m) ? `<s>${formatDate(m.date)}</s> → ${formatDate(m.postponedTo)}` : formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:space-between;flex-shrink:0">
@@ -5618,7 +5728,12 @@ function renderParentMeetingDetail(m) {
       ${!m.deleted ? `
       <div class="dd-pm-status-row" style="margin-top:8px">
         ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill dd-pm-status-pill-sm ${(m.pmStatus || "Scheduled") === s ? "active" : ""}" style="${(m.pmStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-status-quick" data-id="${m.id}" data-status="${s}">${s}</button>`).join("")}
-      </div>` : ""}
+      </div>
+      ${m.pmStatus === "Postponed" ? `
+      <div class="dd-pm-postpone-block">
+        <div class="dd-field-label" style="margin-bottom:4px">Postponed to <span style="text-transform:none;letter-spacing:0">(optional — add when known)</span></div>
+        ${renderPostponeDateField(m)}
+      </div>` : ""}` : ""}
       ${expanded ? `
       ${linkedIncidents.length ? `
       <div class="dd-related-box" style="margin-top:12px">
@@ -5663,6 +5778,15 @@ function renderPmForm(isEdit) {
         <div class="dd-pm-status-row" style="margin-bottom:12px">
           ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill ${(d.meetingStatus || "Scheduled") === s ? "active" : ""}" style="${(d.meetingStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-meeting-status" data-status="${s}">${s}</button>`).join("")}
         </div>
+        ${d.meetingStatus === "Postponed" ? `
+        <label class="dd-label" style="margin-top:0">Postponed to <span class="dd-mono-muted" style="font-size:11px;text-transform:none">optional — add when known</span></label>
+        <div class="dd-issue-due-row" style="margin-bottom:12px">
+          <div class="dd-date-icon-btn" title="Set the postponed meeting date">
+            <input type="date" class="dd-input" id="pm-postponed-to" value="${d.postponedTo || ""}" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+          </div>
+          ${d.postponedTo ? `<span class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" id="pm-postponed-to-clear" title="Clear this date">✕</button>` : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
+        </div>` : ""}
         ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>
         <div class="dd-checkbox-group">
@@ -6139,6 +6263,7 @@ function attachGroomingListeners() {
 }
 
 function attachDashboardListeners() {
+  attachPmPostponeListeners();
   document.querySelectorAll('[data-action="toggle-watchlist-info"]').forEach((el) =>
     el.addEventListener("click", () => { state.showWatchlistInfo = !state.showWatchlistInfo; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="toggle-chart-cat"]').forEach((el) =>
@@ -6398,6 +6523,7 @@ function attachPmListeners() {
     el.addEventListener("click", () => { openEditParentMeeting(el.dataset.id); state.showNewPmForm = false; }));
   document.querySelectorAll('[data-action="toggle-pm-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
+  attachPmPostponeListeners();
   document.querySelectorAll('[data-action="set-pm-status-quick"]').forEach((el) =>
     el.addEventListener("click", () => setPmStatusQuick(el.dataset.id, el.dataset.status)));
 
@@ -6455,6 +6581,10 @@ function attachPmFormModalListeners() {
         state._pmDraft.meetingStatus = (state._pmDraft.meetingStatus || "Scheduled") === clicked ? "Scheduled" : clicked;
         renderKeepingModalScroll();
       }));
+    const postponedEl = form.querySelector("#pm-postponed-to");
+    if (postponedEl) postponedEl.addEventListener("change", () => { state._pmDraft.postponedTo = postponedEl.value; renderKeepingModalScroll(); });
+    const postponedClear = form.querySelector("#pm-postponed-to-clear");
+    if (postponedClear) postponedClear.addEventListener("click", () => { state._pmDraft.postponedTo = ""; renderKeepingModalScroll(); });
     const pmDateEl = form.elements["date"];
     if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];

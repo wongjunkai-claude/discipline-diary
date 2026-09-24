@@ -69,8 +69,18 @@ audit trail (every create, edit and status change, with who and when).
   free-text location and supervising administrator.
 - **Parent Meet** (`parentMeetings`): date, attendees, one or more reasons
   (each with a Victim/Offender/Both/NA status), and `pmStatus` (Postponed or
-  Cancelled; blank means scheduled). Postponed and cancelled meetings stay in
-  the log but aren't counted in any totals.
+  Cancelled; blank means scheduled) and `postponedTo` (the new date for a
+  postponed meeting; optional, blank until known). Once `postponedTo` is set,
+  the meeting counts on that new date everywhere (calendar, totals, tabs,
+  reports; see `pmDate()` / `isPmCounted()` in `app.js`), and its original
+  date shows "Postponed to …". Cancelled meetings, and postponed ones with
+  no new date yet, stay in the log but aren't counted. Postponed meetings
+  with no new date yet, or one still to come, are listed on the Dashboard
+  under "Pending Parent Meeting Date".
+
+**Status dots** on entry cards: green = completed, orange = ongoing
+(upcoming, active or in progress), red = cancelled, or postponed with no
+new date yet.
 
 **Reasons** for suspensions, time outs and parent meetings come from one
 grouped offence list (`OFFENCE_GROUPS` in `app.js`: 12 categories, 34
