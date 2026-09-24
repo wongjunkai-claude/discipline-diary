@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.0.2";
+const APP_VERSION = "3.1.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -608,11 +608,22 @@ function applyCalendarOverrides(year, computed) {
 // actually at home. Entries can span a range of days (startDate..endDate;
 // a single day just has startDate === endDate).
 function schoolClosureEntryFor(iso) {
-  return (state.schoolClosureDays?.entries || []).find((e) => {
+  // Several entries can cover the same day (e.g. P3/P4 HBL 24–29 Sep plus
+  // P5 HBL 24–25 Sep), so the day's levels are combined from all of them:
+  // 24–25 Sep → P3/P4/P5, 28–29 Sep → P3/P4. Always in level order.
+  const levels = new Set();
+  (state.schoolClosureDays?.entries || []).forEach((e) => {
     const start = e.startDate || e.date;
     const end = e.endDate || e.date;
-    return start && iso >= start && iso <= end;
-  }) || null;
+    if (start && iso >= start && iso <= end) (e.levels || []).forEach((l) => levels.add(Number(l)));
+  });
+  if (!levels.size) return null;
+  return { startDate: iso, endDate: iso, levels: [...levels].sort((x, y) => x - y) };
+}
+// "School Closure" when every level is off, otherwise e.g. "P3/P4/P5 HBL".
+function closureLabel(levels) {
+  const sorted = [...(levels || [])].map(Number).sort((x, y) => x - y);
+  return sorted.length >= 6 ? "School Closure" : `${sorted.map((l) => "P" + l).join("/")} HBL`;
 }
 // A public holiday can be a single day or a range (Chinese New Year is
 // usually 2 days) — checks both the new named-entry list and the older
@@ -2854,6 +2865,9 @@ function openFieldDatePicker(input) {
   try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
   state.postponePicker = { mode: "field", context, selector, level: classLevel(draft?.studentClass) || null,
     minExclusive: "", current, selected: current, month: start.slice(0, 7) };
+  // Don't pre-select a day that can't be chosen (e.g. today is an HBL day
+  // for this student's level).
+  if (current && pickerDayState(current, state.postponePicker).blocked) state.postponePicker.selected = "";
   ppRender();
 }
 
@@ -2882,18 +2896,18 @@ function calendarDayInfo(iso) {
   }
   if (wknd) return { kind: "weekend", name: "" };
   const c = schoolClosureEntryFor(iso);
-  if (c) return { kind: "closure", name: (c.levels || []).length >= 6 ? "School Closure" : `${(c.levels || []).map((l) => "P" + l).join("/")} HBL`, levels: c.levels || [] };
+  if (c) return { kind: "closure", name: closureLabel(c.levels), levels: c.levels };
   return { kind: null, name: "" };
 }
 // How a day behaves in a picker. Weekends, public and school holidays can't
-// be picked anywhere. Closure/HBL days: shown and blocked (for the
-// student's level) on Suspension/Time Out; left plain and pickable for
-// parent meetings.
+// be picked anywhere. Closure/HBL days are shown everywhere; on
+// Suspension/Time Out they're blocked for the student's level, while for
+// parent meetings they're just a note and stay pickable.
 function pickerDayState(iso, pp) {
   const info = calendarDayInfo(iso);
   let kind = info.kind, name = info.name, blocked = kind === "weekend" || kind === "public" || kind === "school";
   if (kind === "closure") {
-    if (pp.context === "pm") { kind = null; name = ""; }
+    if (pp.context === "pm") blocked = false;
     else blocked = pp.level ? info.levels.includes(pp.level) : info.levels.length >= 6;
   }
   if (pp.minExclusive && iso <= pp.minExclusive) blocked = true;
@@ -2935,7 +2949,7 @@ function renderPostponePicker() {
           <span><i class="dd-pp-sw dd-pp-weekend"></i>Weekend</span>
           <span><i class="dd-pp-sw dd-pp-public"></i>Public holiday</span>
           <span><i class="dd-pp-sw dd-pp-school"></i>School holiday</span>
-          ${pp.context !== "pm" ? `<span><i class="dd-pp-sw dd-pp-closure"></i>Closure / HBL</span>` : ""}
+          <span><i class="dd-pp-sw dd-pp-closure"></i>Closure / HBL</span>
         </div>
         ${isField ? "" : `<div style="margin-top:14px">${renderSlotPicker("pp")}</div>`}
         <div style="display:flex;gap:8px;margin-top:12px">
@@ -3465,7 +3479,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Choosing dates</div>
-          <p>Date fields on the Suspension, Time Out and Parent Meet forms open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown on Suspension and Time Out, and blocked for the levels affected; for parent meetings they're left open. When changing a date, the calendar opens on the one already chosen.</p>
+          <p>Date fields on the Suspension, Time Out and Parent Meet forms open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -4345,7 +4359,7 @@ function renderSettingsSection() {
 
       ${sectionHead("School Closure / HBL Days", "open-add-closure-day")}
       ${closureEntries.length === 0 ? `<div class="dd-dash-empty">None added yet.</div>` : closureEntries.map((e) => listRow(
-        e.levels.length === 6 ? "School Closure" : e.levels.map((l) => "P" + l).join("/") + " HBL",
+        closureLabel(e.levels),
         formatDateOrRange(e.startDate, e.endDate),
         "edit-closure-day", `data-id="${e.id}"`,
         "request-delete-closure-day", e.id
@@ -6680,7 +6694,7 @@ function attachMainListeners() {
       }
       state.saveError = false; state.saving = true; render();
       try {
-        const entry = { id: d.id || uid(), startDate: d.startDate, endDate: d.endDate, levels: d.type === "closure" ? [1, 2, 3, 4, 5, 6] : d.levels.slice() };
+        const entry = { id: d.id || uid(), startDate: d.startDate, endDate: d.endDate, levels: d.type === "closure" ? [1, 2, 3, 4, 5, 6] : d.levels.slice().map(Number).sort((x, y) => x - y) };
         const updated = d.id ? existing.map((e) => e.id === d.id ? entry : e) : [...existing, entry];
         await setDoc(doc(db, "settings", "schoolClosureDays"), { entries: updated }, { merge: true });
         state._closureModalDraft = null; state.saving = false; render();

@@ -99,8 +99,11 @@ Date column (no Apps Script change needed). Rules: `roomClash()` /
 forms (and a postponed meeting's new date) use an in-app calendar instead of
 the phone's own date picker, so it can show holidays: weekends (grey),
 public holidays (pink) and school holidays (yellow) are named and can't be
-picked. Closure/HBL days (blue) are shown and blocked, for the affected
-levels, on Suspension/Time Out, and left plain for parent meetings. See
+picked. Closure/HBL days (blue) are shown everywhere: blocked for the
+affected levels on Suspension/Time Out, a note only (still pickable) for
+parent meetings. Overlapping closure/HBL entries are combined per day, with
+levels always in order (P3/P4 on 24–29 Sep + P5 on 24–25 Sep → "P3/P4/P5
+HBL" on 24–25, "P3/P4 HBL" on 28–29). See
 `calendarDayInfo()` / `pickerDayState()` in `app.js`.
 
 **Status dots** on entry cards: green = completed, orange = ongoing
