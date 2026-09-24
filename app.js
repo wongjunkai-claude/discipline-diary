@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.99.0";
+const APP_VERSION = "3.0.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2796,13 +2796,13 @@ async function setPmPostponedDate(id, date, slot) {
 // the log.
 function renderPostponeDateField(m) {
   return `
-    <div class="dd-issue-due-row dd-pm-postpone-row">
+    <div class="dd-pm-postpone-row">
+      ${m.postponedTo
+        ? `<div class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}${m.postponedTime ? ` · ${escapeHtml(pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation))}` : ""}</div>`
+        : `<div class="dd-mono-muted" style="font-size:12px">Not set yet</div>`}
       <button type="button" class="dd-date-icon-btn" data-pp-open="save" data-id="${m.id}" title="Choose the postponed meeting date">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
       </button>
-      ${m.postponedTo
-        ? `<span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}${m.postponedTime ? ` · ${escapeHtml(pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation))}` : ""}</span>`
-        : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
     </div>`;
 }
 
@@ -2829,16 +2829,73 @@ function openPostponePicker(mode, pmId) {
   }
   const start = current || [todayISO(), addDays(original, 1)].sort().pop();
   try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
-  // Time and room start from the current new slot (if any) — only the date
-  // is never pre-selected.
+  // Editing an existing new date: open on it, with its date, time and room
+  // already selected, so the teacher changes from there.
   const src = mode === "draft" ? { t: state._pmDraft.postponedTime, e: state._pmDraft.postponedEndTime, l: state._pmDraft.postponedLocation }
     : (() => { const m = state.parentMeetings.find((x) => x.id === pmId); return { t: m.postponedTime, e: m.postponedEndTime, l: m.postponedLocation }; })();
-  state.postponePicker = { mode, pmId: pmId || null, minExclusive: original, current, selected: "", month: start.slice(0, 7),
+  state.postponePicker = { mode, context: "pm", pmId: pmId || null, minExclusive: original, current, selected: current || "", month: start.slice(0, 7),
     time: src.t || "", endTime: src.e || "", location: src.l || "" };
   ppRender();
 }
+// The same calendar for the ordinary date fields on the Parent Meet,
+// Suspension and Time Out forms (in place of the phone's own date picker,
+// which can't show holidays). ✓ writes the date into the form's hidden
+// date input and fires its usual "change" handling.
+function openFieldDatePicker(input) {
+  const form = input.closest("form");
+  if (!form) return;
+  const context = form.id === "pm-form" ? "pm" : form.id === "susp-form" ? "susp" : "to";
+  const draft = context === "pm" ? state._pmDraft : context === "susp" ? state._suspDraft : state._toDraft;
+  const selector = input.id ? `#${input.id}`
+    : input.name ? `#${form.id} [name="${input.name}"]`
+    : `#${form.id} .${input.classList[0]}[data-idx="${input.dataset.idx}"]`;
+  const current = input.value || "";
+  const start = current || todayISO();
+  try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
+  state.postponePicker = { mode: "field", context, selector, level: classLevel(draft?.studentClass) || null,
+    minExclusive: "", current, selected: current, month: start.slice(0, 7) };
+  ppRender();
+}
+
+// What a calendar day is, for colouring and blocking in the date pickers:
+// public holiday (pink) / school holiday (yellow) / weekend (grey) /
+// school closure or HBL day (blue) — with the holiday's name where it has one.
+function calendarDayInfo(iso) {
+  const pub = publicHolidayEntryFor(iso);
+  if (pub || (state.holidays?.publicHolidays || []).includes(iso)) return { kind: "public", name: (pub && pub.name) || "Public Holiday" };
+  const wknd = isWeekend(iso);
+  if (!wknd) {
+    const year = parseInt(iso.slice(0, 4), 10);
+    const moe = computeMoeCalendar(year);
+    const si = moe.singleDays.indexOf(iso);
+    if (si >= 0) return { kind: "school", name: moe.singleDayLabels[si] || "School Holiday" };
+    const r = moe.ranges.find((x) => iso >= x.start && iso <= x.end);
+    if (r) return { kind: "school", name: r.label || "School Holiday" };
+    const ex = (state.schoolCalendarOverrides?.[year]?.extraHolidays || []).find((e) => iso >= e.startDate && iso <= e.endDate);
+    if (ex) return { kind: "school", name: ex.name || "School Holiday" };
+  }
+  if (wknd) return { kind: "weekend", name: "" };
+  const c = schoolClosureEntryFor(iso);
+  if (c) return { kind: "closure", name: (c.levels || []).length >= 6 ? "School Closure" : `${(c.levels || []).map((l) => "P" + l).join("/")} HBL`, levels: c.levels || [] };
+  return { kind: null, name: "" };
+}
+// How a day behaves in a picker. Weekends, public and school holidays can't
+// be picked anywhere. Closure/HBL days: shown and blocked (for the
+// student's level) on Suspension/Time Out; left plain and pickable for
+// parent meetings.
+function pickerDayState(iso, pp) {
+  const info = calendarDayInfo(iso);
+  let kind = info.kind, name = info.name, blocked = kind === "weekend" || kind === "public" || kind === "school";
+  if (kind === "closure") {
+    if (pp.context === "pm") { kind = null; name = ""; }
+    else blocked = pp.level ? info.levels.includes(pp.level) : info.levels.length >= 6;
+  }
+  if (pp.minExclusive && iso <= pp.minExclusive) blocked = true;
+  return { kind, name, blocked };
+}
 function renderPostponePicker() {
   const pp = state.postponePicker;
+  const isField = pp.mode === "field";
   const [y, mo] = pp.month.split("-").map(Number);
   const lead = new Date(y, mo - 1, 1).getDay();
   const daysIn = new Date(y, mo, 0).getDate();
@@ -2847,18 +2904,18 @@ function renderPostponePicker() {
   for (let i = 0; i < lead; i++) cells.push(`<span></span>`);
   for (let d = 1; d <= daysIn; d++) {
     const iso = `${pp.month}-${String(d).padStart(2, "0")}`;
-    const disabled = iso <= pp.minExclusive;
-    const cls = ["dd-pp-day", iso === pp.selected ? "selected" : "", iso === pp.current ? "current" : "", iso === today ? "today" : ""].filter(Boolean).join(" ");
-    cells.push(`<button type="button" class="${cls}" data-pp="day" data-date="${iso}" ${disabled ? "disabled" : ""}>${d}</button>`);
+    const ds = pickerDayState(iso, pp);
+    const cls = ["dd-pp-day", ds.kind ? `dd-pp-${ds.kind}` : "", iso === pp.selected ? "selected" : "", iso === today ? "today" : ""].filter(Boolean).join(" ");
+    cells.push(`<button type="button" class="${cls}" data-pp="day" data-date="${iso}" ${ds.blocked ? "disabled" : ""} ${ds.name ? `title="${escapeHtml(ds.name)}"` : ""}><span class="dd-pp-num">${d}</span>${ds.name ? `<span class="dd-pp-hol">${escapeHtml(ds.name)}</span>` : ""}</button>`);
   }
   return `
     <div class="dd-modal-backdrop" id="pp-backdrop">
-      <div class="dd-modal dd-pp-modal" role="dialog" aria-label="Choose the postponed meeting date">
+      <div class="dd-modal dd-pp-modal" role="dialog" aria-label="${isField ? "Choose a date" : "Choose the postponed meeting date"}">
         <div class="dd-modal-head">
-          <div class="dd-modal-title">Postponed meeting date</div>
+          <div class="dd-modal-title">${isField ? "Choose a date" : "Postponed meeting date"}</div>
           <button type="button" class="dd-modal-close" data-pp="cancel">✕</button>
         </div>
-        <div class="dd-mono-muted" style="font-size:11px;margin:-6px 0 10px">Original meeting: ${formatDate(pp.minExclusive)}${pp.current ? ` · currently ${formatDate(pp.current)}` : ""}</div>
+        ${isField ? "" : `<div class="dd-mono-muted" style="font-size:11px;margin:-6px 0 10px">Original meeting: ${formatDate(pp.minExclusive)}</div>`}
         <div class="dd-pp-nav">
           <button type="button" class="dd-pp-navbtn" data-pp="prev" title="Previous month">‹</button>
           <div class="dd-pp-month">${monthLabelFromKey(pp.month)}</div>
@@ -2868,10 +2925,16 @@ function renderPostponePicker() {
           ${["S", "M", "T", "W", "T", "F", "S"].map((w) => `<span class="dd-pp-wd">${w}</span>`).join("")}
           ${cells.join("")}
         </div>
-        <div style="margin-top:14px">${renderSlotPicker("pp")}</div>
+        <div class="dd-pp-legend">
+          <span><i class="dd-pp-sw dd-pp-weekend"></i>Weekend</span>
+          <span><i class="dd-pp-sw dd-pp-public"></i>Public holiday</span>
+          <span><i class="dd-pp-sw dd-pp-school"></i>School holiday</span>
+          ${pp.context !== "pm" ? `<span><i class="dd-pp-sw dd-pp-closure"></i>Closure / HBL</span>` : ""}
+        </div>
+        ${isField ? "" : `<div style="margin-top:14px">${renderSlotPicker("pp")}</div>`}
         <div style="display:flex;gap:8px;margin-top:12px">
           <button type="button" class="dd-add-btn" style="flex:1;background:#8A8571" data-pp="cancel">Cancel</button>
-          <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-pp="ok" ${postponeReady() ? "" : "disabled"} title="Use this date, time and room">✓</button>
+          <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-pp="ok" ${postponeReady() ? "" : "disabled"} title="${isField ? "Use this date" : "Use this date, time and room"}">✓</button>
         </div>
       </div>
     </div>`;
@@ -2879,7 +2942,8 @@ function renderPostponePicker() {
 // ✓ needs a date plus a complete, free time slot and room.
 function postponeReady() {
   const pp = state.postponePicker;
-  return !!(pp && pp.selected && !slotError("pp", true));
+  if (!pp || !pp.selected || pickerDayState(pp.selected, pp).blocked) return false;
+  return pp.mode === "field" ? true : !slotError("pp", true);
 }
 function updatePostponeOkButton() {
   const ok = document.querySelector('[data-pp="ok"]');
@@ -2896,6 +2960,12 @@ function confirmPostponePick() {
   const pp = state.postponePicker;
   if (!pp || !postponeReady()) return;
   state.postponePicker = null;
+  if (pp.mode === "field") {
+    const input = document.querySelector(pp.selector);
+    if (input) { input.value = pp.selected; input.dispatchEvent(new Event("change", { bubbles: true })); }
+    if (document.getElementById("pp-backdrop")) ppRender();
+    return;
+  }
   const slot = { time: pp.time, endTime: pp.endTime, location: pp.location };
   if (pp.mode === "draft") {
     if (state._pmDraft) Object.assign(state._pmDraft, { postponedTo: pp.selected, postponedTime: slot.time, postponedEndTime: slot.endTime, postponedLocation: slot.location });
@@ -2920,6 +2990,13 @@ function confirmPostponePick() {
 // cancelled, so the tap on ✓ can't also land on the confirmation's Yes
 // button that appears in the same spot.
 function handlePostponePickerTap(e) {
+  const fieldBtn = e.target.closest && e.target.closest("#pm-form .dd-date-icon-btn, #susp-form .dd-date-icon-btn, #to-form .dd-date-icon-btn");
+  const fieldInput = fieldBtn && fieldBtn.querySelector('input[type="date"]');
+  if (fieldInput) {
+    if (e.type === "touchend") e.preventDefault();
+    runDelegatedAction("pp-field-open", () => openFieldDatePicker(fieldInput));
+    return true;
+  }
   const el = e.target.closest && e.target.closest("[data-pp],[data-pp-open]");
   if (!el) return false;
   if (e.type === "touchend") e.preventDefault();
@@ -2955,7 +3032,7 @@ async function deleteParentMeeting(id) {
 // unavailable room can't be selected (checked again when saving).
 // Cancelled meetings, and postponed ones with no new date yet, free their
 // room; a rescheduled meeting holds its room at the new date and time.
-const PM_ROOMS = ["Conference Room", "Meeting Room"];
+const PM_ROOMS = ["Meeting Room", "Conference Room"];
 const WHEEL_HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
 const WHEEL_MINUTES = ["00", "15", "30", "45"];
 const WHEEL_ITEM_H = 44;
@@ -3017,7 +3094,7 @@ function slotError(key, required) {
   if (!v.start && !v.end && !v.loc && !required) return "";
   if (!v.start || !v.end) return "Set the meeting's start and end time.";
   if (timeToMin(v.end) <= timeToMin(v.start)) return "The meeting's end time must be after its start time.";
-  if (!v.loc) return "Choose where the meeting will be held (Conference Room or Meeting Room).";
+  if (!v.loc) return "Choose where the meeting will be held (Meeting Room or Conference Room).";
   if (!v.b.date) return "Choose the meeting date first.";
   const clash = roomClash(v.loc, v.b.date, v.start, v.end, v.b.excludeId);
   if (clash) {
@@ -3378,7 +3455,11 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meet</div>
-          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Every meeting needs a Meeting Time (tap Start Time or End Time to pick it on a 24-hour wheel, in 15-minute steps) and a room: Conference Room or Meeting Room. A room holds one meeting at a time, so a room that's already booked for any overlapping time shows "Not available" and can't be chosen. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, set the time and room, tap ✓, then confirm. Once set, the meeting leaves that list, and any later change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Every meeting needs a Meeting Time (tap Start Time or End Time to pick it on a 24-hour wheel, in 15-minute steps) and a room: Meeting Room or Conference Room. A room holds one meeting at a time, so a room that's already booked for any overlapping time shows "Not available" and can't be chosen. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, set the time and room, tap ✓, then confirm. Once set, the meeting leaves that list, and any later change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
+        </div>
+        <div class="dd-help-section">
+          <div class="dd-help-heading">Choosing dates</div>
+          <p>Date fields on the Suspension, Time Out and Parent Meet forms open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown on Suspension and Time Out, and blocked for the levels affected; for parent meetings they're left open. When changing a date, the calendar opens on the one already chosen.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -6238,11 +6319,11 @@ function renderPmForm(isEdit) {
         ${renderSlotPicker("pm")}` : ""}
         ${d.meetingStatus === "Postponed" ? `
         <label class="dd-label" style="margin-top:0">Postponed to</label>
-        <div class="dd-issue-due-row" style="margin-bottom:12px">
+        <div class="dd-pm-postpone-row" style="margin-bottom:12px">
+          ${d.postponedTo ? `<div class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}${d.postponedTime ? ` · ${pmSlotLabel(d.postponedTime, d.postponedEndTime, d.postponedLocation)}` : ""}</div>` : `<div class="dd-mono-muted" style="font-size:12px">Not set yet</div>`}
           <button type="button" class="dd-date-icon-btn" data-pp-open="draft" id="pm-postponed-to-btn" title="Choose the postponed meeting date">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
           </button>
-          ${d.postponedTo ? `<span class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}${d.postponedTime ? ` · ${pmSlotLabel(d.postponedTime, d.postponedEndTime, d.postponedLocation)}` : ""}</span>` : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
         </div>` : ""}
         ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>

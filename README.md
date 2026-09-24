@@ -84,7 +84,7 @@ audit trail (every create, edit and status change, with who and when).
 **Meeting time and room.** Every parent meeting set-up (the Parent Meet
 form, "Meeting Parents" on the Suspension and Time Out forms, and a
 postponed meeting's new date) has a "Meeting Time" of two boxes, Start Time
-→ End Time, each opening a pop-up wheel (24-hour, 15-minute steps) and a room: Conference Room or Meeting Room. Fields:
+→ End Time, each opening a pop-up wheel (24-hour, 15-minute steps) and a room: Meeting Room or Conference Room. Fields:
 `time`, `endTime`, `location`; for the new date of a postponed meeting,
 `postponedTime`, `postponedEndTime`, `postponedLocation`. A room holds one
 meeting at a time: any overlapping booking on the same day makes it "Not
@@ -94,6 +94,14 @@ room. Required for new meetings and for scheduled meetings dated today or
 later; older meetings can stay blank. The Sheet shows time and room in the
 Date column (no Apps Script change needed). Rules: `roomClash()` /
 `pmBooking()` in `app.js`.
+
+**Choosing dates.** Date fields on the Parent Meet, Suspension and Time Out
+forms (and a postponed meeting's new date) use an in-app calendar instead of
+the phone's own date picker, so it can show holidays: weekends (grey),
+public holidays (pink) and school holidays (yellow) are named and can't be
+picked. Closure/HBL days (blue) are shown and blocked, for the affected
+levels, on Suspension/Time Out, and left plain for parent meetings. See
+`calendarDayInfo()` / `pickerDayState()` in `app.js`.
 
 **Status dots** on entry cards: green = completed, orange = ongoing
 (upcoming, active or in progress), red = cancelled, or postponed with no

@@ -624,7 +624,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-day-detail-note { color: #A3372B; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 500; }
 /* "Postponed to" date box on a Parent Meet card. */
 .dd-pm-postpone-block { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #E4E1D4; }
-.dd-pm-postpone-row { margin-top: 0; flex-wrap: wrap; }
+.dd-pm-postpone-row { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 /* Dashboard "Pending Parent Meeting Date" rows — not a tap target as a
    whole (the name and the date box are), so no pointer cursor. */
 .dd-pending-pm-row { cursor: default; }
@@ -651,7 +651,6 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #1B2A41; cursor: pointer; padding: 0;
 }
 .dd-pp-day.today { font-weight: 700; text-decoration: underline; }
-.dd-pp-day.current { border: 2px dashed #B8863B; }
 .dd-pp-day.selected { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 .dd-pp-day:disabled { color: #C9C4B4; background: #F2EFE6; cursor: default; }
 .dd-pp-ok { background: #1B2A41; font-size: 18px; }
@@ -704,3 +703,37 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-confirm-details { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; text-align: left; margin: 0 0 16px; padding: 10px 12px; background: #fff; border: 1px solid #E4E1D4; border-radius: 4px; }
 .dd-confirm-k { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A8571; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
 .dd-confirm-v { font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; color: #1B2A41; }
+
+/* Date fields on the Parent Meet / Suspension / Time Out forms open the
+   in-app calendar (holidays shown) instead of the phone's own picker. */
+#pm-form .dd-date-icon-btn, #susp-form .dd-date-icon-btn, #to-form .dd-date-icon-btn { cursor: pointer; }
+#pm-form .dd-date-icon-btn input[type="date"], #susp-form .dd-date-icon-btn input[type="date"], #to-form .dd-date-icon-btn input[type="date"] { pointer-events: none; }
+
+/* Calendar day cells: number centred, holiday name small underneath
+   (max two lines), coloured like the Dashboard calendar. */
+.dd-pp-day {
+  aspect-ratio: auto; min-height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; padding: 3px 1px; overflow: hidden;
+}
+.dd-pp-num { font-size: 13px; line-height: 1.1; }
+.dd-pp-hol {
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 7.5px; line-height: 1.12; text-align: center; color: #4A4536;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%;
+  word-break: normal; overflow-wrap: anywhere; -webkit-hyphens: auto; hyphens: auto;
+}
+.dd-pp-day.dd-pp-weekend, .dd-pp-sw.dd-pp-weekend { background: #E4E1D4; border-color: #E4E1D4; }
+.dd-pp-day.dd-pp-school, .dd-pp-sw.dd-pp-school { background: #F5E3A1; border-color: #EBD27F; }
+.dd-pp-day.dd-pp-public, .dd-pp-sw.dd-pp-public { background: #F2B8B0; border-color: #E89E94; }
+.dd-pp-day.dd-pp-closure, .dd-pp-sw.dd-pp-closure { background: #B8D4E8; border-color: #9CC0DA; }
+.dd-pp-day.dd-pp-weekend:disabled, .dd-pp-day.dd-pp-school:disabled, .dd-pp-day.dd-pp-public:disabled, .dd-pp-day.dd-pp-closure:disabled { color: #6B6652; }
+.dd-pp-day.selected { background: #1B2A41; border-color: #1B2A41; color: #fff; }
+.dd-pp-day.selected .dd-pp-hol { color: #D8DEE8; }
+.dd-pp-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-family: 'IBM Plex Sans', sans-serif; font-size: 11px; color: #4A4536; }
+.dd-pp-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.dd-pp-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid; }
+/* Narrow phones: give the day cells a little more room for holiday names. */
+@media (max-width: 360px) {
+  .dd-pp-modal { padding: 16px 14px; }
+  .dd-pp-grid { gap: 3px; }
+  .dd-pp-hol { font-size: 6.5px; }
+}
