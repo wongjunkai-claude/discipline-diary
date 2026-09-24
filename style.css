@@ -637,3 +637,23 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 /* On the new date of a rescheduled meeting — the meeting does happen that
    day, so the note is informational rather than red. */
 .dd-day-detail-note-moved { color: #6B6652; font-weight: 400; }
+
+/* In-app date picker for a postponed meeting's new date. Nothing is
+   pre-selected; the chosen day turns navy and ✓ becomes tappable. */
+.dd-pp-modal { max-width: 360px; }
+.dd-pp-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.dd-pp-month { font-family: 'Zilla Slab', serif; font-weight: 600; font-size: 16px; color: #1B2A41; }
+.dd-pp-navbtn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #C9C4B4; background: #fff; color: #1B2A41; font-size: 20px; line-height: 1; cursor: pointer; }
+.dd-pp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dd-pp-wd { text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8A8571; padding: 2px 0; }
+.dd-pp-day {
+  aspect-ratio: 1 / 1; min-height: 34px; border: 1px solid #E4E1D4; border-radius: 4px; background: #fff;
+  font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #1B2A41; cursor: pointer; padding: 0;
+}
+.dd-pp-day.today { font-weight: 700; text-decoration: underline; }
+.dd-pp-day.current { border: 2px dashed #B8863B; }
+.dd-pp-day.selected { background: #1B2A41; border-color: #1B2A41; color: #fff; }
+.dd-pp-day:disabled { color: #C9C4B4; background: #F2EFE6; cursor: default; }
+.dd-pp-picked { font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: #4A4536; margin-top: 10px; text-align: center; }
+.dd-pp-ok { background: #1B2A41; font-size: 18px; }
+.dd-pp-ok:disabled { opacity: 0.35; cursor: default; }

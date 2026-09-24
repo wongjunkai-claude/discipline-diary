@@ -1,4 +1,4 @@
-const CACHE = "discipline-diary-v182";
+const CACHE = "discipline-diary-v184";
 const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
 // Firebase's own code, loaded from Google's CDN. The URLs include the
 // version number, so a cached copy never goes stale — caching it lets the

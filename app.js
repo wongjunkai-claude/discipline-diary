@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.93.0";
+const APP_VERSION = "2.95.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -693,6 +693,7 @@ async function confirmDeleteYes() {
   const target = state.confirmDeleteTarget;
   if (!target) return;
   state.confirmDeleteTarget = null;
+  if (target.type === "setPostponeDate") { render(); await setPmPostponedDate(target.id, target.date || ""); return; }
   if (target.type === "incident") await deleteIncident(target.id);
   else if (target.type === "suspension") await deleteSuspension(target.id);
   else if (target.type === "timeOut") await deleteTimeOut(target.id);
@@ -926,7 +927,7 @@ function renderDeleteConfirmModal() {
         <div class="dd-modal-title" style="margin-bottom:18px">${escapeHtml(msg)}</div>
         <div style="display:flex;gap:8px">
           <button class="dd-add-btn" style="flex:1;background:#8A8571" id="btn-confirm-delete-no">No</button>
-          <button class="dd-add-btn" style="flex:1;background:#A3372B" id="btn-confirm-delete-yes">Yes</button>
+          <button class="dd-add-btn" style="flex:1;background:${state.confirmDeleteTarget?.tone === "confirm" ? "#1B2A41" : "#A3372B"}" id="btn-confirm-delete-yes">Yes</button>
         </div>
       </div>
     </div>`;
@@ -1093,6 +1094,7 @@ const state = {
   studentViewFromSection: "dashboard",
   showWatchlistInfo: false,
   backupError: "",
+  postponePicker: null,
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
   dayViewDate: null, // set on first render to today
@@ -2723,25 +2725,140 @@ async function setPmPostponedDate(id, date) {
     syncParentMeetingToSheet({ ...m, postponedTo: date });
   } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
 }
-// Date box for a postponed meeting's new date (card + Dashboard). Same
-// calendar-icon style as the app's other date pickers; clearing is allowed.
-function renderPostponeDateField(m) {
+// "Postponed to" control (log card + Dashboard). Opens the in-app date
+// picker rather than the phone's own one: on iPhones the native picker
+// fills in today's date the moment it opens, which used to save straight
+// away and close the picker. `editable: false` (Dashboard, once a date is
+// set) shows the date as plain text — changes are made in the log.
+function renderPostponeDateField(m, opts) {
+  const editable = !opts || opts.editable !== false;
+  if (m.postponedTo && !editable) {
+    return `<div class="dd-pm-postpone-row"><span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}</span><div class="dd-mono-muted" style="font-size:11px;margin-top:2px">To change it, edit the meeting in the Parent Meet log.</div></div>`;
+  }
   return `
     <div class="dd-issue-due-row dd-pm-postpone-row">
-      <div class="dd-date-icon-btn" title="Set the postponed meeting date">
-        <input type="date" class="dd-input dd-pm-postpone-input" data-id="${m.id}" value="${m.postponedTo || ""}" />
+      <button type="button" class="dd-date-icon-btn" data-pp-open="save" data-id="${m.id}" title="Choose the postponed meeting date">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
-      </div>
+      </button>
       ${m.postponedTo
-        ? `<span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" data-action="clear-pm-postpone" data-id="${m.id}" title="Clear this date">✕</button>`
+        ? `<span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" data-pp-clear="save" data-id="${m.id}" title="Clear this date">✕</button>`
         : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
     </div>`;
 }
-function attachPmPostponeListeners() {
-  document.querySelectorAll(".dd-pm-postpone-input").forEach((el) =>
-    el.addEventListener("change", () => setPmPostponedDate(el.dataset.id, el.value)));
-  document.querySelectorAll('[data-action="clear-pm-postpone"]').forEach((el) =>
-    el.addEventListener("click", () => setPmPostponedDate(el.dataset.id, "")));
+
+// ---------- In-app date picker for the postponed meeting date ----------
+// Nothing is pre-selected: tap a day, then ✓. From the log card or the
+// Dashboard ("save" mode) a confirmation pops up before anything is saved;
+// in the Edit meeting form ("draft" mode) ✓ just fills the field, and the
+// form's own Save button is the confirmation. Days on or before the
+// original meeting date can't be picked.
+// Re-render without losing the scroll position of the Edit meeting form
+// (when open) or of the page underneath.
+function ppRender() { if (state._pmDraft && (state.editingPmId || state.showNewPmForm)) renderKeepingModalScroll(); else renderKeepingPageScroll(); }
+function openPostponePicker(mode, pmId) {
+  let original, current;
+  if (mode === "draft") {
+    if (!state._pmDraft) return;
+    original = state._pmDraft.date || todayISO();
+    current = state._pmDraft.postponedTo || "";
+  } else {
+    const m = state.parentMeetings.find((x) => x.id === pmId);
+    if (!m) return;
+    original = m.date || todayISO();
+    current = m.postponedTo || "";
+  }
+  const start = current || [todayISO(), addDays(original, 1)].sort().pop();
+  try { document.activeElement?.blur?.(); } catch (e) { /* non-fatal */ }
+  state.postponePicker = { mode, pmId: pmId || null, minExclusive: original, current, selected: "", month: start.slice(0, 7) };
+  ppRender();
+}
+function renderPostponePicker() {
+  const pp = state.postponePicker;
+  const [y, mo] = pp.month.split("-").map(Number);
+  const lead = new Date(y, mo - 1, 1).getDay();
+  const daysIn = new Date(y, mo, 0).getDate();
+  const today = todayISO();
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(`<span></span>`);
+  for (let d = 1; d <= daysIn; d++) {
+    const iso = `${pp.month}-${String(d).padStart(2, "0")}`;
+    const disabled = iso <= pp.minExclusive;
+    const cls = ["dd-pp-day", iso === pp.selected ? "selected" : "", iso === pp.current ? "current" : "", iso === today ? "today" : ""].filter(Boolean).join(" ");
+    cells.push(`<button type="button" class="${cls}" data-pp="day" data-date="${iso}" ${disabled ? "disabled" : ""}>${d}</button>`);
+  }
+  return `
+    <div class="dd-modal-backdrop" id="pp-backdrop">
+      <div class="dd-modal dd-pp-modal" role="dialog" aria-label="Choose the postponed meeting date">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Postponed meeting date</div>
+          <button type="button" class="dd-modal-close" data-pp="cancel">✕</button>
+        </div>
+        <div class="dd-mono-muted" style="font-size:11px;margin:-6px 0 10px">Original meeting: ${formatDate(pp.minExclusive)}${pp.current ? ` · currently ${formatDate(pp.current)}` : ""}</div>
+        <div class="dd-pp-nav">
+          <button type="button" class="dd-pp-navbtn" data-pp="prev" title="Previous month">‹</button>
+          <div class="dd-pp-month">${monthLabelFromKey(pp.month)}</div>
+          <button type="button" class="dd-pp-navbtn" data-pp="next" title="Next month">›</button>
+        </div>
+        <div class="dd-pp-grid">
+          ${["S", "M", "T", "W", "T", "F", "S"].map((w) => `<span class="dd-pp-wd">${w}</span>`).join("")}
+          ${cells.join("")}
+        </div>
+        <div class="dd-pp-picked">${pp.selected ? `Selected: <b>${formatDate(pp.selected)}</b>` : "Tap a date, then ✓"}</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button type="button" class="dd-add-btn" style="flex:1;background:#8A8571" data-pp="cancel">Cancel</button>
+          <button type="button" class="dd-add-btn dd-pp-ok" style="flex:1" data-pp="ok" ${pp.selected ? "" : "disabled"} title="Use this date">✓</button>
+        </div>
+      </div>
+    </div>`;
+}
+function shiftPickerMonth(delta) {
+  const pp = state.postponePicker;
+  const [y, m] = pp.month.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  pp.month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  ppRender();
+}
+function confirmPostponePick() {
+  const pp = state.postponePicker;
+  if (!pp || !pp.selected) return;
+  state.postponePicker = null;
+  if (pp.mode === "draft") {
+    if (state._pmDraft) state._pmDraft.postponedTo = pp.selected;
+    ppRender();
+    return;
+  }
+  const m = state.parentMeetings.find((x) => x.id === pp.pmId);
+  if (!m) { ppRender(); return; }
+  requestDeleteConfirmation("setPostponeDate", pp.pmId, {
+    date: pp.selected, tone: "confirm",
+    message: `Set ${m.studentName}'s postponed parent meeting to ${formatDate(pp.selected)}?`,
+  });
+}
+function requestClearPostponeDate(mode, pmId) {
+  if (mode === "draft") { if (state._pmDraft) state._pmDraft.postponedTo = ""; ppRender(); return; }
+  const m = state.parentMeetings.find((x) => x.id === pmId);
+  if (!m) return;
+  requestDeleteConfirmation("setPostponeDate", pmId, { date: "", message: `Clear the postponed meeting date for ${m.studentName}?` });
+}
+// Picker taps go through the always-live delegated handler (like the other
+// pop-up confirmations). On touch devices the follow-up "click" is
+// cancelled, so the tap on ✓ can't also land on the confirmation's Yes
+// button that appears in the same spot.
+function handlePostponePickerTap(e) {
+  const el = e.target.closest && e.target.closest("[data-pp],[data-pp-open],[data-pp-clear]");
+  if (!el) return false;
+  if (e.type === "touchend") e.preventDefault();
+  if (el.disabled) return true;
+  if (el.dataset.ppOpen) { runDelegatedAction("pp-open", () => openPostponePicker(el.dataset.ppOpen, el.dataset.id)); return true; }
+  if (el.dataset.ppClear) { runDelegatedAction("pp-clear", () => requestClearPostponeDate(el.dataset.ppClear, el.dataset.id)); return true; }
+  if (!state.postponePicker) return true;
+  const a = el.dataset.pp;
+  if (a === "day") runDelegatedAction("pp-day-" + el.dataset.date, () => { state.postponePicker.selected = el.dataset.date; ppRender(); });
+  else if (a === "prev") runDelegatedAction("pp-prev", () => shiftPickerMonth(-1));
+  else if (a === "next") runDelegatedAction("pp-next", () => shiftPickerMonth(1));
+  else if (a === "ok") runDelegatedAction("pp-ok", () => confirmPostponePick());
+  else if (a === "cancel") runDelegatedAction("pp-cancel", () => { state.postponePicker = null; ppRender(); });
+  return true;
 }
 async function deleteParentMeeting(id) {
   const entry = state.parentMeetings.find((i) => i.id === id);
@@ -2845,6 +2962,7 @@ function renderMain() {
   if (state._extraSchoolHolidayDraft) html += renderExtraSchoolHolidayModal();
   if (state._closureModalDraft) html += renderClosureDayModal();
   html += state.memberActionTarget ? renderMemberActionModal() : "";
+  html += state.postponePicker ? renderPostponePicker() : "";
   html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
   html += state.pendingDuplicateConfirm ? renderDuplicateConfirmModal() : "";
   html += state.undoToast ? renderUndoToast() : "";
@@ -2927,7 +3045,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meet</div>
-          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be keyed in too. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, tap ✓, then confirm. After that, any change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -4502,10 +4620,11 @@ function pendingPostponedMeetings() {
 }
 function renderPendingPmDates() {
   const list = pendingPostponedMeetings();
+  // Nothing waiting → no box at all, rather than an empty panel.
+  if (list.length === 0) return "";
   return `
     <div class="dd-panel" style="margin-bottom:16px">
       <div class="dd-dash-title" style="color:#1B2A41">Pending Parent Meeting Date</div>
-      ${list.length === 0 ? `<div class="dd-dash-empty" style="margin-top:6px">No postponed meetings waiting.</div>` : `
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         ${list.map((m) => `
         <div class="dd-followup-row-item dd-pending-pm-row">
@@ -4515,10 +4634,10 @@ function renderPendingPmDates() {
             <div class="dd-field-label">Original meeting</div>
             <div class="dd-sans" style="font-size:14px">${formatDate(m.date)}</div>
             <div class="dd-field-label">Postponed to</div>
-            <div>${renderPostponeDateField(m)}</div>
+            <div>${renderPostponeDateField(m, { editable: false })}</div>
           </div>
         </div>`).join("")}
-      </div>`}
+      </div>
     </div>`;
 }
 function renderDashboardSection() {
@@ -5781,11 +5900,10 @@ function renderPmForm(isEdit) {
         ${d.meetingStatus === "Postponed" ? `
         <label class="dd-label" style="margin-top:0">Postponed to <span class="dd-mono-muted" style="font-size:11px;text-transform:none">optional — add when known</span></label>
         <div class="dd-issue-due-row" style="margin-bottom:12px">
-          <div class="dd-date-icon-btn" title="Set the postponed meeting date">
-            <input type="date" class="dd-input" id="pm-postponed-to" value="${d.postponedTo || ""}" />
+          <button type="button" class="dd-date-icon-btn" data-pp-open="draft" id="pm-postponed-to-btn" title="Choose the postponed meeting date">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
-          </div>
-          ${d.postponedTo ? `<span class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" id="pm-postponed-to-clear" title="Clear this date">✕</button>` : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
+          </button>
+          ${d.postponedTo ? `<span class="dd-sans" style="font-size:15px">${formatDate(d.postponedTo)}</span><button type="button" class="dd-followup-icon-btn" data-pp-clear="draft" title="Clear this date">✕</button>` : `<span class="dd-mono-muted" style="font-size:12px">Not set yet</span>`}
         </div>` : ""}
         ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>
@@ -6263,7 +6381,6 @@ function attachGroomingListeners() {
 }
 
 function attachDashboardListeners() {
-  attachPmPostponeListeners();
   document.querySelectorAll('[data-action="toggle-watchlist-info"]').forEach((el) =>
     el.addEventListener("click", () => { state.showWatchlistInfo = !state.showWatchlistInfo; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="toggle-chart-cat"]').forEach((el) =>
@@ -6523,7 +6640,6 @@ function attachPmListeners() {
     el.addEventListener("click", () => { openEditParentMeeting(el.dataset.id); state.showNewPmForm = false; }));
   document.querySelectorAll('[data-action="toggle-pm-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
-  attachPmPostponeListeners();
   document.querySelectorAll('[data-action="set-pm-status-quick"]').forEach((el) =>
     el.addEventListener("click", () => setPmStatusQuick(el.dataset.id, el.dataset.status)));
 
@@ -6581,10 +6697,7 @@ function attachPmFormModalListeners() {
         state._pmDraft.meetingStatus = (state._pmDraft.meetingStatus || "Scheduled") === clicked ? "Scheduled" : clicked;
         renderKeepingModalScroll();
       }));
-    const postponedEl = form.querySelector("#pm-postponed-to");
-    if (postponedEl) postponedEl.addEventListener("change", () => { state._pmDraft.postponedTo = postponedEl.value; renderKeepingModalScroll(); });
-    const postponedClear = form.querySelector("#pm-postponed-to-clear");
-    if (postponedClear) postponedClear.addEventListener("click", () => { state._pmDraft.postponedTo = ""; renderKeepingModalScroll(); });
+
     const pmDateEl = form.elements["date"];
     if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];
@@ -6700,6 +6813,7 @@ function runDelegatedAction(key, fn) {
   fn();
 }
 function handleDelegatedTap(e) {
+  if (handlePostponePickerTap(e)) return;
   const yesBtn = e.target.closest && e.target.closest("#btn-confirm-delete-yes");
   if (yesBtn) { runDelegatedAction("confirm-delete-yes", () => confirmDeleteYes()); return; }
   // Deliberately NOT dismissing on a backdrop tap. These confirmations can
