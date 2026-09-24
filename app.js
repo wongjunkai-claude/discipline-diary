@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.95.0";
+const APP_VERSION = "2.96.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2728,13 +2728,10 @@ async function setPmPostponedDate(id, date) {
 // "Postponed to" control (log card + Dashboard). Opens the in-app date
 // picker rather than the phone's own one: on iPhones the native picker
 // fills in today's date the moment it opens, which used to save straight
-// away and close the picker. `editable: false` (Dashboard, once a date is
-// set) shows the date as plain text — changes are made in the log.
-function renderPostponeDateField(m, opts) {
-  const editable = !opts || opts.editable !== false;
-  if (m.postponedTo && !editable) {
-    return `<div class="dd-pm-postpone-row"><span class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}</span><div class="dd-mono-muted" style="font-size:11px;margin-top:2px">To change it, edit the meeting in the Parent Meet log.</div></div>`;
-  }
+// away and close the picker. The Dashboard only ever shows meetings with no
+// date yet; once set, the meeting leaves that list and changes are made in
+// the log.
+function renderPostponeDateField(m) {
   return `
     <div class="dd-issue-due-row dd-pm-postpone-row">
       <button type="button" class="dd-date-icon-btn" data-pp-open="save" data-id="${m.id}" title="Choose the postponed meeting date">
@@ -3045,7 +3042,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meet</div>
-          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, tap ✓, then confirm. After that, any change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. A postponed meeting gets an optional "Postponed to" date box, to fill in once the new date is known; until then it's listed on the Dashboard under Pending Parent Meeting Date, where the date can be set too: tap the calendar, pick a day, tap ✓, then confirm. Once set, the meeting leaves that list, and any later change to the date is made in the Parent Meet log. Once a new date is set, the meeting counts on that new date (calendar, totals, reports) and its original date shows "Postponed to …". Cancelled meetings, and postponed ones with no new date yet, stay in the log but aren't counted in any totals.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -4609,14 +4606,13 @@ function renderGroomingFollowUpList() {
       ${renderDaySection("2 Days Later", addDays(today, 2), buckets.dayAfter)}
     </div>`;
 }
-// Postponed parent meetings still waiting to happen: no new date yet, or a
-// new date that hasn't passed. Undated ones come first (they need chasing),
-// then by the new date. Once the new date has passed, the meeting drops off.
+// Postponed parent meetings still waiting for a new date. As soon as a new
+// date is set the meeting is fixed, so it leaves this list (it then shows on
+// the calendar and in the log on that date). Oldest original date first.
 function pendingPostponedMeetings() {
-  const today = todayISO();
   return state.parentMeetings
-    .filter((m) => !m.deleted && m.pmStatus === "Postponed" && (!m.postponedTo || m.postponedTo >= today))
-    .sort((a, b) => (a.postponedTo ? 1 : 0) - (b.postponedTo ? 1 : 0) || (a.postponedTo || "").localeCompare(b.postponedTo || "") || (a.date || "").localeCompare(b.date || ""));
+    .filter((m) => !m.deleted && m.pmStatus === "Postponed" && !m.postponedTo)
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 }
 function renderPendingPmDates() {
   const list = pendingPostponedMeetings();
@@ -4634,7 +4630,7 @@ function renderPendingPmDates() {
             <div class="dd-field-label">Original meeting</div>
             <div class="dd-sans" style="font-size:14px">${formatDate(m.date)}</div>
             <div class="dd-field-label">Postponed to</div>
-            <div>${renderPostponeDateField(m, { editable: false })}</div>
+            <div>${renderPostponeDateField(m)}</div>
           </div>
         </div>`).join("")}
       </div>

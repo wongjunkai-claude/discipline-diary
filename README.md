@@ -75,8 +75,8 @@ audit trail (every create, edit and status change, with who and when).
   reports; see `pmDate()` / `isPmCounted()` in `app.js`), and its original
   date shows "Postponed to …". Cancelled meetings, and postponed ones with
   no new date yet, stay in the log but aren't counted. Postponed meetings
-  with no new date yet, or one still to come, are listed on the Dashboard
-  under "Pending Parent Meeting Date". The new date is chosen with an in-app
+  with no new date yet are listed on the Dashboard under "Pending Parent
+  Meeting Date"; once the new date is set they leave that list. The new date is chosen with an in-app
   picker (nothing pre-selected; tap a day, then ✓, then confirm), not the
   phone's own date picker. The Dashboard can set it once; later changes are
   made in the Parent Meet log.
