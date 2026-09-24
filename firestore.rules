@@ -24,9 +24,13 @@ service cloud.firestore {
     // ownership away from them, takes effect immediately — every rule
     // below re-evaluates on each request/listener update, so an active
     // session is cut off in real time, not just blocked on next sign-in.
+    // email_verified: Google sign-in always verifies the address, but this
+    // also shuts out any other sign-in method that might ever be enabled in
+    // the Firebase console (e.g. email/password with an unconfirmed address).
     function isMoeDomain() {
       return request.auth != null
         && request.auth.token.email != null
+        && request.auth.token.email_verified == true
         && request.auth.token.email.matches('.*@moe[.]edu[.]sg$');
     }
     function emailLower() {
@@ -82,9 +86,12 @@ service cloud.firestore {
       allow read, create, update, delete: if isMoeUser();
     }
 
-    // Rolling backup snapshot ("backups/latest"). Signed-in users can read it
-    // (to manually recover data) and the app can update it, but it can never
-    // be deleted from the client.
+    // Rolling backup: "backups/index" lists the parts, one per log per year
+    // (e.g. "backups/incidents-2026", split further into "-p2"… if a year
+    // gets large). "backups/latest" is the old single-document backup, now
+    // just a pointer. Signed-in users can read them (to manually recover
+    // data) and the app can update them, but they can never be deleted from
+    // the client.
     match /backups/{backupId} {
       allow read, create, update: if isMoeUser();
       allow delete: if false;

@@ -1,573 +1,158 @@
-# Discipline Diary (no-build version)
-
-Plain HTML/CSS/JS — no Node, no npm, no build step, no Terminal. Firebase is
-loaded directly from Google's CDN in the browser.
-
-## 1. Enable anonymous sign-in (invisible to your team, keeps the database locked to the app)
-
-1. Go to https://console.firebase.google.com → your `discipline-diary` project
-2. **Build → Authentication → Sign-in method**
-3. Click **Anonymous** in the list of providers, toggle it **on**, click **Save**
-
-This lets the app quietly authenticate each visitor in the background so your
-Firestore security rules can still block anyone who doesn't go through the
-app itself — but nobody ever sees a login screen. They just type their name.
-
-## 2. Lock down Firestore
-
-1. Same project → **Build → Firestore Database → Rules** tab
-2. Paste in the contents of `firestore.rules` (in this folder)
-3. Click **Publish**
-
-## 2. Put it on GitHub (all in the browser)
-
-1. Go to https://github.com and sign in (or create a free account)
-2. Click the **+** icon (top right) → **New repository**
-3. Name it `discipline-diary`, keep it **Public** (needed for the free GitHub
-   Pages hosting below), click **Create repository**
-4. On the new repo page, click **"uploading an existing file"**
-5. Drag in every file from this folder (`index.html`, `style.css`, `app.js`,
-   `manifest.json`, `sw.js`, and the `icons` folder) — GitHub accepts
-   drag-and-drop for a whole folder
-6. Scroll down, click **Commit changes**
-
-## 3. Turn on GitHub Pages (makes it a live website)
-
-1. In your repo, click **Settings** (top menu)
-2. Left sidebar → **Pages**
-3. Under **Branch**, choose **main** and **/ (root)**, click **Save**
-4. Wait about a minute, then refresh — GitHub will show you a URL like:
-   `https://<your-username>.github.io/discipline-diary/`
-
-That URL is the app. Send it to your discipline team.
-
-## 4. First use
-
-1. Open the link
-2. Type your name and click **"Enter the log"** — that's it, no email or password
-3. Each teacher does the same the first time they open it on their device
-   (their name is remembered after that — there's no way to switch names on
-   a shared device from within the app; clear the browser's site data for
-   this page to reset it, or use separate devices per teacher)
-4. On phones: open the link in the browser, then use the browser's
-   **"Add to Home Screen"** option (Safari: Share button → Add to Home Screen)
-   — it'll behave like an installed app from then on
-
-## How data is structured
-
-**Discipline log** — `incidents` collection:
-- `studentName`, `studentClass` (dropdown, e.g. `P3-2`), `date`, `issue`,
-  `actionTaken` (required), `status` (Open / Monitoring / Resolved)
-- `loggedBy`, `loggedByUid`, `createdAt`
-- `followUps`: append-only list of `{ date, note, by }`
-- `history`: append-only audit trail
-
-**Suspensions** — `suspensions` collection, rebuilt in v2.0 around a single
-unified per-day model:
-- `studentName`, `studentClass`, `reason` (required), `startDate`,
-  `totalDays`, `issDays`, `ossDays`
-- `days`: the authoritative list — `[{ date, type: 'ISS'|'OSS', venue? }, ...]`
-  covering every day of the suspension, however the ISS/OSS mix works out.
-  A single record can span both in-school and out-of-school days.
-- Status (Upcoming / Active / Completed) is calculated from the earliest
-  and latest dates in `days`
-- `loggedBy`, `loggedByUid`, `createdAt`, `history`
-
-**Parent meetings** — `parentMeetings` collection:
-- `studentName`, `studentClass`, `date`, `reason`, `attendees` (array, e.g.
-  `["Father", "Others"]`), `othersText` (free text if "Others" is checked)
-- `loggedBy`, `loggedByUid`, `createdAt`, `history`
-
-Security rules block **deletes** on all three collections entirely —
-nothing can be erased from the client, only added to.
-
-## Version number & in-app help
-
-The header shows the current version (e.g. `v1.7.0`) — useful for confirming
-a teacher's device has actually picked up your latest update, especially
-after a cache-clearing troubleshooting step.
-
-Bump `APP_VERSION` near the top of `app.js` alongside the `CACHE` version in
-`sw.js` every time you ship a change, so the two stay in sync and the number
-in the header is a reliable signal of what's actually running.
-
-The **circular "?" icon** (above each list, next to the Deleted pill and New
-Entry button) opens a plain-language guide for
-teachers — statuses, suspensions, editing, removing, and backups — separate
-from this README, which is aimed at whoever maintains the app.
-
-## Settings & Annual Summary Reports
-
-A gear icon sits in the header, next to Help. It opens **Settings → Annual
-Summary Reports → pick a year** to see that year's report:
-
-- Total tally (Discipline / Suspension / Parent Meeting) for the year
-- A Term 1–4 breakdown table
-- Two bar-row charts: by month, and by term
-- **Most challenging levels** and **most challenging classes** — ranked by
-  combined discipline + suspension total, with each individual number
-  still shown alongside the total (not just a merged figure)
-- Every student with at least one suspension that year, in full — not
-  just a top few
-
-There's no archiving step and nothing runs automatically on any date —
-the report just queries the same live Firestore data by year on demand,
-since nothing in this app is ever hard-deleted (see "Removing entries"
-below), so past years' records are always there to query.
-
-**Settings → Classes For The Year** controls which classes appear in the
-class dropdown when logging any entry, for the current year only. Tick
-which of the full P1-1 to P6-6 roster are actually running this year
-(useful after re-streaming, or if a level doesn't run every class every
-year) — untick ones that don't apply, tick any that do. An entry's
-already-saved class always still shows up when editing it, even if it's
-since been unticked, so nothing silently blanks out.
-
-There's no explicit "1 January" trigger for the prompt to review this —
-instead, since nothing is configured yet for a brand new year, a banner
-on the Dashboard and in Settings shows automatically the moment the
-current year has no saved class list, which is exactly what happens the
-first time anyone opens the app after the year changes. Same reasoning as
-the 30-day purge and the Annual Reports: this app has no server to run a
-job on a specific date, so anything date-triggered here works by noticing
-missing data instead, not by watching a clock.
-
-## Dashboard (Home)
-
-The home icon in the nav is the first stop — trends of who's been named
-most often across both discipline and suspension records, and the trend
-section below (which includes a **Today** view covering the same
-"who's in today" info the old ISS/OSS tracker boxes used to show, now
-folded into the trend section instead of living separately).
-
-**"Students' Watchlist"** (was "Most named students") sorts students into
-three risk tiers, checked in this priority order so nobody is double
-counted:
-- **High Risk** — 2 or more suspensions
-- **Medium Risk** — 1 suspension, or more than 3 discipline entries
-- **Low Risk** — discipline entries only, no suspension
-
-Within a tier, sorted by suspension count then discipline count,
-descending. The Parent Meeting dashboard panel has been removed entirely
-(not folded into anything else).
-
-A row of tappable pills picks how the section below displays: **Today**,
-**This Week**, **1M**, **3M**, **6M**, **9M**, **This Year**, or **Custom**
-(wraps to two rows on a phone screen — no dropdown to open, just tap).
-
-Below the pills, a **"Show…"** box holds three buttons — Discipline,
-Suspension, Parent Meeting — filled with that category's color when
-active, greyed out when off (all three on by default). This affects
-everything below it: the tally, the calendar dots, and the bar chart all
-update together. Then comes the **tally**: one column per selected
-category, each showing its label and a large total for exactly the period
-currently selected — deselect a category and its column disappears rather
-than showing a zero.
-
-The suspension **tally total counts by entry** (a 5-day suspension counts
-as 1, not 5), consistent across every range — attributed to its start
-date. Calendar **dots are different on purpose**: they show a dot on
-every day a suspension actually covers, split by type — gold for
-in-school, red for out-of-school — so a multi-day suspension is visible
-across its whole span even though it's still just "1" in the tally above.
-A two-column legend spells out what each dot color means (Discipline and
-Parent Meeting on the left, the two suspension types on the right),
-matching whichever categories are currently selected.
-
-- **Today** shows the tally for just today, then a detail list below it —
-  name, class, and (for suspensions) location — of everything happening
-  today, with no calendar grid needed.
-- **This Week** shows a 7-day calendar strip (Monday-Sunday of the current
-  week). Tap any day to see its details in the same list format as Today,
-  right below the strip.
-- **1M** shows a full month calendar grid. **‹ ›** arrows above it move to
-  the previous/next month — it isn't locked to the current month. Tap any
-  day to see its details the same way; tap the same day again to close it.
-- **3M / 6M / 9M / This Year** show the horizontal bar-row chart (one
-  row per month) below the tally. "3M" is the past 2 months plus the
-  current one, "6M" the past 5 plus current, "9M" the past 8
-  plus current, and "This Year" is all 12 months of the current calendar
-  year (Jan-Dec) regardless of today's date.
-- **Custom** opens a small popup with From/To month pickers (spanning 24
-  months back to 12 months ahead) — pick any range and it shows the same
-  bar-row chart for exactly those months. Choosing Custom again later
-  reopens the popup pre-filled with whatever range was last picked.
-
-The bar-row views share a scale row and faint gridlines behind every bar
-(at 0/25/50/75/100% of a rounded "nice" maximum) so bars are comparable at
-a glance.
-
-Discipline counts by incident date, Suspension by start date (by actual
-day for the calendar view), Parent Meeting by meeting date; deleted
-entries are excluded throughout.
-
-**Status indicators are now traffic-light dots, not text pills** — a
-colored circle instead of a labeled badge, with the actual status as a
-tooltip. Discipline Log: red for Open/In Progress, green for Resolved.
-Suspension Log: red for Active, green for Completed, yellow-orange for
-Upcoming (grey for Removed). The Suspension Log's In-School/Out-of-
-School/Mixed type pill was removed from the card header entirely — that
-detail is still fully visible in the day-by-day breakdown below it, just
-not repeated as a summary badge up top.
-
-**Discipline Log no longer has its own "+ New entry" button** — all
-discipline entries (with or without a linked suspension or parent meeting)
-now go through the Dashboard's "+ New Entry" guided flow.
-
-**Related records** — when logging a new discipline entry, if the student
-already has a suspension or parent meeting on file, a "Related records
-found" box appears under the name field with checkboxes to link them.
-Linking isn't cosmetic — it writes a reference on *both* records, so the
-connection shows up (as a clickable jump-to link) whether you're looking at
-the discipline entry, the suspension, or the meeting.
-
-**"+ New Entry" (Dashboard)** — a guided multi-step flow for logging a
-whole case at once: Discipline details → "Any Suspension?" (Yes reveals a
-Suspension step; No skips it) → "Any Parent Meeting?" (same pattern) →
-Submit. Everything gets created and cross-linked in one go — student name
-and class only get typed once and carry through every step. This is
-separate from the Discipline Log page's own "+ New entry" button, which
-stays as a quick single-entry add with no wizard, for when there's nothing
-else to link.
-
-## ISS dashboard grouping
-
-The Today / Next 2 Days columns for In-School Suspension group students by
-**location first** — each location appears once as a small heading, with
-every student assigned there listed underneath (name, then class). Within
-Next 2 Days, this grouping happens separately for each date. Out-of-School
-Suspension has no location concept, so its columns stay a flat list.
-
-## Weekend-aware scheduling
-
-When a suspension spans more than one day, day 2 onward defaults to the
-**next school day** — skipping weekends, the computed MOE school calendar,
-and gazetted Singapore public holidays, all automatically.
-
-**School term dates are now calculated, not stored.** MOE's term structure
-turns out to follow a fixed, checkable formula: each term is 10 weeks,
-March/September breaks are 1 week, the June break is 4 weeks, and the
-year-end break runs to 31 December. The only variable is where "Week 1"
-starts, which depends on the weekday 2 January falls on. From that, the app
-computes term boundaries, Youth Day, Teachers' Day, Children's Day, and the
-National Day in-lieu school holiday for any year automatically.
-
-**Verified against MOE's own published calendars for 2019, 2020, 2021,
-2024, 2025, and 2026** — six years, checked date-by-date. Term boundaries
-and all four holiday blocks matched exactly in every one; so did Youth Day,
-Teachers' Day, and the National Day in-lieu rule.
-
-**One known exception found during that check — now fixed:** Term 1's
-start date used to be off by a day in years where 1 January falls on a
-Saturday or Sunday. MOE consistently pushes the actual start one day later
-than the plain weekday rule gives in those years; this is now built in and
-verified exactly against 2021 (no shift needed), 2022, and 2023 (both
-shifted, matching the real confirmed dates).
-
-One simplification worth knowing: MOE stages the very first day of the
-school year — Primary 1 attends starting on the computed date, but other
-levels report one school day later. This app doesn't track grade-level-
-specific calendars, so it treats P1's (earlier) date as the practical start
-for scheduling — some students genuinely are in school that day, and it's
-the more inclusive definition.
-
-**Children's Day update:** "first Friday of October" checked out for 2024,
-2025, and 2026 — including against a source citing the official MOE press
-release directly. 2020-2023 actually used a different rule (Friday of Term
-4 Week 4); the policy appears to have changed after 2023, so the current
-first-Friday rule is what's implemented.
-
-**Public holidays now sync automatically** — Chinese New Year, Hari Raya,
-Vesak Day, and Deepavali follow lunar/religious calendars that can't be
-calculated, but they no longer need manual updates either. See "Public
-holiday data" below for how the app keeps this current on its own.
-
-For anything the calendar doesn't catch (a one-off closure day, or a year
-where the formula's soft spot applies), a small date field sits next to
-each day 2+ of a suspension — tap it to override that day's date manually.
-Changing one day's date doesn't shift any other day.
-
-## Public holiday data
-
-**Public holidays now update themselves automatically.** MOM publishes an
-evergreen "Singapore Public Holidays (consolidated)" dataset on data.gov.sg
-that they update in place every year — unlike their per-year datasets,
-which get a brand new ID annually and can't be tracked automatically, this
-one dataset ID stays the same and just grows. The app quietly checks it
-every time it loads, and if it finds new or changed data, updates
-`holidays/singapore` in Firestore on its own.
-
-This is genuinely tested against the real dataset — pulled a live response
-and confirmed it reproduces the exact 2026 public holiday list byte for
-byte, including deriving the "observed" Monday for holidays that land on a
-Sunday (the dataset only lists the raw holiday date; Singapore's actual
-rule — Sunday holidays get the following Monday off in lieu, Saturday ones
-don't — is computed here since it isn't in the source data).
-
-**This is a best-effort convenience, not a dependency.** If a browser
-blocks the request, data.gov.sg is briefly down, or they ever change their
-API, the sync just silently does nothing and the app keeps using whatever
-was already stored — exactly the same as before this existed. Nothing
-breaks either way. If you ever want to check it's working: open browser
-dev tools → Network tab → look for a request to `data.gov.sg` on page
-load.
-
-**Manual updates are now just a safety net, not a requirement** — but the
-same process as before still works if you ever want to force a specific
-year's list or the dataset stops updating:
-1. Firebase Console → Firestore Database → Data → `holidays` → `singapore`
-   → edit the `publicHolidays` array
-2. Or paste me the new list and I'll help build the updated document
-
-## Suspension workflow (v2.14 — unified entry, auto-derived in-school dates)
-
-Logging a suspension works as one flow instead of separate ISS/OSS
-records:
-1. Student name, class (dropdown), and reason (required)
-2. Pick the **total days** (1-14)
-3. Pick how many are **in-school** vs **out-of-school** — these two
-   dropdowns are linked, so setting one recalculates the other to always
-   sum to the total
-4. **Out-of-school dates are the ones you choose** — they default to the
-   earliest available school days from the start date, each with a small
-   calendar icon (to its left) to override to a specific date.
-5. **In-school dates are derived automatically** by default, not
-   separately chosen: whichever of the suspension's total school days
-   aren't used for out-of-school become the in-school days. Example: a
-   4-day suspension starting 24 Aug, with out-of-school moved to 25 and 27
-   Aug, leaves 24 and 26 Aug as the in-school days — computed
-   automatically the moment the out-of-school dates are set or changed.
-   Each in-school day also has its own calendar icon if you need to move
-   it to a specific date instead — once moved, that day stays put even if
-   you later change the out-of-school dates or day counts (every other,
-   still-automatic in-school day keeps adjusting as usual).
-6. Each in-school day still needs a **location** booked through the
-   availability list below it — every day shows "Pending Location" until
-   you tap **GO** or **MPR 1** (GO capacity 1, MPR 1 capacity 4) to assign
-   it. Chips show the count (e.g. `GO (0/1)`), turn green when free, and
-   show the occupying student's name (first 20 characters) once booked —
-   whether by this suspension or another one already on file. A full
-   location can still be tapped — it's a warning, not a hard block, for
-   genuine emergencies. All in-school days need a location booked before
-   saving.
-
-The whole thing saves as **one log entry**, regardless of how the ISS/OSS
-days are split or interleaved — this replaces the earlier "linked
-suspension" feature (two records tied together), which is no longer
-needed now that a single record can natively hold a mix of both types.
-
-## Class dropdown
-
-`studentClass` is a dropdown everywhere (discipline log, suspensions,
-parent meetings), formatted `P<level>-<number>`. P1 and P2 go up to 8
-classes each (`P1-1`...`P1-8`), P3 through P6 go up to 6 each (`P3-1`...
-`P3-6`). Change the range in `buildClassOptions()` near the top of `app.js`
-if your school's numbers differ.
-
-## Parent Meeting
-
-A third log alongside Discipline and Suspensions: student name, class,
-who's attending (multiple people allowed — Father, Mother, Grandfather,
-Grandmother, Guardian, or Others with a free-text field), date, and reason.
-Same editing, audit trail, and remove/restore pattern as the other two logs.
-
-## Standardized log headers
-
-All three logs (and the Dashboard) share one layout:
-- **Help (?) and the backup/download icon** both live in the navy header,
-  top-right, Help to the left of Download.
-- **Nav pills** (Discipline Log / Suspension Log / Parent Meeting) all fit
-  on one line next to the home icon.
-- **Filter pills** sit on their own row.
-- **Tapping a level** (P1-P6) filters the list below to that level and
-  shows one equally-sized pill per active class in it, in place of where
-  a sort control used to be — tapping a class pill narrows further to
-  just that class.
-- Then search, then the list, always sorted by date.
-
-**Suspension Log filters**: Show All / This Week / Upcoming / Completed.
-"This Week" means the suspension has at least one day falling in the
-current Monday-Sunday week, regardless of when it started or ends
-(distinct from the status dot on each card, which is based on today
-specifically). **Parent Meeting Log** uses the identical four filters and
-the same colored status dot (red = this week, yellow-orange = upcoming,
-green = completed) — it previously had no status concept at all.
-
-**Creating a suspension or meeting on its own** (not tied to a new
-discipline entry) now happens from the **Dashboard**, not from the log
-pages themselves — three compact buttons sit in one row there: "+ New
-Entry" (the guided wizard), "+ New Suspension Only", and "+ New Meeting
-Only". The Discipline Log, Suspension Log, and Parent Meeting Log pages no
-longer have their own creation buttons at all.
-
-## Collapsible entry cards
-
-Every entry across all three logs is collapsed by default, showing only
-name, date, class, logged by, and the issue/reason — plus the status dot.
-Tap the ▼ arrow on the right to expand the full detail (follow-ups, audit
-trail, day-by-day schedule, edit/remove buttons); it becomes a ▲ while
-open, and tapping it again collapses back. Jumping to a record via a
-"related records" link automatically expands it.
-
-## Dropdown-based entry lists
-
-All three logs went back to always showing every entry as a full stacked
-list (like the very original design), rather than a dropdown-select-one
-pattern tried in an earlier version — that felt like it hid too much.
-Search still narrows what's shown.
-
-**Discipline Log filters** are now three pills: **Show All**, **In
-Progress**, **Resolved**. The **Open** status has been removed entirely —
-new entries go straight to "In Progress." Any entries logged before this
-change that were still "Open" keep displaying correctly (they show under
-Show All), just without a dedicated filter pill of their own, since new
-entries can no longer be created or set to that status. A separate **Sort
-by** dropdown (Date / Name / Class / Level) controls ordering independent
-of the filter pills.
-
-**Suspension Log** and **Parent Meeting Log** keep their existing filters
-(Active/Upcoming/Completed tabs, and Deleted) — only the display changed,
-from dropdown-select to always-full-list.
-
-## Date format
-
-Dates display as **DD MMM YYYY** (e.g. `02 Aug 2026`) throughout the app.
-
-## Editing entries
-
-Individual follow-up notes on a discipline entry can also be edited (✎) or
-removed (✕) directly — for typos or notes entered against the wrong entry.
-Both are tracked in that entry's audit trail (what changed and, for edits,
-the before/after text), same as everything else. Removing a follow-up asks
-for a plain confirmation, not the delete password — it's a much lower-
-stakes action than removing a whole entry.
-
-Both discipline log entries and suspensions can now be edited (click a card
-to expand it → **"Edit entry"**). Every field change is recorded in that
-entry's audit trail — e.g. `Entry edited — Issue changed from "..." to
-"..."` — with who made the change and when, the same way status changes and
-follow-ups already were. Nothing about an edit is silent; the full history
-stays visible under "Show audit trail."
-
-## Removing entries
-
-Clicking **"Remove entry"** (inside an expanded grooming entry) or
-**"Remove"** (on a suspension or meeting) asks for a password before
-deleting it. This is **permanent and immediate** — there's no recycling
-bin, no 30-day recovery window, and no way to undo it once confirmed.
-Removing an entry does not affect the students it's about; it only
-deletes that specific logged record.
-
-If you'd rather entries were kept forever until manually restored (the
-original behavior), change `DELETED_RETENTION_DAYS` near the top of
-`app.js` to a very large number, or ask me to remove the auto-purge
-entirely and restore the old delete-blocking Firestore rule.
-
-The password is set in `app.js`:
-```
-const DELETE_PASSWORD = "shsm";
-```
-Change it there (and re-commit to GitHub) any time you want a different one.
-
-**Important:** because this is a plain client-side app with no server, this
-password only stops accidental clicks in the interface — it's not
-cryptographically secure. Anyone who opened their browser's developer tools
-could bypass it and call the underlying delete function directly. It's a
-"are you sure, and do you know the code" gate, not a real access-control
-boundary. Real security here would need Firestore rules keyed to something
-the client can't see or fake (e.g. real per-teacher accounts with roles),
-which is a bigger step up from this project's current design.
-
-## Pull-to-refresh
-
-Once added to the Home Screen, the app runs in "standalone" mode, which
-hides the browser's address bar — and with it, the browser's own
-pull-to-refresh gesture, since that's tied to the address bar rather than
-the page itself. This adds a custom one: pull down from the very top of
-any screen and release to refresh.
-
-It does more than a plain reload — it also unregisters the service worker
-and clears its cache first, so it reliably fetches whatever's actually
-live on GitHub Pages right now. This is the same fix that "clear site
-data" has been standing in for after every update; pulling to refresh
-should now do the same thing in one gesture, without digging through
-Settings.
-
-## Data safety / backups
-
-Two layers of protection, on top of the 30-day recovery window above:
-
-1. **Automatic rolling snapshot.** Every time data changes, the full current
-   dataset (all incidents + all suspensions) is mirrored into a single
-   document: `backups/latest` in Firestore. If a bug ever corrupts or
-   overwrites something in the live data, open Firebase Console →
-   Firestore Database → Data → `backups` → `latest` to see the most recent
-   good copy in full, and manually copy values back into the affected
-   record.
-2. **Manual download.** The circular backup icon (top right of the header)
-   downloads
-   a dated `.json` file of everything, right to your device. Worth doing
-   this occasionally (e.g. weekly) and keeping a copy somewhere like Google
-   Drive — this one is safe even if your Firebase project itself ever has a
-   problem, since it isn't stored in Firebase at all.
-3. **Google Sheets mirror (optional but recommended).** Every discipline
-   entry, suspension, and parent meeting is mirrored into **three separate
-   tabs** in a Google Sheet you control — completely independent of
-   Firebase. Setup:
-   1. Go to https://sheets.new to create a fresh spreadsheet
-   2. **Extensions → Apps Script**
-   3. Delete the placeholder code, paste in the contents of `apps-script.gs`
-      (in this folder)
-   4. Click **Deploy → New deployment** → gear icon → **Web app**
-      - Execute as: **Me**
-      - Who has access: **Anyone**
-   5. Click **Deploy**, click **Authorize access**, and approve (it's your
-      own script — this prompt is expected)
-   6. Copy the **Web app URL** it gives you
-   7. In `app.js`, find the line near the top that says
-      `const SHEET_WEBHOOK_URL = "...";` and replace it with that URL
-   8. Commit the updated `app.js` to GitHub (same edit-in-browser process as
-      before)
-
-   From then on, four tabs fill in automatically — **Discipline Log**,
-   **Suspension Log**, **Time Out Log**, **Parent Meeting Log** — each with
-   columns matching that log's actual fields (e.g. Discipline Log has
-   Student Name, Class, Date, Issue, Action Taken, Status, Follow-ups,
-   Logged By). Each tab is created the first time a record of that type
-   arrives.
-
-   **Already set up before the Time Out Log existed?** Paste the updated
-   `apps-script.gs` into your Apps Script project and redeploy it (Deploy →
-   Manage deployments → edit → Version: New version → Deploy). The Web app
-   URL stays the same, so `app.js` doesn't need changing. Until you do,
-   Time Outs still save in the app — they just won't reach the Sheet.
-
-   **Each record is one row that updates in place**, not a new row per
-   action — editing an entry, changing its status, or adding a follow-up
-   overwrites that same row (matched by an internal ID in column B) rather
-   than piling up duplicate rows. Follow-up notes on a discipline entry all
-   accumulate into that row's single "Follow-ups" cell, one per line, each
-   stamped with its own date.
-
-   If you had the old single-tab version running, your existing "Log" tab
-   is left alone — the new tabs are created alongside it, and you can
-   delete the old one once you've confirmed the new tabs are working.
-
-None of these are a substitute for the others — they're deliberately
-redundant. Firestore is the live source of truth the app reads from; the
-rolling snapshot and the Sheet are both independent copies for the (hopefully
-rare) day something goes wrong.
-
-## Making changes later
-
-Edit the files directly on GitHub (click a file → pencil icon → edit → commit),
-or download the repo, edit locally, and re-upload. Changes go live within
-about a minute of committing — no build or deploy command needed.
-
-## Icons
-
-The current icon crops tightly to the book artwork and places it on a
-parchment (#E3E1D6) background matching the app's own color palette, so the
-dark navy book stands out clearly rather than blending into a dark backdrop.
-Swap `icons/icon-192.png` and `icons/icon-512.png` for your school's own
-branding any time — same filenames, same sizes.
+# Discipline Diary
+
+A shared log for the discipline team: grooming warnings, suspensions, time
+outs and parent meetings, with a dashboard, a students' watchlist and annual
+reports.
+
+Plain HTML/CSS/JavaScript with no build step. Firebase (sign-in and the
+Firestore database) is loaded straight from Google's CDN, and the site is
+hosted free on GitHub Pages. Everything can be maintained from a browser.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `index.html` | The page shell that loads everything else |
+| `app.js` | The whole app |
+| `style.css` | All styling |
+| `sw.js` | Service worker: lets the app install to a home screen and open offline |
+| `manifest.json`, `icons/` | Home-screen app name and icons |
+| `firestore.rules` | Database security rules; published in the Firebase console, not on GitHub |
+| `apps-script.gs` | Google Sheet sync; pasted into Apps Script, not on GitHub |
+
+## Releasing a change
+
+1. Bump `APP_VERSION` near the top of `app.js` **and** `CACHE` at the top of
+   `sw.js`, together. The version shows in the header and in the ? help, so
+   you can check which version a teacher's device is running.
+2. On GitHub, upload the changed files over the old ones and commit. GitHub
+   Pages updates within a minute or two.
+3. Devices pick up the new version the next time the app is opened (sometimes
+   one more reload).
+4. **Only if `firestore.rules` changed:** Firebase console → Firestore
+   Database → Rules → paste the whole file → **Publish**.
+5. **Only if `apps-script.gs` changed:** see "Google Sheet sync" below.
+
+## Sign-in and access
+
+- Teachers sign in with Google. Only **verified @moe.edu.sg** accounts are
+  accepted, and only if they're on the **Authorised Teachers List**
+  (Settings).
+- Three tiers:
+  - **Owner** can do everything, including adding and removing admins and
+    handing over ownership (Settings → Authorised Teachers List). The address
+    in `OWNER_EMAIL` (in `app.js`) and the matching address in
+    `firestore.rules` is a permanent fallback owner, so access can always be
+    recovered.
+  - **Admins** can add and remove authorised teachers.
+  - **Authorised teachers** can use every log.
+- The rules check access on every request, so removing someone cuts them off
+  immediately, even mid-session.
+
+## The four logs (Firestore collections)
+
+Every record also has `loggedBy`, `loggedByUid`, `createdAt` and a `history`
+audit trail (every create, edit and status change, with who and when).
+
+- **Grooming Log** (`incidents`): student, class, date, and `issues` — one or
+  more grooming issues (Long Hair, Uniform, …), each with its own
+  1st / 2nd / Final Warning stage and deadline. Also follow-ups and links to
+  related suspensions, time outs and meetings. A few very old entries use an
+  earlier single-`issue` format; they still display, but don't count toward
+  the watchlist.
+- **Suspension Log** (`suspensions`): reasons (`reasons` array plus a
+  combined `reason` text), `startDate`, `totalDays`, and `days` — one entry
+  per day, each in-school (`ISS`, with a booked room) or out-of-school
+  (`OSS`).
+- **Time Out Log** (`timeOuts`): same shape as a suspension, plus `toType`
+  (Recess, Lesson, CCA or Learning Experience). In-school days carry a
+  free-text location and supervising administrator.
+- **Parent Meet** (`parentMeetings`): date, attendees, one or more reasons
+  (each with a Victim/Offender/Both/NA status), and `pmStatus` (Postponed or
+  Cancelled; blank means scheduled). Postponed and cancelled meetings stay in
+  the log but aren't counted in any totals.
+
+**Reasons** for suspensions, time outs and parent meetings come from one
+grouped offence list (`OFFENCE_GROUPS` in `app.js`: 12 categories, 34
+offences, plus "Others" with free text). Category headings are display-only.
+To rename an offence without breaking older records, add the old name to
+`LEGACY_REASON_ALIASES`.
+
+**Deleting** an entry is permanent. A 5-second Undo appears straight after.
+
+## Students' Watchlist
+
+This semester's records only (Terms 1–2 or Terms 3–4). Grooming entries count
+once each, at the highest warning any of their issues reached. A student
+needs to meet just **one** criterion in a tier and is shown in the highest
+tier they qualify for.
+
+- **High Risk:** 2+ suspensions, 3+ final warnings, 7+ 2nd warnings, or 4+ time outs
+- **Medium Risk:** 1 suspension, 2 final warnings, 4–6 2nd warnings, or 2–3 time outs
+- **Low Risk:** 1 final warning, 1–3 2nd warnings, or 1 time out
+
+The rules live in `riskTierFor()` in `app.js`. The plain-language list in the
+app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
+
+## Settings
+
+- **Annual Summary Reports:** per-year report with a print / save-as-PDF button.
+- **Classes For The Year:** the class list for the current year
+  (`settings/classConfig`).
+- **Holidays / School Closure / HBL Days:** public and school holidays and
+  closure days (`holidays/singapore`, `settings/schoolCalendarOverrides`,
+  `settings/schoolClosureDays`). Used to skip non-school days when setting
+  deadlines and suspension dates.
+- **Authorised Teachers List:** who can sign in (see "Sign-in and access").
+
+## Backups
+
+- **Automatic:** after every change, the app saves a copy of every record to
+  Firestore. `backups/index` lists the parts: one per log per year (e.g.
+  `backups/incidents-2026`), with a large year split further (`-p2`, `-p3`) to
+  stay under Firestore's 1 MB document limit. Only changed parts are
+  rewritten. `backups/latest` is the old single-document backup, now just a
+  pointer. If a backup can't be saved, a red warning bar appears at the top
+  of the app.
+- **Manual:** the download icon (top right) saves everything as a `.json`
+  file. Do this before any big clean-up.
+- The rules never let the app delete backups.
+
+## Google Sheet sync
+
+Every change is also written to a Google Sheet, one row per record, updated
+in place: tabs "Discipline Log", "Suspension Log", "Time Out Log" and
+"Parent Meeting Log". Firestore is the source of truth; the Sheet is a
+convenience copy.
+
+The Sheet's web-app address is in the public `app.js`, so each post carries
+the teacher's sign-in token. The script checks it with Google and accepts
+only verified @moe.edu.sg accounts. Rejected posts are noted on a
+"Sync Errors" tab (time and reason only). Text starting with `=`, `+`, `-`
+or `@` is stored as plain text, never run as a formula.
+
+**First-time setup**
+1. Create a Google Sheet → Extensions → Apps Script.
+2. Paste in all of `apps-script.gs` and Save.
+3. Deploy → New deployment → gear → Web app. Execute as: **Me**. Who has
+   access: **Anyone**. Deploy, and authorise when asked.
+4. Put the Web app URL into `SHEET_WEBHOOK_URL` near the top of `app.js`.
+
+**Updating the script (keeps the same URL)**
+1. Paste the new `apps-script.gs` over the old code and Save.
+2. Deploy → **Manage deployments** → pencil (Edit) → Version: **New version**
+   → Deploy, and authorise if asked. Don't use "New deployment", which gives
+   a new URL.
+
+If rows stop appearing, check the "Sync Errors" tab.
+
+## Offline
+
+The app opens without a connection (the service worker caches it) and shows
+an "offline" note. Entries can't load or save until the device reconnects.
+
+## Tests
+
+The app has been checked with automated browser tests that run the real
+`app.js` against a stand-in database. They aren't part of this folder;
+nothing here needs building or installing.

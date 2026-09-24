@@ -20,22 +20,27 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "2.85.0";
+const APP_VERSION = "2.91.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
 const SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyEXCtdtriLO9Qli9OIEHLH2348T9oc5VFEX9Qr7_nsrEv8zoYlrZftMExpEjcg4h_T/exec";
 
-function logToSheet(record) {
+// Every post carries the signed-in teacher's Firebase ID token. The Apps
+// Script checks it with Google before writing anything, so knowing the
+// (public) web-app URL alone isn't enough to add or change Sheet rows.
+async function logToSheet(record) {
   if (!SHEET_WEBHOOK_URL || SHEET_WEBHOOK_URL.startsWith("PASTE_")) return;
   try {
+    const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : "";
+    if (!idToken) return;
     fetch(SHEET_WEBHOOK_URL, {
       method: "POST",
       mode: "no-cors",
-      body: JSON.stringify(record),
+      body: JSON.stringify({ ...record, idToken, origin: location.origin }),
     }).catch(() => {});
   } catch (e) {
-    // ignore
+    // best-effort — Firestore remains the source of truth
   }
 }
 
@@ -147,36 +152,74 @@ function timeOutTypeBreakdown(records) {
   records.forEach((t) => { counts[counts.hasOwnProperty(t.toType) ? t.toType : "Recess"]++; });
   return counts;
 }
-function composeReasonValue(form, draft, fieldName) {
-  fieldName = fieldName || "reason";
-  const sel = form.querySelector(`[name="${fieldName}"]`);
-  const val = sel ? sel.value : (draft?.reasonCategory || "");
-  if (val !== "Others") return val;
-  const othersEl = form.querySelector(`.dd-reason-others-input[data-for="${fieldName}"]`);
-  const text = (othersEl?.value ?? draft?.reasonOthersText ?? "").trim();
-  return text ? `Others — ${text}` : "Others";
-}
-function renderReasonPicker(selectedCategory, othersText, fieldName) {
-  fieldName = fieldName || "reason";
-  return `
-    <label class="dd-label">Reason <span class="dd-mono-muted" style="font-size:11px;text-transform:none">scroll for more</span></label>
-    <select class="dd-input dd-reason-select" name="${fieldName}" size="5" required>
-      <option value="" disabled ${selectedCategory ? "" : "selected"}>Select reason…</option>
-      ${REASON_OPTIONS.map((r) => `<option value="${escapeHtml(r)}" ${selectedCategory === r ? "selected" : ""}>${escapeHtml(r)}</option>`).join("")}
-    </select>
-    ${selectedCategory === "Others" ? `
-    <label class="dd-label">Please specify</label>
-    <input class="dd-input dd-reason-others-input" data-for="${fieldName}" value="${escapeHtml(othersText || "")}" />` : ""}`;
-}
 // Splits an already-saved reason (which might be a plain category, or a
 // composed "Others — some text" string from a past edit) back into the
 // category dropdown's value and the Others box's text, for editing.
 function splitSavedReason(saved) {
   if (!saved) return { category: "", othersText: "" };
-  if (REASON_OPTIONS.includes(saved)) return { category: saved, othersText: "" };
+  saved = canonicalReason(saved);
+  if (REASON_OPTIONS.includes(saved) || PM_REASON_OPTIONS.includes(saved)) return { category: saved, othersText: "" };
   const m = /^Others\s*—\s*(.*)$/.exec(saved);
   if (m) return { category: "Others", othersText: m[1] };
   return { category: "Others", othersText: saved };
+}
+// Multi-select reason checklist shared by the Suspension and Time Out
+// forms: the grouped offence list (bold, unselectable category headers) as
+// a tick list, so an entry can carry several reasons. "Others" reveals a
+// free-text box. `idPrefix` ("susp" / "to") keeps the two lists' ids apart.
+function renderMultiReasonPicker(selected, othersText, idPrefix) {
+  selected = selected || [];
+  return `
+    <label class="dd-label">Reason(s) <span class="dd-mono-muted" style="font-size:11px;text-transform:none">select all that apply</span></label>
+    <div class="dd-pm-reason-list" id="${idPrefix}-reason-list">
+      ${[...OFFENCE_GROUPS, { title: "", items: REASON_EXTRA_OPTIONS }].map((g) => `
+      ${g.title ? `<div class="dd-reason-group-head">${escapeHtml(g.title)}</div>` : `<div class="dd-reason-group-head dd-reason-group-head-blank"></div>`}
+      ${g.items.map((r) => `
+        <div class="dd-pm-reason-row">
+          <label class="dd-pm-reason-check">
+            <input type="checkbox" class="dd-multi-reason-cb" value="${escapeHtml(r)}" ${selected.includes(r) ? "checked" : ""} />
+            <span>${escapeHtml(r)}</span>
+          </label>
+          ${r === "Others" && selected.includes("Others") ? `
+          <div class="dd-pm-reason-extra">
+            <input class="dd-input dd-multi-reason-others-input" placeholder="Please specify" value="${escapeHtml(othersText || "")}" />
+          </div>` : ""}
+        </div>`).join("")}`).join("")}
+    </div>`;
+}
+// Composes the display/search `reason` string from a multi-reason draft,
+// in list order ("Assault; Fighting; Others — …"). Existing screens,
+// search, the Sheet sync and reports all keep reading this one string.
+function composeMultiReason(selected, othersText) {
+  const text = (othersText || "").trim();
+  return REASON_OPTIONS.filter((r) => (selected || []).includes(r))
+    .map((r) => r === "Others" ? (text ? `Others — ${text}` : "Others") : r)
+    .join("; ");
+}
+// Rehydrates a saved suspension's / time out's reasons for editing: new records carry a
+// `reasons` array; older ones only have the single `reason` string.
+function multiReasonsFromSaved(t) {
+  if (Array.isArray(t?.reasons) && t.reasons.length) {
+    return { selected: t.reasons.map(canonicalReason), othersText: t.reasonOthersText || "" };
+  }
+  const split = splitSavedReason(t?.reason);
+  return split.category ? { selected: [split.category], othersText: split.othersText } : { selected: [], othersText: "" };
+}
+// Structured fields saved alongside `reason` on a suspension / time out.
+function multiReasonFields(d) {
+  const reasons = REASON_OPTIONS.filter((r) => (d.reasons || []).includes(r));
+  return { reasons, reasonOthersText: reasons.includes("Others") ? (d.reasonOthersText || "").trim() : "" };
+}
+// Wires a renderMultiReasonPicker checklist inside `form` to draft `d`.
+function attachMultiReasonListeners(form, d) {
+  if (!Array.isArray(d.reasons)) d.reasons = [];
+  form.querySelectorAll(".dd-multi-reason-cb").forEach((cb) => cb.addEventListener("change", () => {
+    if (cb.checked) { if (!d.reasons.includes(cb.value)) d.reasons.push(cb.value); }
+    else d.reasons = d.reasons.filter((x) => x !== cb.value);
+    renderKeepingModalScroll();
+  }));
+  const othersEl = form.querySelector(".dd-multi-reason-others-input");
+  if (othersEl) othersEl.addEventListener("input", () => { d.reasonOthersText = othersEl.value; });
 }
 // Builds both the structured `reasons` array (one entry per selected
 // offence, with its own Victim/Offender/Both/NA status where applicable)
@@ -207,11 +250,11 @@ function composePmReasonData(d, prefix) {
 // (parsed with splitSavedReason), with no status ever recorded for them.
 function pmReasonsFromSaved(m) {
   if (Array.isArray(m?.reasons) && m.reasons.length) {
-    const selected = m.reasons.map((r) => r.category);
+    const selected = m.reasons.map((r) => canonicalReason(r.category));
     const statuses = {};
     let othersText = "";
     m.reasons.forEach((r) => {
-      if (r.status) statuses[r.category] = r.status;
+      if (r.status) statuses[canonicalReason(r.category)] = r.status;
       if (r.category === "Others") othersText = r.othersText || "";
     });
     return { selected, statuses, othersText };
@@ -226,7 +269,7 @@ function pmReasonsFromSaved(m) {
 // Renders the multi-select "Reason(s) for meeting" checklist shared by the
 // standalone Parent Meet form and the "tag a parent meeting" block
 // inside the Suspension form. A compact scrollable checklist (not a big
-// pill grid) since the offence list runs to ~29 options. Each checked
+// pill grid) since the offence list runs to ~40 options. Each checked
 // reason shows its own Victim/Offender/Both/NA status pills directly
 // beneath it, except Academic Matters and Learning Needs, which skip
 // status entirely since they aren't disciplinary offences.
@@ -237,7 +280,9 @@ function renderPmReasonPicker(d, prefix) {
   return `
     <label class="dd-label">Reason(s) for meeting <span class="dd-mono-muted" style="font-size:11px;text-transform:none">select all that apply</span></label>
     <div class="dd-pm-reason-list">
-      ${PM_REASON_OPTIONS.map((r) => {
+      ${[...OFFENCE_GROUPS, { title: "", items: PM_REASON_EXTRA_OPTIONS }].map((g) => `
+      ${g.title ? `<div class="dd-reason-group-head">${escapeHtml(g.title)}</div>` : `<div class="dd-reason-group-head dd-reason-group-head-blank"></div>`}
+      ${g.items.map((r) => {
         const checked = selected.includes(r);
         const needsStatus = !NO_STATUS_PM_REASONS.has(r);
         const status = statuses[r] || "NA";
@@ -257,30 +302,39 @@ function renderPmReasonPicker(d, prefix) {
             ${isOthers ? `<input class="dd-input dd-pm-others-input" data-pm-prefix="${prefix}" placeholder="Please specify" value="${escapeHtml(othersText)}" />` : ""}
           </div>` : ""}
         </div>`;
-      }).join("")}
+      }).join("")}`).join("")}
     </div>`;
 }
 const ATTENDEE_OPTIONS = ["Father", "Mother", "Grandfather", "Grandmother", "Guardian", "Others"];
-const REASON_OPTIONS = [
-  "Open Defiance", "Verbal Bullying", "Hurtful Behaviour", "Assault", "Physical Bullying",
-  "Fighting", "Skipping Classes", "Truancy", "Leaving School Grounds Without Permission",
-  "Vandalism", "Unauthorised Device Use", "Cheating", "Forgery", "Cyberbullying", "Theft",
-  "Smoking", "Vape-Related Offences", "Inhalant Abuse", "Pornography-Related Offence",
-  "Sexual Misconduct", "Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons",
-  "Illegal / Criminal Offences Causing Grievous Hurt", "Others",
+// Offence list, grouped by category. Group headers are display-only (bold,
+// never selectable) — only the items underneath are stored as reasons.
+const OFFENCE_GROUPS = [
+  { title: "1. Physical Aggression & Bullying", items: ["Hurtful Behaviour", "Assault", "Physical Bullying", "Fighting"] },
+  { title: "2. Respect & Verbal Conduct", items: ["Insensitive Acts/Remarks", "Vulgar/Abusive Language or Gestures", "Verbal Bullying"] },
+  { title: "3. Behaviour & Defiance", items: ["Disruptive/Playful Behaviour", "Uncooperative Behaviour", "Open Defiance"] },
+  { title: "4. Attendance & School Boundaries", items: ["Skipping Classes", "Truancy", "Leaving School Grounds Without Permission"] },
+  { title: "5. Property & Environment", items: ["Littering", "Negligent Damage of Property", "Vandalism"] },
+  { title: "6. Device Use", items: ["Unauthorised Device Use"] },
+  { title: "7. Learning & Academic Integrity", items: ["Cheating", "Forgery"] },
+  { title: "8. Online Conduct", items: ["Online Insensitive Misconduct", "Cyberbullying"] },
+  { title: "9. Theft", items: ["Theft"] },
+  { title: "10. Smoking, Vaping & Substance-Related Offences", items: ["Smoking", "Vape-Related Offences", "Vaping with Etomidate", "Inhalant Abuse"] },
+  { title: "11. Sexual & Explicit Conduct", items: ["Pornography-Related Offence", "Sexual Misconduct"] },
+  { title: "12. Other High-Alert Offences", items: ["Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons", "Other Illegal / Criminal Offences Causing Grievous Hurt"] },
 ];
-// Reason list for the Parent Meet "reason(s) for meeting" picker only
-// (kept separate from REASON_OPTIONS, which stays as-is for the
-// Suspension log's own "Reason" field — Academic Matters/Learning Needs
-// aren't suspension-worthy reasons, so they're not added there).
-const PM_REASON_OPTIONS = [
-  "Open Defiance", "Verbal Bullying", "Hurtful Behaviour", "Assault", "Physical Bullying",
-  "Fighting", "Skipping Classes", "Truancy", "Leaving School Grounds Without Permission",
-  "Vandalism", "Unauthorised Device Use", "Cheating", "Forgery", "Cyberbullying", "Theft",
-  "Smoking", "Vape-Related Offences", "Inhalant Abuse", "Pornography-Related Offence",
-  "Sexual Misconduct", "Gambling", "Scams", "Gangsterism", "Arson", "Possession of Weapons",
-  "Illegal / Criminal Offences Causing Grievous Hurt", "Academic Matters", "Learning Needs", "Others",
-];
+const OFFENCE_LIST = OFFENCE_GROUPS.flatMap((g) => g.items);
+// Extra (ungrouped) options listed after the offence groups.
+const REASON_EXTRA_OPTIONS = ["Others"];
+// The Parent Meet picker also offers two non-disciplinary reasons.
+const PM_REASON_EXTRA_OPTIONS = ["Academic Matters", "Learning Needs", "Others"];
+const REASON_OPTIONS = [...OFFENCE_LIST, ...REASON_EXTRA_OPTIONS];
+const PM_REASON_OPTIONS = [...OFFENCE_LIST, ...PM_REASON_EXTRA_OPTIONS];
+// Reasons renamed in the updated offence list — old saved records map onto
+// the new name when opened for editing, instead of falling into "Others".
+const LEGACY_REASON_ALIASES = {
+  "Illegal / Criminal Offences Causing Grievous Hurt": "Other Illegal / Criminal Offences Causing Grievous Hurt",
+};
+const canonicalReason = (r) => LEGACY_REASON_ALIASES[r] || r;
 // Academic Matters/Learning Needs aren't disciplinary offences, so they
 // never show or store a Victim/Offender/Both/NA status.
 const NO_STATUS_PM_REASONS = new Set(["Academic Matters", "Learning Needs"]);
@@ -291,7 +345,10 @@ const PM_STATUS_OPTIONS = ["Victim", "Offender", "Both", "NA"];
 // (P-level counters, This Week/Upcoming/Completed counts, calendar and
 // annual-report totals) via isPmCounted() below, so they don't inflate
 // how many meetings actually took place.
-const PM_MEETING_STATUS_OPTIONS = ["Scheduled", "Postponed", "Cancelled"];
+// "Scheduled" (the default/normal state) isn't a selectable pill — it's
+// just what a meeting is when neither Postponed nor Cancelled is active.
+// Clicking an already-active pill toggles it back off (to Scheduled).
+const PM_MEETING_STATUS_OPTIONS = ["Postponed", "Cancelled"];
 const PM_MEETING_STATUS_STYLE = {
   Postponed: { ink: "#B8863B", label: "POSTPONED" },
   Cancelled: { ink: "#8A8571", label: "CANCELLED" },
@@ -1022,6 +1079,7 @@ const state = {
   studentViewClass: null,
   studentViewFromSection: "dashboard",
   showWatchlistInfo: false,
+  backupError: "",
   _classDraft: null,
   calendarViewMonth: null, // set on first render to the current month
   dayViewDate: null, // set on first render to today
@@ -1413,20 +1471,87 @@ async function syncPublicHolidaysFromDataGovSg() {
   } catch (e) { /* silent — best-effort background sync */ }
 }
 
+// ---------- Rolling Firestore backup ----------
+// Firestore caps a single document at 1 MB, so the backup is split: one
+// document per log per year ("backups/incidents-2026"), and a year that
+// grows past BACKUP_CHUNK_BYTES is further split into numbered parts
+// ("backups/incidents-2026-p2"). "backups/index" lists every current part.
+// Only parts whose content actually changed are rewritten. If a write
+// fails, state.backupError shows a warning bar instead of failing silently.
+const BACKUP_CHUNK_BYTES = 700000;
+const BACKUP_COLLECTIONS = [
+  { key: "incidents", dateField: "date" },
+  { key: "suspensions", dateField: "startDate" },
+  { key: "timeOuts", dateField: "startDate" },
+  { key: "parentMeetings", dateField: "date" },
+];
 let backupTimer = null;
+const lastBackupJson = {};
+let backupIndexIds = null;
+// Groups every record into backup parts: { "incidents-2026": [...], ... }.
+function buildBackupParts() {
+  const parts = {};
+  BACKUP_COLLECTIONS.forEach(({ key, dateField }) => {
+    const byYear = {};
+    (state[key] || []).forEach((r) => {
+      const year = /^\d{4}/.test(r[dateField] || "") ? r[dateField].slice(0, 4) : "undated";
+      (byYear[year] = byYear[year] || []).push(r);
+    });
+    Object.entries(byYear).forEach(([year, records]) => {
+      records.sort((x, y) => String(x.id).localeCompare(String(y.id)));
+      const chunks = [[]];
+      let size = 0;
+      records.forEach((r) => {
+        const len = JSON.stringify(r).length;
+        if (size + len > BACKUP_CHUNK_BYTES && chunks[chunks.length - 1].length) { chunks.push([]); size = 0; }
+        chunks[chunks.length - 1].push(r);
+        size += len;
+      });
+      chunks.forEach((c, i) => { parts[`${key}-${year}${i ? `-p${i + 1}` : ""}`] = c; });
+    });
+  });
+  return parts;
+}
 function writeBackupSnapshot() {
   if (!state.dataLoaded || !state.suspLoaded || !state.toLoaded || !state.pmLoaded) return;
   clearTimeout(backupTimer);
   backupTimer = setTimeout(async () => {
+    const parts = buildBackupParts();
+    const now = Date.now();
     try {
-      await setDoc(doc(db, "backups", "latest"), {
-        updatedAt: Date.now(),
-        incidents: state.incidents,
-        suspensions: state.suspensions,
-        timeOuts: state.timeOuts,
-        parentMeetings: state.parentMeetings,
-      });
-    } catch (e) { /* non-fatal */ }
+      if (backupIndexIds === null) {
+        const snap = await getDoc(doc(db, "backups", "index"));
+        backupIndexIds = snap.exists() ? (snap.data().parts || []) : [];
+      }
+      // Parts that no longer exist (e.g. a year shrank back to one part)
+      // are emptied rather than deleted — the rules never allow deleting
+      // backups from the app.
+      const stale = backupIndexIds.filter((id) => !(id in parts));
+      for (const [id, records] of Object.entries(parts)) {
+        const json = JSON.stringify(records);
+        if (lastBackupJson[id] === json) continue;
+        await setDoc(doc(db, "backups", id), { updatedAt: now, records });
+        lastBackupJson[id] = json;
+      }
+      for (const id of stale) {
+        await setDoc(doc(db, "backups", id), { updatedAt: now, records: [], emptiedAt: now });
+      }
+      const ids = Object.keys(parts).sort();
+      if (JSON.stringify(ids) !== JSON.stringify(backupIndexIds) || stale.length) {
+        await setDoc(doc(db, "backups", "index"), { updatedAt: now, parts: ids });
+        backupIndexIds = ids;
+      }
+      // The old single-document backup is replaced by a small pointer so it
+      // can't hit the 1 MB limit (everything it held is in the parts above).
+      if (!lastBackupJson.__legacyPointer) {
+        await setDoc(doc(db, "backups", "latest"), { updatedAt: now, movedTo: "backups/index" });
+        lastBackupJson.__legacyPointer = "1";
+      }
+      if (state.backupError) { state.backupError = ""; render(); }
+    } catch (e) {
+      const msg = e?.code || e?.message || String(e);
+      if (state.backupError !== msg) { state.backupError = msg; render(); }
+    }
   }, 1500);
 }
 function downloadBackupFile() {
@@ -1917,7 +2042,7 @@ async function submitEditIncident() {
 // ==================== SUSPENSIONS (new unified per-day model) ====================
 function freshSuspDraft() {
   return {
-    studentName: "", studentClass: "", reasonCategory: "", reasonOthersText: "", startDate: todayISO(),
+    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: todayISO(),
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {},
     tagPm: false, pmAttendees: [], pmOthersText: "",
@@ -2013,9 +2138,14 @@ async function submitNewSuspension(e) {
   const d = state._suspDraft;
   const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
-  const reason = composeReasonValue(f, d);
+  const reason = composeMultiReason(d.reasons, d.reasonOthersText);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
     state.suspFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
+    state.suspFormError = "Specify what \"Others\" means in the reason.";
     render();
     return;
   }
@@ -2050,7 +2180,7 @@ async function submitNewSuspension(e) {
     try {
       const now = Date.now();
       const docRef = await addDoc(collection(db, "suspensions"), {
-        studentName, studentClass, reason, startDate: d.startDate,
+        studentName, studentClass, reason, ...multiReasonFields(d), startDate: d.startDate,
         totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
         days,
         loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
@@ -2104,9 +2234,9 @@ function openEditSuspension(id) {
   const issDates = issEntries.map((x) => x.date);
   const issVenues = {};
   issEntries.forEach((x) => { issVenues[x.date] = x.venue || ""; });
-  const reasonSplit = splitSavedReason(s.reason);
+  const reasonMulti = multiReasonsFromSaved(s);
   state._suspDraft = {
-    studentName: s.studentName, studentClass: s.studentClass, reasonCategory: reasonSplit.category, reasonOthersText: reasonSplit.othersText,
+    studentName: s.studentName, studentClass: s.studentClass, reasons: reasonMulti.selected, reasonOthersText: reasonMulti.othersText,
     startDate: s.startDate || (entries[0] && entries[0].date) || todayISO(),
     totalDays: s.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
     ossDates, issDates, issOverridden: issDates.map(() => false), issVenues,
@@ -2123,9 +2253,14 @@ async function submitEditSuspension(e) {
   const d = state._suspDraft;
   const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
-  const reason = composeReasonValue(f, d);
+  const reason = composeMultiReason(d.reasons, d.reasonOthersText);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
     state.suspFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
+    state.suspFormError = "Specify what \"Others\" means in the reason.";
     render();
     return;
   }
@@ -2141,7 +2276,7 @@ async function submitEditSuspension(e) {
     venue: d.issVenues[date] || "",
   }));
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
-  const updated = { studentName, studentClass, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days };
+  const updated = { studentName, studentClass, reason, ...multiReasonFields(d), startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days };
   const changes = diffText(s, updated, [
     { key: "studentName", label: "Student name" }, { key: "studentClass", label: "Class" },
     { key: "reason", label: "Reason" }, { key: "totalDays", label: "Total days" },
@@ -2189,7 +2324,7 @@ async function submitEditSuspension(e) {
 // independently later.
 function freshTimeOutDraft() {
   return {
-    studentName: "", studentClass: "", reasonCategory: "", reasonOthersText: "", startDate: todayISO(),
+    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: todayISO(),
     toType: "Recess",
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {}, issAdministrators: {},
@@ -2219,9 +2354,14 @@ async function submitNewTimeOut(e) {
   const d = state._toDraft;
   const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
-  const reason = composeReasonValue(f, d);
+  const reason = composeMultiReason(d.reasons, d.reasonOthersText);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
     state.toFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
+    state.toFormError = "Specify what \"Others\" means in the reason.";
     render();
     return;
   }
@@ -2258,7 +2398,7 @@ async function submitNewTimeOut(e) {
     try {
       const now = Date.now();
       const docRef = await addDoc(collection(db, "timeOuts"), {
-        studentName, studentClass, reason, startDate: d.startDate, toType: d.toType,
+        studentName, studentClass, reason, ...multiReasonFields(d), startDate: d.startDate, toType: d.toType,
         totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
         days,
         loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
@@ -2313,9 +2453,9 @@ function openEditTimeOut(id) {
   const issVenues = {};
   const issAdministrators = {};
   issEntries.forEach((x) => { issVenues[x.date] = x.venue || ""; issAdministrators[x.date] = x.administrator || ""; });
-  const reasonSplit = splitSavedReason(t.reason);
+  const reasonMulti = multiReasonsFromSaved(t);
   state._toDraft = {
-    studentName: t.studentName, studentClass: t.studentClass, reasonCategory: reasonSplit.category, reasonOthersText: reasonSplit.othersText,
+    studentName: t.studentName, studentClass: t.studentClass, reasons: reasonMulti.selected, reasonOthersText: reasonMulti.othersText,
     startDate: t.startDate || (entries[0] && entries[0].date) || todayISO(),
     toType: t.toType || "Recess",
     totalDays: t.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
@@ -2333,9 +2473,14 @@ async function submitEditTimeOut(e) {
   const d = state._toDraft;
   const studentName = f.studentName.value.trim().replace(/\s+/g, " ");
   const studentClass = f.studentClass.value;
-  const reason = composeReasonValue(f, d);
+  const reason = composeMultiReason(d.reasons, d.reasonOthersText);
   if (!studentName || !studentClass || !reason || !d.totalDays) {
     state.toFormError = "Fill in every required field before saving.";
+    render();
+    return;
+  }
+  if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
+    state.toFormError = "Specify what \"Others\" means in the reason.";
     render();
     return;
   }
@@ -2353,7 +2498,7 @@ async function submitEditTimeOut(e) {
     administrator: (d.issAdministrators[date] || "").trim(),
   }));
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
-  const updated = { studentName, studentClass, reason, startDate: d.startDate, toType: d.toType, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days };
+  const updated = { studentName, studentClass, reason, ...multiReasonFields(d), startDate: d.startDate, toType: d.toType, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days };
   const changes = diffText(
     { ...t, toType: toTypeLabel(t.toType) }, { ...updated, toType: toTypeLabel(updated.toType) },
     [
@@ -2518,6 +2663,27 @@ async function submitEditParentMeeting(e) {
   }
   await doSave();
 }
+// Quick status toggle straight from the (possibly still-collapsed) log
+// card — no need to open the Edit meeting modal just to mark a meeting
+// Postponed or Cancelled. Clicking the already-active pill reverts to
+// Scheduled (there's no separate "Scheduled" pill to click instead).
+async function setPmStatusQuick(id, status) {
+  const m = state.parentMeetings.find((x) => x.id === id);
+  if (!m || m.deleted) return;
+  const current = m.pmStatus || "Scheduled";
+  const next = current === status ? "Scheduled" : status;
+  if (next === current) return;
+  const now = Date.now();
+  state.saveError = false;
+  render();
+  try {
+    await updateDoc(doc(db, "parentMeetings", id), {
+      pmStatus: next,
+      history: arrayUnion({ id: uid(), type: "edited", detail: `Meeting status changed to ${next}`, by: teacherName(), at: now }),
+    });
+    syncParentMeetingToSheet({ ...m, pmStatus: next });
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
+}
 async function deleteParentMeeting(id) {
   const entry = state.parentMeetings.find((i) => i.id === id);
   try {
@@ -2533,11 +2699,17 @@ async function deleteParentMeeting(id) {
 // ==================== RENDER ====================
 // Which access-error message we've already scrolled into view (see render()).
 let lastScrolledAccessError = "";
+// Shown on the loading screens when the device has no connection — the
+// app shell opens offline (service worker), but entries need the network.
+const OFFLINE_NOTE = `<div class="dd-mono-muted" style="font-size:12px;margin-top:10px;text-align:center;max-width:280px">You're offline. Entries will load once you're connected again.</div>`;
+function isOffline() { return typeof navigator !== "undefined" && navigator.onLine === false; }
+window.addEventListener("online", () => render());
+window.addEventListener("offline", () => render());
 function render() {
-  if (!state.authReady) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Opening the log…</div></div>`; return; }
+  if (!state.authReady) { root.innerHTML = `<div class="dd-center" style="flex-direction:column"><div class="dd-mono">Opening the log…</div>${isOffline() ? OFFLINE_NOTE : ""}</div>`; return; }
   if (!state.authUser) { root.innerHTML = renderSignInScreen(); attachSignInListeners(); return; }
   if (!state.teacherName) { root.innerHTML = renderNameScreen(); attachNameListeners(); return; }
-  if (!state.dataLoaded || !state.suspLoaded || !state.toLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center"><div class="dd-mono">Loading entries…</div></div>`; return; }
+  if (!state.dataLoaded || !state.suspLoaded || !state.toLoaded || !state.pmLoaded) { root.innerHTML = `<div class="dd-center" style="flex-direction:column"><div class="dd-mono">Loading entries…</div>${isOffline() ? OFFLINE_NOTE : ""}</div>`; return; }
   updateFollowUpBadge();
   root.innerHTML = renderMain();
   attachMainListeners();
@@ -2665,6 +2837,8 @@ function renderNav() {
         </div>
       </div>
     </div>
+    ${isOffline() ? `<div class="dd-backup-warning" role="status">You're offline — new entries and changes can't be saved until you're connected again.</div>` : ""}
+    ${state.backupError ? `<div class="dd-backup-warning" role="alert">Automatic backup failed (${escapeHtml(state.backupError)}). Your entries are still saved — but please tap the download button (top right) to keep a backup file, and let the app owner know.</div>` : ""}
     ${state.showHelp ? renderHelpModal() : ""}`;
 }
 
@@ -2678,7 +2852,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Dashboard</div>
-          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings and suspensions this semester. Tap a student's name anywhere in the app to see everything on file for them across all three logs.</p>
+          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings, suspensions and time outs this semester. Tap the ⓘ next to the watchlist heading to see exactly what puts a student in each tier. Tap a student's name anywhere in the app to see everything on file for them across all four logs.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Grooming Log</div>
@@ -2686,15 +2860,15 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Suspension Log</div>
-          <p>Set the total number of days, then how many are in-school vs out-of-school — the other side calculates itself. Pick the actual dates for each, and a location for in-school days. You can tag a Parent Meet to a suspension right after entering its details.</p>
+          <p>Tick one or more reasons (grouped by offence category). Set the total number of days, then how many are in-school vs out-of-school — the other side calculates itself. Pick the actual dates for each, and book a location (General Office or MPR 1, with live availability) for in-school days. You can tag a Parent Meet to a suspension right after entering its details.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Time Out Log</div>
-          <p>Works exactly like the Suspension Log — total days, in-school vs out-of-school split, dates, and a location for each in-school day, plus an optional tagged Parent Meet. Time Outs and suspensions share the same rooms, so the General Office and MPR 1 availability counts both.</p>
+          <p>Tick one or more reasons, then pick the type — Recess, Lesson, CCA or Learning Experience. Recess and Lesson time outs are always in school; CCA and Learning Experience can be split into in-school and out-of-school days. For each in-school day, type where it's held and who's supervising (free text — Time Outs don't use the Suspension room booking). You can also tag a Parent Meet.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Parent Meet</div>
-          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended.</p>
+          <p>Log who attended (multiple people allowed) and why — you can tick more than one reason for the same meeting. Each reason gets its own Victim/Offender/Both/NA status, except Academic Matters and Learning Needs, which aren't disciplinary offences and skip that. "Others" lets you type in specifics, for both the reason and who attended. Tap Postponed or Cancelled right on a meeting's card (no need to open it) — tap again to set it back to scheduled. Postponed and cancelled meetings stay in the log but aren't counted in any totals.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Same-day duplicate warning</div>
@@ -2702,11 +2876,11 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Reports</div>
-          <p>The Annual Report (under the Dashboard) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat suspension and time out intervals, and day-of-week/term patterns. The Print/Export PDF button opens your device's own print dialog, so "Save as PDF" works the same on phone, tablet, or computer.</p>
+          <p>The Annual Report (Settings → Annual Summary Reports) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat suspension and time out intervals, and day-of-week/term patterns. The Print/Export PDF button opens your device's own print dialog, so "Save as PDF" works the same on phone, tablet, or computer.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Editing, removing, backups</div>
-          <p>Every entry in all four logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The backup icon (top right) downloads everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorised Teachers List — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
+          <p>Every entry in all four logs can be edited — changes are tracked in the audit trail. Deleting an entry is immediate and permanent; a toast with a 5-second countdown appears right after so you can Undo, but once that closes it's gone for good. The app also keeps an automatic backup copy in the database (a warning bar appears at the top if that ever fails), and the download icon (top right) saves everything as a file — worth doing before any large cleanup. Signing in is restricted to @moe.edu.sg accounts on the Authorised Teachers List — see Settings for who's on it and, for Owners/Admins, how to add, remove, or hand over access.</p>
         </div>
         <div class="dd-mono-muted" style="font-size:11px;margin-top:14px">Version ${APP_VERSION}</div>
       </div>
@@ -3003,7 +3177,7 @@ function computeYearNarrative(year) {
   const withinYear = terms.every((t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting === 0)
     ? `No grooming, suspension, time out, or parent meeting entries were logged for ${year} yet, so a within-year trend can't be drawn.`
     : `Across the four terms, grooming issues ${describeTrend(terms[0].discipline, terms[3].discipline)} (Term 1: ${terms[0].discipline}, Term 4: ${terms[3].discipline}), suspensions ${describeTrend(terms[0].suspension, terms[3].suspension)} (Term 1: ${terms[0].suspension}, Term 4: ${terms[3].suspension}), time outs ${describeTrend(terms[0].timeOut, terms[3].timeOut)} (Term 1: ${terms[0].timeOut}, Term 4: ${terms[3].timeOut}), and parent meetings ${describeTrend(terms[0].parentMeeting, terms[3].parentMeeting)} (Term 1: ${terms[0].parentMeeting}, Term 4: ${terms[3].parentMeeting}).` +
-      (topIssue ? ` The most common grooming issue this year was ${escapeHtml(topIssue.type)}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "");
+      (topIssue ? ` The most common grooming issue this year was ${topIssue.type}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "");
 
   const acrossYears = !hasLastYear
     ? `There isn't a prior year on record yet to compare ${year} against.`
@@ -3388,10 +3562,10 @@ function renderSettingsSection() {
         return `
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Trend analysis</div>
       <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${n.withinYear}</p>
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${n.acrossYears}</p>
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 8px"><b>${n.improvementsPara}</b></p>
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">${n.concernsPara}</p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${escapeHtml(n.withinYear)}</p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${escapeHtml(n.acrossYears)}</p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 8px"><b>${escapeHtml(n.improvementsPara)}</b></p>
+        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">${escapeHtml(n.concernsPara)}</p>
       </div>`;
       })()}
       ${(() => {
@@ -3834,15 +4008,20 @@ function timeOutEntryCountForRange(fromISO, toISO) {
   return state.timeOuts.filter((t) => !t.deleted && t.startDate >= fromISO && t.startDate <= toISO).length;
 }
 function renderCalLegend(incl) {
+  // Left column: the three categories that never split by in/out-of-school
+  // (Time Out included — its ISS/OSS split isn't shown separately here, just
+  // one triangle marker for "logged that day"). Right column: Suspension's
+  // two square markers, since that's the one category whose in/out-of-school
+  // split still shows separately on the calendar.
   const legendLeft = [];
   const legendRight = [];
   if (incl.discipline) legendLeft.push({ color: CHART_COLORS.discipline, label: "Grooming" });
   if (incl.parentMeeting) legendLeft.push({ color: CHART_COLORS.parentMeeting, label: "Parent Meet" });
+  if (incl.timeOut) legendLeft.push({ color: CHART_COLORS.timeOut, label: "Time Out", triangle: true });
   if (incl.suspension) legendRight.push({ color: CHART_COLORS.suspension, label: "In-School Suspension", square: true });
   if (incl.suspension) legendRight.push({ color: OSS_DOT_COLOR, label: "Out-of-School Suspension", square: true });
-  if (incl.timeOut) legendRight.push({ color: CHART_COLORS.timeOut, label: "In-School Time Out", square: true });
-  if (incl.timeOut) legendRight.push({ color: TO_OSS_DOT_COLOR, label: "Out-of-School Time Out", square: true });
-  const col = (items) => items.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot${li.square ? " dd-cal-dot-suspension" : ""}" style="background:${li.color}"></span>${li.label}</div>`).join("");
+  const shapeClass = (li) => li.square ? " dd-cal-dot-suspension" : li.triangle ? " dd-cal-dot-timeout" : "";
+  const col = (items) => items.map((li) => `<div class="dd-cal-legend-item"><span class="dd-cal-dot${shapeClass(li)}" style="background:${li.color}"></span>${li.label}</div>`).join("");
   if (!legendLeft.length && !legendRight.length) return "";
   return `<div class="dd-cal-legend dd-cal-legend-2col"><div class="dd-cal-legend-col">${col(legendLeft)}</div><div class="dd-cal-legend-col">${col(legendRight)}</div></div>`;
 }
@@ -3883,8 +4062,7 @@ function renderWeekCalendar(incl) {
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}"></span>`);
     if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}"></span>`);
     if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${OSS_DOT_COLOR}"></span>`);
-    if (incl.timeOut && c.timeOutISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.timeOut}"></span>`);
-    if (incl.timeOut && c.timeOutOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${TO_OSS_DOT_COLOR}"></span>`);
+    if (incl.timeOut && (c.timeOutISS + c.timeOutOSS) > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-timeout" style="background:${CHART_COLORS.timeOut}"></span>`);
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}"></span>`);
     const isSelected = state.selectedCalendarDay === d;
     const isWknd = isWeekend(d);
@@ -4028,8 +4206,10 @@ function renderMonthCalendar(monthKeyStr, incl) {
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
     if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
     if (incl.suspension && c.suspensionOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${OSS_DOT_COLOR}" title="${c.suspensionOSS} out-of-school suspension"></span>`);
-    if (incl.timeOut && c.timeOutISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.timeOut}" title="${c.timeOutISS} in-school time out"></span>`);
-    if (incl.timeOut && c.timeOutOSS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${TO_OSS_DOT_COLOR}" title="${c.timeOutOSS} out-of-school time out"></span>`);
+    if (incl.timeOut && (c.timeOutISS + c.timeOutOSS) > 0) {
+      const toParts = [c.timeOutISS > 0 ? `${c.timeOutISS} in-school` : "", c.timeOutOSS > 0 ? `${c.timeOutOSS} out-of-school` : ""].filter(Boolean).join(", ");
+      dots.push(`<span class="dd-cal-dot dd-cal-dot-timeout" style="background:${CHART_COLORS.timeOut}" title="${toParts} time out"></span>`);
+    }
     if (incl.parentMeeting && c.parentMeeting > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.parentMeeting}" title="${c.parentMeeting} parent meeting"></span>`);
     const isSelected = state.selectedCalendarDay === iso;
     const isWknd = isWeekend(iso);
@@ -4173,6 +4353,13 @@ function renderMonthlyChart() {
 // A "semester" is 2 terms — Term1+2, or Term3+4 — whichever contains
 // today (falling back to whichever half of the year today is closer to,
 // if today happens to land in a between-term holiday gap).
+// Plain-language watchlist criteria for the info box — must match
+// riskTierFor() in renderDashboardSection.
+const RISK_TIER_CRITERIA = [
+  { tier: "High Risk", criteria: ["2 or more suspensions", "3 or more final warnings", "7 or more 2nd warnings", "4 or more time outs"] },
+  { tier: "Medium Risk", criteria: ["1 suspension", "2 final warnings", "4–6 2nd warnings", "2–3 time outs"] },
+  { tier: "Low Risk", criteria: ["1 final warning", "1–3 2nd warnings", "1 time out"] },
+];
 function computeCurrentSemesterBounds() {
   const year = new Date().getFullYear();
   const moe = computeMoeCalendar(year);
@@ -4259,10 +4446,8 @@ function renderDashboardSection() {
     watchClass[key] = s.studentClass || watchClass[key];
     watchName[key] = s.studentName || watchName[key];
   });
-  // Time outs are tallied and shown on each watchlisted student, but do NOT
-  // (yet) move anyone between risk tiers — the tier thresholds below are
-  // school policy defined in terms of suspensions and warnings, and how
-  // much a time out should weigh hasn't been decided.
+  // Time outs count toward risk tiers too (1 = Low, 2-3 = Medium, 4+ = High),
+  // as an extra "or" criterion alongside suspensions and warnings.
   activeTo.forEach((t) => {
     if (t.startDate < semester.start || t.startDate > semester.end) return;
     const key = studentKey(t.studentName, t.studentClass);
@@ -4271,13 +4456,15 @@ function renderDashboardSection() {
     watchClass[key] = t.studentClass || watchClass[key];
     watchName[key] = t.studentName || watchName[key];
   });
-  // Risk tiers (per semester, counted by entry not by issue), checked in
-  // priority order so someone qualifying for a higher tier is never also
-  // shown as a lower one.
+  // Risk tiers (per semester, counted by entry not by issue). Meeting ANY
+  // one criterion in a tier is enough (and/or). Checked in priority order so
+  // someone qualifying for a higher tier is never also shown as a lower one.
+  // RISK_TIER_CRITERIA below is the matching plain-language list for the
+  // info box — keep the two in step.
   const riskTierFor = (c) => {
-    if (c.suspension >= 2 || c.third >= 3) return "high";
-    if (c.suspension === 1 || (c.second >= 4 && c.second <= 6) || c.third === 2) return "medium";
-    if (c.second >= 1 && c.second <= 3) return "low";
+    if (c.suspension >= 2 || c.third >= 3 || c.second >= 7 || c.timeOut >= 4) return "high";
+    if (c.suspension === 1 || (c.second >= 4 && c.second <= 6) || c.third === 2 || (c.timeOut >= 2 && c.timeOut <= 3)) return "medium";
+    if ((c.second >= 1 && c.second <= 3) || c.third === 1 || c.timeOut === 1) return "low";
     return null;
   };
   const watchTier = state.watchTier || "high";
@@ -4309,8 +4496,11 @@ function renderDashboardSection() {
             <button type="button" class="dd-info-icon-btn" data-action="toggle-watchlist-info" title="How risk is worked out">i</button>
           </div>
           ${state.showWatchlistInfo ? `
-          <div class="dd-mono-muted" style="font-size:11px;margin-bottom:10px;background:#F2EFE6;padding:8px 10px;border-radius:4px">
-            Per semester — <b>High:</b> 2+ suspensions or 3+ final warnings. <b>Medium:</b> 1 suspension, 4-6 second warnings, or 2 final warnings. <b>Low:</b> 1-3 second warnings, no suspension.
+          <div class="dd-risk-info">
+            <div class="dd-risk-info-note">Counted per semester. A student only needs to meet <b>any one</b> of the criteria in a tier (and/or) — and is shown in the highest tier they qualify for.</div>
+            ${RISK_TIER_CRITERIA.map((t) => `
+            <div class="dd-risk-info-tier">${t.tier}</div>
+            <ul class="dd-risk-info-list">${t.criteria.map((c) => `<li>${c}</li>`).join("")}</ul>`).join("")}
           </div>` : ""}
           <div class="dd-range-pills" style="flex-wrap:nowrap">
             <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>
@@ -4620,7 +4810,7 @@ function classOptionsHtml(selected) {
   // older record, or the list changed after it was logged), still show it
   // so editing doesn't silently blank out the field.
   const withSelected = selected && !options.includes(selected) ? [...options, selected] : options;
-  return `<option value="">Select class…</option>` + withSelected.map((c) => `<option value="${c}" ${c === selected ? "selected" : ""}>${c}</option>`).join("");
+  return `<option value="">Select class…</option>` + withSelected.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
 }
 
 function renderNewForm() {
@@ -4818,7 +5008,7 @@ function renderSuspensionDetail(s) {
         ${linkedIncidents.map((x) => `<div class="dd-related-link" data-action="jump-to-incident" data-id="${x.id}">${formatDateShort(x.date)} — ${escapeHtml(truncateName(incidentSummaryLabel(x), 30))}</div>`).join("")}
       </div>` : ""}
       <div style="margin:12px 0">
-        <div class="dd-field-label">Reason</div>
+        <div class="dd-field-label">Reason(s)</div>
         <div class="dd-field-value">${escapeHtml(s.reason || "")}</div>
       </div>
       <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Day-by-day (${entries.length} day${entries.length === 1 ? "" : "s"})</div>
@@ -4842,7 +5032,7 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId, noun = "suspensi
   const dayCountOptions = (max) => Array.from({ length: max + 1 }, (_, i) => i);
   const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
   return `
-        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
+        ${renderMultiReasonPicker(d.reasons, d.reasonOthersText, "susp")}
         <label class="dd-label">Start date (used to suggest default days)</label>
         <div class="dd-issue-due-row">
           <div class="dd-date-icon-btn" title="Change the start date">
@@ -5144,7 +5334,7 @@ function renderTimeOutDetail(t) {
         <div class="dd-field-value">${escapeHtml(toTypeLabel(t.toType))}</div>
       </div>
       <div style="margin:12px 0">
-        <div class="dd-field-label">Reason</div>
+        <div class="dd-field-label">Reason(s)</div>
         <div class="dd-field-value">${escapeHtml(t.reason || "")}</div>
       </div>
       <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Day-by-day (${entries.length} day${entries.length === 1 ? "" : "s"})</div>
@@ -5171,7 +5361,7 @@ function renderTimeOutFieldsBody(d, idPrefix) {
   const typeInfo = toTypeInfo(d.toType);
   const showDatePickers = d.totalDays && (d.issDays + d.ossDays === d.totalDays) && (d.ossDates.length === d.ossDays);
   return `
-        ${renderReasonPicker(d.reasonCategory, d.reasonOthersText)}
+        ${renderMultiReasonPicker(d.reasons, d.reasonOthersText, "to")}
         <label class="dd-label">Type of time out</label>
         <select class="dd-input" id="${idPrefix}-to-type">
           ${TO_TYPES.map((t) => `<option value="${t.key}" ${d.toType === t.key ? "selected" : ""}>${t.label}</option>`).join("")}
@@ -5425,6 +5615,10 @@ function renderParentMeetingDetail(m) {
           <button class="dd-expand-toggle" data-action="toggle-entry-expanded" data-id="${m.id}" title="${expanded ? "Collapse" : "Expand"}">${expanded ? "▲" : "▼"}</button>
         </div>
       </div>
+      ${!m.deleted ? `
+      <div class="dd-pm-status-row" style="margin-top:8px">
+        ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill dd-pm-status-pill-sm ${(m.pmStatus || "Scheduled") === s ? "active" : ""}" style="${(m.pmStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-status-quick" data-id="${m.id}" data-status="${s}">${s}</button>`).join("")}
+      </div>` : ""}
       ${expanded ? `
       ${linkedIncidents.length ? `
       <div class="dd-related-box" style="margin-top:12px">
@@ -5467,7 +5661,7 @@ function renderPmForm(isEdit) {
         </div>
         <label class="dd-label">Meeting status <span class="dd-mono-muted" style="font-size:11px;text-transform:none">cancelled/postponed meetings stay in the log but aren't counted in tallies</span></label>
         <div class="dd-pm-status-row" style="margin-bottom:12px">
-          ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill ${(d.meetingStatus || "Scheduled") === s ? "active" : ""}" data-action="set-pm-meeting-status" data-status="${s}">${s}</button>`).join("")}
+          ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill ${(d.meetingStatus || "Scheduled") === s ? "active" : ""}" style="${(d.meetingStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-meeting-status" data-status="${s}">${s}</button>`).join("")}
         </div>
         ${renderPmReasonPicker(d, "")}
         <label class="dd-label">Who is attending?</label>
@@ -6104,10 +6298,7 @@ function attachSuspFormModalListeners() {
     syncField("studentName");
     const classEl = form.elements["studentClass"];
     if (classEl) classEl.addEventListener("change", () => { state._suspDraft.studentClass = classEl.value; regenerateSuspDates(state._suspDraft); renderKeepingModalScroll(); });
-    const reasonSel = form.elements["reason"];
-    if (reasonSel) reasonSel.addEventListener("change", () => { state._suspDraft.reasonCategory = reasonSel.value; renderKeepingModalScroll(); });
-    const reasonOthersEl = form.querySelector(".dd-reason-others-input");
-    if (reasonOthersEl) reasonOthersEl.addEventListener("input", () => { state._suspDraft.reasonOthersText = reasonOthersEl.value; });
+    attachMultiReasonListeners(form, state._suspDraft);
 
     attachSuspFieldListeners(form, "susp", state._suspDraft, render);
 
@@ -6168,10 +6359,7 @@ function attachTimeOutFormModalListeners() {
     syncField("studentName");
     const classEl = form.elements["studentClass"];
     if (classEl) classEl.addEventListener("change", () => { state._toDraft.studentClass = classEl.value; regenerateSuspDates(state._toDraft); renderKeepingModalScroll(); });
-    const reasonSel = form.elements["reason"];
-    if (reasonSel) reasonSel.addEventListener("change", () => { state._toDraft.reasonCategory = reasonSel.value; renderKeepingModalScroll(); });
-    const reasonOthersEl = form.querySelector(".dd-reason-others-input");
-    if (reasonOthersEl) reasonOthersEl.addEventListener("input", () => { state._toDraft.reasonOthersText = reasonOthersEl.value; });
+    attachMultiReasonListeners(form, state._toDraft);
 
     attachTimeOutFieldListeners(form, "to", state._toDraft);
 
@@ -6210,6 +6398,8 @@ function attachPmListeners() {
     el.addEventListener("click", () => { openEditParentMeeting(el.dataset.id); state.showNewPmForm = false; }));
   document.querySelectorAll('[data-action="toggle-pm-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
+  document.querySelectorAll('[data-action="set-pm-status-quick"]').forEach((el) =>
+    el.addEventListener("click", () => setPmStatusQuick(el.dataset.id, el.dataset.status)));
 
   attachPmFormModalListeners();
 }
@@ -6260,7 +6450,11 @@ function attachPmFormModalListeners() {
     syncField("studentName");
     attachPmReasonPickerListeners(form, state._pmDraft, "");
     form.querySelectorAll('[data-action="set-pm-meeting-status"]').forEach((el) =>
-      el.addEventListener("click", () => { state._pmDraft.meetingStatus = el.dataset.status; renderKeepingModalScroll(); }));
+      el.addEventListener("click", () => {
+        const clicked = el.dataset.status;
+        state._pmDraft.meetingStatus = (state._pmDraft.meetingStatus || "Scheduled") === clicked ? "Scheduled" : clicked;
+        renderKeepingModalScroll();
+      }));
     const pmDateEl = form.elements["date"];
     if (pmDateEl) pmDateEl.addEventListener("change", () => { state._pmDraft.date = pmDateEl.value; renderKeepingModalScroll(); });
     const classEl = form.elements["studentClass"];
