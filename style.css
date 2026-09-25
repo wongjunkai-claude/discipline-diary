@@ -1,23 +1,31 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+/* Geist (by Vercel), shipped with the app in fonts/ (SIL Open Font
+   License) so it looks the same on every phone and works offline.
+   Numbers use the font's normal (proportional) figures, so the 1 is plain. */
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/geist-400.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 500; font-display: swap; src: url('fonts/geist-500.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 600; font-display: swap; src: url('fonts/geist-600.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/geist-700.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 800; font-display: swap; src: url('fonts/geist-800.woff2') format('woff2'); }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: #E3E1D6; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-variant-numeric: tabular-nums; }
+button, input, select, textarea { font-family: inherit; }
+body { margin: 0; background: #E3E1D6; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
 
 .dd-app { min-height: 100vh; background: #E3E1D6; }
 .dd-center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-.dd-mono { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
-.dd-mono-muted { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; }
-.dd-sans { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
+.dd-mono { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
+.dd-mono-muted { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; }
+.dd-sans { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
 
 .dd-auth-card {
   width: 100%; max-width: 380px; background: #FBFAF6; border: 1px solid #C9C4B4;
   border-radius: 4px; padding: 32px; box-shadow: 0 1px 3px rgba(27,42,65,0.15);
 }
-.dd-title { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 26px; font-weight: 600; margin-bottom: 4px; }
-.dd-subtitle { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #5B5748; font-size: 14px; margin-bottom: 20px; line-height: 1.5; }
-.dd-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; display: block; margin-bottom: 6px; margin-top: 12px; }
+.dd-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 26px; font-weight: 600; margin-bottom: 4px; }
+.dd-subtitle { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #5B5748; font-size: 14px; margin-bottom: 20px; line-height: 1.5; }
+.dd-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; display: block; margin-bottom: 6px; margin-top: 12px; }
 .dd-input, input[type="date"].dd-input {
-  width: 100%; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; border: 1px solid #C9C4B4; background: #fff;
+  width: 100%; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; border: 1px solid #C9C4B4; background: #fff;
   padding: 9px 12px; border-radius: 3px; font-size: 16px; outline: none;
 }
 input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].dd-input {
@@ -29,20 +37,20 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 }
 .dd-input:focus { border-color: #1B2A41; }
 .dd-btn-primary {
-  background: #1B2A41; color: #fff; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500;
+  background: #1B2A41; color: #fff; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500;
   padding: 10px 16px; border: none; border-radius: 3px; cursor: pointer; width: 100%; margin-top: 18px;
   display: flex; align-items: center; justify-content: center; gap: 8px;
 }
 .dd-btn-primary:hover { opacity: 0.9; }
 .dd-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.dd-error { color: #A3372B; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; margin-top: 10px; }
+.dd-error { color: #A3372B; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; margin-top: 10px; }
 
 .dd-header { background: #1B2A41; padding: 24px 20px; }
 .dd-header-title-row { padding-right: 140px; }
 .dd-header-inner { max-width: 760px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.dd-header-title { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #F2EFE6; font-size: 26px; font-weight: 600; }
-.dd-header-sub { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #B7C0CE; font-size: 12px; margin-top: 4px; }
-.dd-newbtn { background: #F2EFE6; color: #1B2A41; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; padding: 9px 14px; border: none; border-radius: 3px; cursor: pointer; }
+.dd-header-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #F2EFE6; font-size: 26px; font-weight: 600; }
+.dd-header-sub { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #B7C0CE; font-size: 12px; margin-top: 4px; }
+.dd-newbtn { background: #F2EFE6; color: #1B2A41; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; padding: 9px 14px; border: none; border-radius: 3px; cursor: pointer; }
 .dd-newbtn:hover { opacity: 0.9; }
 .dd-new-entry-row { display: flex; gap: 6px; margin-bottom: 10px; }
 .dd-newbtn-compact { font-size: 11px; padding: 7px 3px; text-align: center; justify-content: center; line-height: 1.2; }
@@ -51,7 +59,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
   width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid #C9C4B4; background: #DAD6C8; color: #1B2A41;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 600;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 600;
   cursor: pointer; padding: 0;
 }
 .dd-header-topright {
@@ -61,7 +69,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-recycle-active { background: #1B2A41; color: #F2EFE6; border-color: #1B2A41; }
 
 .dd-pill-tab {
-  flex: 1; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 15px; font-weight: 600;
+  flex: 1; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 15px; font-weight: 600;
   padding: 12px 10px; border-radius: 999px; border: 1px solid #4A5A72;
   background: transparent; color: #B7C0CE; cursor: pointer; text-align: center;
 }
@@ -81,30 +89,31 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-nav-home.active { background: #F2EFE6; color: #1B2A41; border-color: #F2EFE6; }
 
 .dd-main { max-width: 760px; margin: 0 auto; padding: 24px 20px; }
-.dd-pill { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; padding: 5px 10px; border-radius: 999px; border: 1px solid #C9C4B4; cursor: pointer; color: #5B5748; background: #DAD6C8; white-space: nowrap; }
+.dd-pill { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; padding: 5px 10px; border-radius: 999px; border: 1px solid #C9C4B4; cursor: pointer; color: #5B5748; background: #DAD6C8; white-space: nowrap; }
 .dd-pill.active { background: #1B2A41; color: #F2EFE6; border-color: #1B2A41; }
 
 .dd-panel { background: #FBFAF6; border: 1px solid #C9C4B4; border-radius: 0 3px 3px 3px; padding: 18px; }
 .dd-search-wrap { position: relative; margin-bottom: 16px; }
-.dd-search { padding-left: 34px; }
-.dd-empty { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 14px; text-align: center; padding: 40px 0; }
+.dd-search { padding-left: 12px; }
+.dd-search::placeholder { font-size: var(--ph-size, 16px); }
+.dd-empty { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 14px; text-align: center; padding: 40px 0; }
 
-.dd-card-student { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-weight: 600; font-size: 16px; }
-.dd-card-meta { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; margin-top: 6px; }
+.dd-card-student { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-weight: 600; font-size: 16px; }
+.dd-card-meta { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; margin-top: 6px; }
 .dd-card-meta + .dd-card-meta { margin-top: 2px; }
 .dd-card-meta-primary { font-size: 13px; color: #6B6652; }
 
 
 .dd-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
 @media (max-width: 560px) { .dd-grid2 { grid-template-columns: 1fr; } }
-.dd-field-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
-.dd-field-value { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 14px; white-space: pre-wrap; }
+.dd-field-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+.dd-field-value { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 14px; white-space: pre-wrap; }
 
 
 .dd-followups { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .dd-followup { border-left: 2px solid #C9C4B4; padding-left: 12px; padding-top: 2px; padding-bottom: 2px; }
-.dd-followup-note { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 14px; }
-.dd-followup-meta { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; margin-top: 2px; }
+.dd-followup-note { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 14px; }
+.dd-followup-meta { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; margin-top: 2px; }
 .dd-followup-row { display: flex; align-items: flex-start; gap: 8px; }
 .dd-followup-icon-btn {
   background: none; border: 1px solid #C9C4B4; border-radius: 3px; color: #8A8571; cursor: pointer;
@@ -116,33 +125,33 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-followup-form { display: flex; gap: 8px; }
 .dd-followup-input { flex: 1; }
-.dd-add-btn { background: #1B2A41; color: #fff; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; padding: 8px 14px; border: none; border-radius: 3px; cursor: pointer; flex-shrink: 0; }
+.dd-add-btn { background: #1B2A41; color: #fff; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; padding: 8px 14px; border: none; border-radius: 3px; cursor: pointer; flex-shrink: 0; }
 
-.dd-history-toggle { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; background: none; border: none; cursor: pointer; text-decoration: underline dotted; margin-top: 16px; padding: 0; }
+.dd-history-toggle { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; background: none; border: none; cursor: pointer; text-decoration: underline dotted; margin-top: 16px; padding: 0; }
 .dd-history { border-left: 2px solid #C9C4B4; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .dd-history-item { padding-left: 12px; padding-top: 2px; padding-bottom: 2px; }
-.dd-history-detail { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 12px; }
-.dd-history-meta { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; margin-top: 2px; }
+.dd-history-detail { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 12px; }
+.dd-history-meta { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; margin-top: 2px; }
 
 .dd-modal-backdrop { position: fixed; inset: 0; background: rgba(27,42,65,0.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
 .dd-modal { width: 100%; max-width: 520px; background: #FBFAF6; border: 1px solid #C9C4B4; border-radius: 3px; padding: 24px; max-height: 88vh; overflow-y: auto; }
 .dd-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.dd-modal-title { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 20px; font-weight: 600; }
+.dd-modal-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; font-size: 20px; font-weight: 600; }
 .dd-modal-close { background: none; border: none; cursor: pointer; color: #8A8571; font-size: 30px; line-height: 1; padding: 6px; margin: -6px; }
 
-.dd-toast { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+.dd-toast { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
 
 .dd-help-section { margin-bottom: 16px; }
-.dd-help-heading { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 15px; color: #1B2A41; margin-bottom: 4px; }
-.dd-help-section p { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #3A3728; margin: 4px 0; line-height: 1.5; }
+.dd-help-heading { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 15px; color: #1B2A41; margin-bottom: 4px; }
+.dd-help-section p { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #3A3728; margin: 4px 0; line-height: 1.5; }
 .dd-help-section ul { margin: 4px 0; padding-left: 18px; }
-.dd-help-section li { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #3A3728; margin-bottom: 2px; line-height: 1.4; }
+.dd-help-section li { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #3A3728; margin-bottom: 2px; line-height: 1.4; }
 
-.dd-dash-title { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 15px; margin-bottom: 10px; }
-.dd-dash-empty { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #8A8571; font-style: italic; }
+.dd-dash-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 15px; margin-bottom: 10px; }
+.dd-dash-empty { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #8A8571; }
 
 .dd-venue-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
-.dd-venue-date { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; width: 82px; flex-shrink: 0; }
+.dd-venue-date { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; width: 82px; flex-shrink: 0; }
 
 
 .dd-detail-card { border: 1px solid #C9C4B4; background: #fff; border-radius: 3px; padding: 8px; }
@@ -150,7 +159,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-status-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15); }
 .dd-card-summary-issue {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #4A4536; margin-top: 6px;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #4A4536; margin-top: 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dd-expand-toggle {
@@ -168,14 +177,14 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .dd-checkbox-pill {
-  display: flex; align-items: center; gap: 6px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px;
+  display: flex; align-items: center; gap: 6px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px;
   color: #1B2A41; background: #fff; border: 1px solid #C9C4B4; border-radius: 999px; padding: 6px 12px; cursor: pointer;
 }
 .dd-checkbox-pill input { margin: 0; }
 
 .dd-related-box { background: #F2EFE6; border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px 12px; margin-bottom: 12px; }
 .dd-related-link {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #4C6B8A; cursor: pointer;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #4C6B8A; cursor: pointer;
   padding: 4px 0; text-decoration: underline; text-decoration-style: dotted;
 }
 .dd-related-link:hover { color: #1B2A41; }
@@ -183,11 +192,11 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-avail-list { display: flex; flex-direction: column; gap: 10px; max-height: 262px; overflow-y: auto; border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px; background: #fff; }
 .dd-avail-row { display: flex; align-items: flex-start; gap: 8px; padding-bottom: 10px; border-bottom: 1px dashed #E4E1D4; }
 .dd-avail-row:last-child { border-bottom: none; padding-bottom: 0; }
-.dd-avail-date { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #1B2A41; font-weight: 600; width: 80px; flex-shrink: 0; line-height: 1.4; white-space: nowrap; }
-.dd-avail-weekday { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9px; color: #8A8571; font-weight: 400; margin-top: 1px; }
+.dd-avail-date { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #1B2A41; font-weight: 600; width: 80px; flex-shrink: 0; line-height: 1.4; white-space: nowrap; }
+.dd-avail-weekday { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9px; color: #8A8571; font-weight: 400; margin-top: 1px; }
 .dd-avail-chips { display: flex; gap: 5px; flex: 1; min-width: 0; }
 .dd-avail-chip {
-  flex: 1; min-width: 0; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; padding: 5px 4px; border-radius: 4px; cursor: pointer;
+  flex: 1; min-width: 0; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; padding: 5px 4px; border-radius: 4px; cursor: pointer;
   border: 1px solid transparent; text-align: center; line-height: 1.3;
 }
 .dd-avail-chip-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -203,14 +212,14 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-chart-rows { display: flex; flex-direction: column; gap: 14px; }
 .dd-chart-row-block { min-width: 0; }
 .dd-chart-row-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
-.dd-chart-row-month { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #1B2A41; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
-.dd-chart-row-total { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; }
+.dd-chart-row-month { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #1B2A41; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.dd-chart-row-total { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; }
 .dd-chart-hrow { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
 .dd-chart-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 .dd-chart-hbar-track { flex: 1; background: #F2EFE6; border-radius: 2px; overflow: hidden; height: 10px; min-width: 0; background-image: linear-gradient(to right, #D8D4C4 1px, transparent 1px); background-size: 25% 100%; }
 .dd-chart-hbar { height: 100%; border-radius: 2px; }
-.dd-chart-hval { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; width: 18px; text-align: right; flex-shrink: 0; }
-.dd-chart-axis-track { flex: 1; display: flex; justify-content: space-between; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9px; color: #8A8571; min-width: 0; border-bottom: 1px solid #C9C4B4; padding-bottom: 4px; }
+.dd-chart-hval { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; width: 18px; text-align: right; flex-shrink: 0; }
+.dd-chart-axis-track { flex: 1; display: flex; justify-content: space-between; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9px; color: #8A8571; min-width: 0; border-bottom: 1px solid #C9C4B4; padding-bottom: 4px; }
 
 .dd-date-icon-btn { position: relative; width: 32px; height: 30px; flex-shrink: 0; border: 1px solid #C9C4B4; border-radius: 3px; background: #fff; }
 .dd-date-icon-btn input[type="date"] {
@@ -231,19 +240,19 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-range-pills { display: flex; flex-wrap: nowrap; gap: 4px; margin-bottom: 8px; }
 .dd-range-pill {
-  flex: 1; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; font-weight: 600; padding: 7px 3px; border-radius: 999px;
+  flex: 1; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; font-weight: 600; padding: 7px 3px; border-radius: 999px;
   border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .dd-range-pill.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 
 .dd-show-box { border: 1px solid #C9C4B4; border-radius: 3px; padding: 10px 12px; margin-bottom: 14px; background: #fff; }
-.dd-show-header { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #8A8571; margin-bottom: 8px; }
+.dd-show-header { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #8A8571; margin-bottom: 8px; }
 .dd-show-buttons { display: flex; gap: 4px; flex-wrap: nowrap; }
 /* Wraps to two lines rather than truncating — with four categories
    ("Grooming", "Parent Meet"…) the labels no longer fit one line
    at phone width. The row stretches every button to the same height. */
 .dd-show-btn {
-  flex: 1; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; font-weight: 600; padding: 6px 4px; border-radius: 14px;
+  flex: 1; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; font-weight: 600; padding: 6px 4px; border-radius: 14px;
   border: 1px solid #C9C4B4; background: #EDEAE0; color: #A6A18E; cursor: pointer; white-space: normal; line-height: 1.15; min-width: 0;
   display: flex; align-items: center; justify-content: center; text-align: center;
 }
@@ -253,11 +262,10 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-tally-grid { display: grid; gap: 8px; margin-bottom: 14px; }
 .dd-tally-col { text-align: center; background: #F2EFE6; border-radius: 3px; padding: 6px 2px; min-width: 0; overflow: hidden; }
 /* Sized to keep every label (including "Parent Meet", the tightest fit) on
-   one line rather than wrapping — the min-height is still a fixed 2-line
-   allowance so every column's number lands on the same baseline either way. */
-.dd-tally-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0; white-space: nowrap; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; justify-content: center; }
+   one line (see the tally rules further down for spacing). */
+.dd-tally-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0; white-space: nowrap; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; justify-content: center; }
 @media (max-width: 380px) { .dd-tally-label { font-size: 7px; } }
-.dd-tally-number { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 26px; font-weight: 700; margin-top: 2px; }
+.dd-tally-number { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 26px; font-weight: 700; margin-top: 2px; }
 /* Only in the Annual Report, where the Time Out tile carries the nested
    breakdown below its number and so runs taller than the other three —
    their own number is sized up to visually reach down toward that same
@@ -272,25 +280,25 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
    tile itself, as one row of 4 small blocks under its number. */
 .dd-tally-nested { display: flex; gap: 3px; margin-top: 5px; }
 .dd-tally-nested-block { flex: 1; min-width: 0; overflow: hidden; background: rgba(255, 255, 255, 0.55); border-radius: 3px; padding: 2px 1px; }
-.dd-tally-nested-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 8px; text-transform: uppercase; color: #2E6E8E; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: clip; }
-.dd-tally-nested-number { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #2E6E8E; }
-@media (max-width: 380px) { .dd-tally-nested-label { font-size: 7px; } .dd-tally-nested-number { font-size: 11px; } }
+.dd-tally-nested-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 8px; text-transform: uppercase; color: #2E6E8E; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.dd-tally-nested-number { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #2E6E8E; }
+@media (max-width: 380px) { .dd-tally-nested-number { font-size: 11px; } }
 .dd-cal-nav { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
 .dd-cal-nav-btn {
   width: 32px; height: 32px; border-radius: 50%; border: 1px solid #C9C4B4; background: #fff; color: #1B2A41;
   font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
-.dd-cal-nav-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 600; color: #1B2A41; text-align: center; }
-.dd-cal-nav-sublabel { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 400; color: #8A8571; margin-top: 2px; }
+.dd-cal-nav-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 600; color: #1B2A41; text-align: center; }
+.dd-cal-nav-sublabel { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 400; color: #8A8571; margin-top: 2px; }
 .dd-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 4px; }
-.dd-cal-weekdays div { text-align: center; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; }
+.dd-cal-weekdays div { text-align: center; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; }
 .dd-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; max-width: 560px; margin: 0 auto; }
 .dd-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; max-width: 560px; margin: 0 auto; }
 .dd-week-cell {
   aspect-ratio: 0.8; border: 1px solid #E4E1D4; border-radius: 4px; background: #fff; font-family: inherit;
   display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 2px; min-width: 0; cursor: pointer; gap: 2px;
 }
-.dd-cal-weekday-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9px; color: #8A8571; text-transform: uppercase; }
+.dd-cal-weekday-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 9px; color: #8A8571; text-transform: uppercase; }
 .dd-cal-cell {
   aspect-ratio: 1; border: 1px solid #E4E1D4; border-radius: 3px; background: #fff; font-family: inherit;
   display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2px; min-width: 0; cursor: pointer;
@@ -299,34 +307,34 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-cal-today { border-color: #1B2A41; border-width: 2px; }
 .dd-cal-selected { background: #1B2A41 !important; }
 .dd-cal-selected .dd-cal-daynum { color: #fff; }
-.dd-cal-daynum { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #1B2A41; }
+.dd-cal-daynum { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #1B2A41; }
 .dd-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
 .dd-cal-dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
 .dd-day-detail { margin-top: 14px; padding: 10px 12px; border: 1px solid #C9C4B4; border-radius: 3px; background: #fff; }
-.dd-day-detail-title { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; color: #1B2A41; margin-bottom: 8px; }
-.dd-day-detail-row { display: flex; align-items: center; gap: 7px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; padding: 4px 0; flex-wrap: wrap; }
+.dd-day-detail-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; color: #1B2A41; margin-bottom: 8px; }
+.dd-day-detail-row { display: flex; align-items: center; gap: 7px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; padding: 4px 0; flex-wrap: wrap; }
 .dd-day-detail-row .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
-.dd-day-detail-class { color: #8A8571; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; }
-.dd-day-detail-location { color: #8A8571; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; margin-left: auto; }
+.dd-day-detail-class { color: #8A8571; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; }
+.dd-day-detail-location { color: #8A8571; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; margin-left: auto; }
 .dd-cal-legend { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #C9C4B4; }
 .dd-cal-legend-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .dd-daytype-legend { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 6px 10px; }
 .dd-cal-legend-col { display: flex; flex-direction: column; gap: 6px; }
-.dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; }
+.dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; }
 .dd-cal-legend-item .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
 
 .dd-mini-year-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 640px; margin: 0 auto; }
 .dd-mini-month { border: 1px solid #E4E1D4; border-radius: 4px; padding: 6px; }
-.dd-mini-month-title { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; color: #1B2A41; text-align: center; margin-bottom: 4px; }
+.dd-mini-month-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; color: #1B2A41; text-align: center; margin-bottom: 4px; }
 .dd-mini-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 2px; }
-.dd-mini-weekdays span { text-align: center; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 7px; color: #8A8571; }
+.dd-mini-weekdays span { text-align: center; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 7px; color: #8A8571; }
 .dd-mini-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
 .dd-mini-cell {
   display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px;
   border: none; background: transparent; font-family: inherit; padding: 1px 0; min-width: 0; cursor: pointer; border-radius: 2px;
 }
 .dd-mini-cell-empty { cursor: default; }
-.dd-mini-daynum { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 8px; color: #1B2A41; line-height: 1.3; }
+.dd-mini-daynum { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 8px; color: #1B2A41; line-height: 1.3; }
 .dd-mini-bar { display: flex; width: 85%; height: 3px; border-radius: 2px; overflow: hidden; background: transparent; }
 .dd-mini-bar-empty { background: transparent; }
 .dd-mini-weekend { background: #E4E1D4; }
@@ -344,22 +352,22 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
   padding: 6px 2px; text-align: center; font-family: inherit;
 }
 .dd-level-btn.active { background: #1B2A41; border-color: #1B2A41; }
-.dd-level-num { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #1B2A41; }
+.dd-level-num { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #1B2A41; }
 .dd-level-btn.active .dd-level-num { color: #F2EFE6; }
-.dd-level-count { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 700; color: #1B2A41; }
+.dd-level-count { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 700; color: #1B2A41; }
 .dd-level-btn.active .dd-level-count { color: #fff; }
 .dd-level-breakdown { border: 1px solid #C9C4B4; border-radius: 4px; margin-bottom: 14px; overflow: hidden; }
 .dd-level-row { display: flex; border-bottom: 1px solid #E4E1D4; }
 .dd-level-row:last-child { border-bottom: none; }
 .dd-level-row-header { background: #F2EFE6; }
-.dd-level-row-header .dd-level-cell-term, .dd-level-row-header .dd-level-cell-class { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; color: #8A8571; font-weight: 600; }
+.dd-level-row-header .dd-level-cell-term, .dd-level-row-header .dd-level-cell-class { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; color: #8A8571; font-weight: 600; }
 @media (max-width: 360px) { .dd-level-row-header .dd-level-cell-term { font-size: 9px; letter-spacing: -0.2px; padding-left: 2px; padding-right: 2px; } }
-.dd-level-cell-class { width: 64px; flex-shrink: 0; padding: 7px 8px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; }
+.dd-level-cell-class { width: 64px; flex-shrink: 0; padding: 7px 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; }
 /* min-width: 0 lets flex-grow ratios (e.g. the "By term" table's 4x-wide
    Time Out group) actually hold — without it, a word like "Suspension"
    claims its full content width before the grow ratio is applied to
    what's left, which starves the wider column of the space it's due. */
-.dd-level-cell-term { flex: 1; min-width: 0; padding: 7px 4px; text-align: center; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; overflow-wrap: break-word; }
+.dd-level-cell-term { flex: 1; min-width: 0; padding: 7px 4px; text-align: center; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; overflow-wrap: break-word; }
 .dd-level-cell-total { font-weight: 700; background: #F2EFE6; }
 .dd-level-row-total { background: #F2EFE6; font-weight: 700; border-top: 2px solid #C9C4B4; }
 .dd-level-row-total .dd-level-cell-class { font-weight: 700; }
@@ -369,13 +377,9 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-level-row-subheader .dd-level-cell-term, .dd-level-row-subheader .dd-level-cell-class { padding-top: 2px; padding-bottom: 2px; }
 .dd-level-cell-term-sub { font-size: 12px; }
 .dd-level-row-subheader .dd-level-cell-term-sub { font-size: 9px; }
-/* "By term" table: "T1"-"T4" need far less room than the shared 64px label
-   column, so it's narrowed here — freeing that width for the 4 category
-   columns, which is where the reader's eye actually needs it. A faint tint
-   per category (matching its color elsewhere in the app) plus thin
-   dividers between groups keep the run of 7 numbers per row easy to parse
-   at a glance instead of blurring together. */
-.dd-level-breakdown-byterm .dd-level-cell-class { width: 34px; padding-left: 4px; padding-right: 2px; }
+/* "By term" table: a faint tint per category (matching its colour
+   elsewhere in the app) plus thin dividers between groups keep each row
+   easy to scan. Column sizes are set by the grid rules further down. */
 .dd-level-breakdown-byterm .dd-level-cell-term-groom { background: rgba(27, 42, 65, 0.05); }
 .dd-level-breakdown-byterm .dd-level-cell-term-susp { background: rgba(184, 134, 59, 0.07); border-left: 1px solid #E4E1D4; }
 .dd-level-breakdown-byterm .dd-level-cell-term-timeout { background: rgba(46, 110, 142, 0.07); }
@@ -386,16 +390,16 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-timeout,
 .dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-meet { background: #F2EFE6; }
 
-.dd-back-link { background: none; border: none; color: #1B2A41; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0; }
+.dd-back-link { background: none; border: none; color: #1B2A41; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0; }
 .dd-rank-row { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #E4E1D4; padding-bottom: 6px; }
-.dd-rank-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 14px; color: #1B2A41; width: 40px; flex-shrink: 0; }
-.dd-rank-total { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 16px; color: #1B2A41; width: 28px; flex-shrink: 0; text-align: center; }
-.dd-rank-detail { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; flex: 1; }
+.dd-rank-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 14px; color: #1B2A41; width: 40px; flex-shrink: 0; }
+.dd-rank-total { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 16px; color: #1B2A41; width: 28px; flex-shrink: 0; text-align: center; }
+.dd-rank-detail { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; flex: 1; }
 
 .dd-issue-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
 .dd-issue-tag-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .dd-issue-tag {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; padding: 8px 12px; border-radius: 999px;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; padding: 8px 12px; border-radius: 999px;
   border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer;
 }
 .dd-issue-tag.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
@@ -409,12 +413,12 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 }
 .dd-pm-reason-row { padding: 6px 0; border-bottom: 1px dashed #E4E1D4; }
 .dd-pm-reason-row:last-child { border-bottom: none; }
-.dd-pm-reason-check { display: flex; align-items: center; gap: 8px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; color: #1B2A41; cursor: pointer; }
+.dd-pm-reason-check { display: flex; align-items: center; gap: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; color: #1B2A41; cursor: pointer; }
 .dd-pm-reason-check input { margin: 0; flex-shrink: 0; }
 .dd-pm-reason-extra { padding-left: 24px; box-sizing: border-box; margin-top: 6px; }
 /* Offence category headers — bold, display-only (not selectable). */
 .dd-reason-group-head {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #1B2A41;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #1B2A41;
   padding: 10px 0 2px; border-bottom: 1px solid #C9C4B4; user-select: none;
 }
 .dd-reason-group-head:first-child { padding-top: 4px; }
@@ -422,7 +426,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-pm-reason-row:has(+ .dd-reason-group-head) { border-bottom: none; }
 .dd-pm-status-row { display: flex; flex-wrap: wrap; gap: 5px; }
 .dd-pm-status-pill {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; font-weight: 600; text-transform: uppercase;
   padding: 4px 9px; border-radius: 999px; border: 1px solid #C9C4B4; background: #fff; color: #4A4536; cursor: pointer;
 }
 .dd-pm-status-pill.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
@@ -434,19 +438,19 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 
 .dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; background: #FBFAF6; }
 .dd-issue-card-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.dd-issue-card-label { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 14px; color: #1B2A41; }
-.dd-issue-stage-badge { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #F2EFE6; color: #B8863B; flex-shrink: 0; }
+.dd-issue-card-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 14px; color: #1B2A41; }
+.dd-issue-stage-badge { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #F2EFE6; color: #B8863B; flex-shrink: 0; }
 .dd-issue-overdue { background: #FBEAE7; color: #A3372B; }
 .dd-issue-resolved { background: #EAF3EC; color: #3C6E47; }
 
 .dd-issue-due-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.dd-issue-instruction { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 12px; color: #A3372B; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.02em; }
+.dd-issue-instruction { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 12px; color: #A3372B; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.02em; }
 
 .dd-followup-row-item { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; cursor: pointer; background: #FBFAF6; }
 
 .dd-info-icon-btn {
   width: 18px; height: 18px; border-radius: 50%; border: 1px solid #8A8571; background: #fff; color: #8A8571;
-  font-family: Georgia, 'Times New Roman', serif; font-size: 12px; font-weight: 700; font-style: normal; line-height: 1;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 700; font-style: normal; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; padding: 0; text-align: center;
 }
 
@@ -478,9 +482,9 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-onboard-dot-on { background: #3C6E47; }
 .dd-onboard-dot-off { background: transparent; border: 1.5px dotted #3C6E47; }
 .dd-contact-body { flex: 1; min-width: 0; }
-.dd-contact-name { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500; color: #1B2A41; }
+.dd-contact-name { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500; color: #1B2A41; }
 .dd-contact-sub {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; margin-top: 3px;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dd-more-btn {
@@ -503,7 +507,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 }
 .dd-compose-input {
   flex: 1; min-width: 0; border: none; background: transparent; outline: none;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1B2A41;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1B2A41;
 }
 .dd-compose-input::placeholder { color: #8A8571; }
 .dd-compose-send {
@@ -518,7 +522,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-settings-menu-row {
   display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box;
   padding: 14px 14px; background: #fff; border: none; border-bottom: 1px solid #E4E1D4;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 15px; color: #1B2A41; text-align: left; cursor: pointer;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 15px; color: #1B2A41; text-align: left; cursor: pointer;
 }
 .dd-settings-menu-row:last-child { border-bottom: none; }
 .dd-settings-menu-row:active { background: #F2EFE6; }
@@ -528,12 +532,12 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   position: fixed; left: 16px; right: 16px; bottom: 20px; z-index: 60;
   background: #1B2A41; color: #fff; border-radius: 6px; padding: 12px 16px;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
 }
 .dd-undo-toast button {
   background: none; border: none; color: #F5C563; font-weight: 700; font-size: 14px; cursor: pointer; flex-shrink: 0;
 }
-.dd-undo-countdown { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: rgba(255,255,255,0.6); font-size: 12px; }
+.dd-undo-countdown { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: rgba(255,255,255,0.6); font-size: 12px; }
 
 /* Suspension dots are square rather than round, so category can be told
    apart by shape as well as color for colorblind users. */
@@ -560,7 +564,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 
 .dd-nav-badge {
   position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
-  background: #A3372B; color: #fff; border-radius: 999px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: #A3372B; color: #fff; border-radius: 999px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px #1B2A41;
 }
 
@@ -569,7 +573,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   color: #1B2A41; cursor: pointer; padding: 2px 4px; flex-shrink: 0;
 }
 .dd-print-btn span {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 600; line-height: 1.25; text-align: center;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 600; line-height: 1.25; text-align: center;
 }
 
 /* Desktop / large-screen scaling — the app is built mobile-first with a
@@ -590,38 +594,43 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   .dd-cal-daynum { font-size: 15px; }
   .dd-cal-weekday-label { font-size: 12px; }
 }
+/* Big desktop screens: everything is zoomed up. Widths and pop-up heights
+   are divided by the zoom so they still fit the window. */
 @media (min-width: 1300px) {
-  .dd-header-inner, .dd-main { max-width: 1200px; }
+  .dd-header-inner, .dd-main { max-width: 800px; }
   body { zoom: 1.5; }
+  .dd-modal { max-height: calc(88vh / 1.5); }
 }
 @media (min-width: 1700px) {
-  .dd-header-inner, .dd-main { max-width: 1500px; }
+  .dd-header-inner, .dd-main { max-width: 857px; }
   body { zoom: 1.75; }
+  .dd-modal { max-height: calc(88vh / 1.75); }
 }
 @media (min-width: 2000px) {
-  .dd-header-inner, .dd-main { max-width: 1700px; }
+  .dd-header-inner, .dd-main { max-width: 850px; }
   body { zoom: 2; }
+  .dd-modal { max-height: calc(88vh / 2); }
 }
 
 .dd-area-chart-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px; }
 .dd-area-chart { width: 100%; height: auto; display: block; }
 
 /* Students' Watchlist "i" info box — bold tier headings, criteria as bullets. */
-.dd-risk-info { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; background: #F2EFE6; padding: 10px 12px; border-radius: 4px; margin-bottom: 10px; }
+.dd-risk-info { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; background: #F2EFE6; padding: 10px 12px; border-radius: 4px; margin-bottom: 10px; }
 .dd-risk-info-note { margin-bottom: 8px; line-height: 1.4; }
 .dd-risk-info-tier { font-weight: 700; color: #1B2A41; font-size: 13px; margin-top: 8px; }
 .dd-risk-info-list { margin: 3px 0 0; padding-left: 18px; line-height: 1.5; }
 
 /* Shown under the header when the automatic Firestore backup can't be saved. */
 .dd-backup-warning {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.4;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.4;
   background: #F6E3DF; color: #7A2A20; border-bottom: 1px solid #A3372B;
   padding: 10px 16px;
 }
 
 /* Parent Meet status note in the calendar's selected-day list,
    e.g. "(Postponed to 5 Oct 2026)" / "(Cancelled)". */
-.dd-day-detail-note { color: #A3372B; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 500; }
+.dd-day-detail-note { color: #A3372B; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 500; }
 /* "Postponed to" date box on a Parent Meet card. */
 .dd-pm-postpone-block { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #E4E1D4; }
 .dd-pm-postpone-row { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -642,13 +651,13 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
    pre-selected; the chosen day turns navy and ✓ becomes tappable. */
 .dd-pp-modal { max-width: 360px; }
 .dd-pp-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.dd-pp-month { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 16px; color: #1B2A41; }
+.dd-pp-month { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 16px; color: #1B2A41; }
 .dd-pp-navbtn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #C9C4B4; background: #fff; color: #1B2A41; font-size: 20px; line-height: 1; cursor: pointer; }
 .dd-pp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.dd-pp-wd { text-align: center; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; padding: 2px 0; }
+.dd-pp-wd { text-align: center; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; padding: 2px 0; }
 .dd-pp-day {
-  aspect-ratio: 1 / 1; min-height: 34px; border: 1px solid #E4E1D4; border-radius: 4px; background: #fff;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; cursor: pointer; padding: 0;
+  border: 1px solid #E4E1D4; border-radius: 4px; background: #fff;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; cursor: pointer; padding: 0;
 }
 .dd-pp-day.today { font-weight: 700; text-decoration: underline; }
 .dd-pp-day.selected { background: #1B2A41; border-color: #1B2A41; color: #fff; }
@@ -664,23 +673,23 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-time-boxes { display: flex; align-items: center; gap: 8px; }
 .dd-time-box {
   flex: 1; min-width: 0; height: 44px; border: 1px solid #C9C4B4; border-radius: 6px; background: #fff; cursor: pointer;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #8A8571;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #8A8571;
 }
-.dd-time-box.set { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 17px; font-weight: 600; color: #1B2A41; border-color: #1B2A41; }
+.dd-time-box.set { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 17px; font-weight: 600; color: #1B2A41; border-color: #1B2A41; }
 .dd-time-arrow { font-size: 18px; color: #8A8571; flex-shrink: 0; }
 .dd-room-row { display: flex; gap: 8px; }
 .dd-room-btn {
   flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
   padding: 8px 10px; border: 1px solid; border-radius: 4px; cursor: pointer;
 }
-.dd-room-name { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; }
-.dd-room-status { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.9; }
+.dd-room-name { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; }
+.dd-room-status { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.9; }
 .dd-room-btn.dd-avail-chip-full { cursor: not-allowed; }
 .dd-room-waiting { background: #F2EFE6; color: #8A8571; border-color: #E4E1D4; cursor: default; }
 /* Pop-up time selector */
 .dd-tp-modal { max-width: 280px; }
 .dd-wheel-pair { display: flex; align-items: center; justify-content: center; gap: 6px; background: #fff; border: 1px solid #C9C4B4; border-radius: 10px; padding: 0 10px; }
-.dd-wheel-colon { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 22px; font-weight: 600; color: #1B2A41; }
+.dd-wheel-colon { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 22px; font-weight: 600; color: #1B2A41; }
 .dd-wheel-wrap { position: relative; width: 64px; }
 .dd-wheel-wrap::before {
   content: ""; position: absolute; left: 0; right: 0; top: 44px; height: 44px; pointer-events: none;
@@ -695,14 +704,14 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-wheel::-webkit-scrollbar { display: none; }
 .dd-wheel-item {
   height: 44px; line-height: 44px; text-align: center; scroll-snap-align: center;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 20px; color: #8A8571; cursor: pointer; user-select: none;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 20px; color: #8A8571; cursor: pointer; user-select: none;
 }
 .dd-wheel-item.on { color: #1B2A41; font-weight: 600; font-size: 22px; }
-.dd-tp-note { min-height: 18px; margin-top: 8px; text-align: center; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #A3372B; }
+.dd-tp-note { min-height: 18px; margin-top: 8px; text-align: center; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #A3372B; }
 /* Booking details in the final confirmation */
 .dd-confirm-details { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; text-align: left; margin: 0 0 16px; padding: 10px 12px; background: #fff; border: 1px solid #E4E1D4; border-radius: 4px; }
-.dd-confirm-k { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
-.dd-confirm-v { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1B2A41; }
+.dd-confirm-k { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
+.dd-confirm-v { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1B2A41; }
 
 /* Date fields on the Parent Meet / Suspension / Time Out forms open the
    in-app calendar (holidays shown) instead of the phone's own picker. */
@@ -720,7 +729,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 }
 .dd-pp-num { font-size: 13px; line-height: 1.1; }
 .dd-pp-hol {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 7.5px; line-height: 1.12; text-align: center; color: #4A4536;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 7.5px; line-height: 1.12; text-align: center; color: #4A4536;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%;
   word-break: normal; overflow-wrap: normal; -webkit-hyphens: none; hyphens: none;
 }
@@ -731,7 +740,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-pp-day.dd-pp-weekend:disabled, .dd-pp-day.dd-pp-school:disabled, .dd-pp-day.dd-pp-public:disabled, .dd-pp-day.dd-pp-closure:disabled { color: #6B6652; }
 .dd-pp-day.selected { background: #1B2A41; border-color: #1B2A41; color: #fff; }
 .dd-pp-day.selected .dd-pp-hol { color: #D8DEE8; }
-.dd-pp-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #4A4536; }
+.dd-pp-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #4A4536; }
 .dd-pp-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .dd-pp-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid; }
 /* Narrow phones: give the day cells a little more room for holiday names. */
@@ -778,7 +787,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-tally-nested-label { letter-spacing: -0.3px; }
 @media (max-width: 380px) { .dd-tally-nested-label { font-size: 6.5px; } }
 @media (max-width: 340px) { .dd-range-pill { padding-left: 1px; padding-right: 1px; } }
-/* Inter runs slightly wider than the old fonts: a hair less letter
+/* The app font runs a little wide: a hair less letter
    spacing keeps the tightest labels whole on 320px screens. */
 @media (max-width: 360px) {
   .dd-pp-hol { letter-spacing: -0.15px; }
@@ -786,3 +795,70 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: 8px; letter-spacing: -0.2px; padding-left: 1px; padding-right: 1px; }
 }
 
+/* One-line text that shrinks to fit (see fitOneLine in app.js). */
+[data-fit] { white-space: nowrap; overflow: hidden; min-width: 0; }
+.dd-room-name { display: block; }
+.dd-settings-menu-label { display: block; flex: 1; margin-right: 8px; }
+.dd-fit-line { max-width: 100%; }
+/* Dashboard day list, parent meetings: name and class on the first line
+   (a long name wraps), then time and room, then the postponed/cancelled
+   note. */
+.dd-day-detail-row-pm { display: block; }
+.dd-day-detail-pm-line { display: flex; align-items: baseline; gap: 4px 7px; flex-wrap: wrap; }
+.dd-day-detail-pm-line .dd-cal-dot { flex-shrink: 0; align-self: center; }
+.dd-day-detail-pm-line .dd-day-detail-name { min-width: 0; overflow-wrap: anywhere; }
+.dd-day-detail-pm-slot { color: #8A8571; font-size: 11px; margin: 2px 0 0 15px; }
+.dd-day-detail-pm-note { margin: 2px 0 0 15px; font-size: 11px; }
+/* Pending Parent Meeting Date: labels line up with the first line beside
+   them; the calendar button sits at the end of "Not set yet". */
+.dd-pending-pm-grid { align-items: baseline; }
+.dd-pending-pm-grid .dd-pm-postpone-row { flex-direction: row; align-items: center; gap: 10px; }
+
+/* Narrow phones: keep all six P1–P6 counters on one row. */
+@media (max-width: 360px) { .dd-level-counters { flex-wrap: nowrap; gap: 4px; } .dd-level-btn { min-width: 0; } }
+/* Calendar legends: the left column is only as wide as its longest label
+   ("Public Holiday"), giving the right column room for "Out-of-School
+   Suspension" on one line. Both legends share the same columns. */
+.dd-cal-legend-2col, .dd-daytype-legend { grid-template-columns: 106px 1fr; }
+.dd-cal-legend-item { white-space: nowrap; }
+@media (max-width: 360px) {
+  .dd-cal-legend-2col, .dd-daytype-legend { grid-template-columns: 90px 1fr; }
+  .dd-cal-legend-item { font-size: 10px; }
+}
+/* Student view: past years as collapsible rows (like the Annual Summary
+   Reports list); opening one shows that year's records by log. */
+.dd-student-year { border-bottom: 1px solid #E4E1D4; }
+.dd-student-year:last-child { border-bottom: none; }
+.dd-student-year .dd-settings-menu-row { border-bottom: none; }
+.dd-student-year-meta { display: flex; align-items: center; gap: 10px; }
+.dd-student-year-body { padding: 0 12px 14px; background: #FBFAF6; }
+.dd-student-year-body > .dd-dash-title:first-child { margin-top: 8px !important; }
+/* Same-name student question (student view card and after-save pop-up). */
+.dd-link-q-card { margin-top: 24px; border: 1px solid #D9C9A3; background: #FFF9EC; border-radius: 6px; padding: 14px; }
+.dd-link-q-head { font-size: 14px; color: #1B2A41; margin-bottom: 8px; }
+.dd-link-q-single { font-size: 15px; font-weight: 600; color: #1B2A41; margin-bottom: 12px; }
+.dd-link-q-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.dd-link-q-option { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; color: #1B2A41; cursor: pointer; }
+.dd-link-q-option input { margin-top: 3px; flex-shrink: 0; }
+.dd-link-q-btns { display: flex; gap: 8px; }
+.dd-link-q-btns .dd-add-btn:disabled { opacity: 0.45; cursor: default; }
+.dd-link-notes { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.dd-link-note { font-size: 12px; color: #6B6652; }
+.dd-link-q-or { font-weight: 600; color: #1B2A41; }
+.dd-link-q-hint { font-size: 11px; color: #8A8571; margin-top: 8px; }
+/* Settings → Student Links: name, the answer on one line, who · when;
+   pencil / bin in the top-right corner. */
+.dd-link-row { padding: 10px 12px; border-bottom: 1px solid #E4E1D4; background: #fff; }
+.dd-link-row:last-child { border-bottom: none; }
+.dd-link-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dd-link-row-name { font-size: 14px; font-weight: 600; color: #1B2A41; min-width: 0; overflow-wrap: anywhere; }
+.dd-link-row-icons { display: flex; gap: 6px; flex-shrink: 0; }
+.dd-link-icon { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #C9C4B4; border-radius: 6px; background: #fff; color: #1B2A41; cursor: pointer; padding: 0; }
+.dd-link-icon-remove { color: #A3372B; border-color: #E2B8B2; }
+.dd-link-row-text { display: block; font-size: 13px; color: #1B2A41; margin: 3px 0 2px; }
+.dd-link-row-meta { font-size: 11px; }
+.dd-link-year-body { padding: 0 10px 10px; background: #FBFAF6; }
+.dd-link-year-body .dd-link-row { border: 1px solid #E4E1D4; border-radius: 6px; margin-top: 8px; }
+.dd-link-archive { background: #FBFAF6; border-top: 1px solid #E4E1D4; }
+.dd-link-archive .dd-settings-menu-row { padding-left: 22px; }
+@media (max-width: 360px) { .dd-link-year-body { padding: 0 6px 8px; } .dd-link-row { padding: 9px 9px; } }

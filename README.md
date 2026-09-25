@@ -17,6 +17,7 @@ hosted free on GitHub Pages. Everything can be maintained from a browser.
 | `style.css` | All styling |
 | `sw.js` | Service worker: lets the app install to a home screen and open offline |
 | `manifest.json`, `icons/` | Home-screen app name and icons |
+| `fonts/` | The Geist font (regular to extra bold), shipped with the app so it looks the same on every phone and works offline. Free under the SIL Open Font License (`fonts/Geist-OFL.txt`) |
 | `firestore.rules` | Database security rules; published in the Firebase console, not on GitHub |
 | `apps-script.gs` | Google Sheet sync; pasted into Apps Script, not on GitHub |
 
@@ -25,7 +26,7 @@ hosted free on GitHub Pages. Everything can be maintained from a browser.
 1. Bump `APP_VERSION` near the top of `app.js` **and** `CACHE` at the top of
    `sw.js`, together. The version shows in the header and in the ? help, so
    you can check which version a teacher's device is running.
-2. On GitHub, upload the changed files over the old ones and commit. GitHub
+2. On GitHub, upload the changed files over the old ones (including any new folder, such as `fonts/`) and commit. GitHub
    Pages updates within a minute or two.
 3. Devices pick up the new version the next time the app is opened (sometimes
    one more reload).
@@ -105,10 +106,13 @@ Time Out forms, a grooming issue's follow-up deadline and a postponed meeting's 
 the phone's own date picker, so it can show holidays: weekends (grey),
 public holidays (pink) and school holidays (yellow) are named and can't be
 picked. Closure/HBL days (blue) are shown everywhere: blocked for the
-affected levels on Suspension/Time Out, a note only (still pickable) for
-parent meetings. On Grooming, Suspension and Time Out the class must be
-chosen before any date, since closure days depend on the level; changing a
-suspension's or time out's start date or class lays its days out again
+affected levels on Grooming (date caught and follow-up deadlines),
+Suspension and Time Out, a note only (still pickable) for parent meetings.
+On Grooming, Suspension and Time Out the class must be chosen before any
+date, since closure days depend on the level. A suspension's or time out's
+start date must be a school day for the class (a new form starts on the
+next school day, and saving checks it). Changing the start date, or
+changing the class to a different level, lays its days out again
 from the new start. Settings and the chart's Custom range use the phone's
 own date picker. Overlapping closure/HBL entries are combined per day, with
 levels always in order (P3/P4 on 24–29 Sep + P5 on 24–25 Sep → "P3/P4/P5
@@ -141,6 +145,41 @@ tier they qualify for.
 
 The rules live in `riskTierFor()` in `app.js`. The plain-language list in the
 app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
+
+## Student view and level counters
+
+- Tapping a student's name opens their records for this year across all
+  four logs. Earlier years are listed at the bottom as rows (like the
+  Annual Summary Reports list); tapping a year shows that year's records,
+  grouped by log, with empty logs left out.
+- Earlier years are only joined on after a teacher confirms it's the same
+  student, because two students can share a name and classes change each
+  year. When a student has an entry and there are same-name records one
+  level lower in an earlier year, the app asks (right after saving, and in
+  the student's view until answered): "Is this Aden Chan (P4-3) referring
+  to: Aden Chan in P3-1 in 2026?" (Yes / No), or a multiple choice with
+  "None of the above" when there are several. No / None means a different
+  student with the same name. Students always move up one level a year
+  (no retention), so only records exactly one level lower per year back
+  are offered.
+- Mid-year class changes: when an entry has the same name and level as
+  another class's entry in the same year, the app first asks "Is this Aden
+  Chan (P3-2) referring to: Aden Chan in P3-1 in 2026?". Yes treats both
+  classes as one student for that year: the student view shows both, the
+  Students' Watchlist and the Annual Report's repeat-student figures count
+  them once (under the latest class), and later years are asked about as
+  one student. Each entry keeps the class it was logged under.
+- Answers are shared (`studentLinks` collection). They're listed, by year
+  and searchable by name, under Settings → Student Links. Only Admins and
+  the Owner can change an answer (the question is asked again) or remove
+  it (asked again in the student's view); `firestore.rules` enforces this.
+  Any authorised teacher can answer a new question. From January after a
+  student's P6 year (worked out from the class and year, since everyone
+  moves up one level a year), their answers move to "Archive" at the
+  bottom of that page, grouped by graduation year. See `studentRecordsByYear()`, `pendingLinkQuestion()` and
+  `sameYearGroup()` in `app.js`.
+- The P1–P6 boxes at the top of each log count this year's entries only,
+  matching the class-by-term table that opens under them.
 
 ## Settings
 

@@ -12,7 +12,7 @@ service cloud.firestore {
     //               Firestore data is empty or wrong; or (b) whoever's
     //               email is currently written to settings/owner, which
     //               the current Owner can hand over from inside the app
-    //               (Settings → Manage Access → Transfer Ownership) — no
+    //               (Settings → Authorised Teachers List → ⋮ → Make Owner) — no
     //               redeploy needed for that day-to-day handover.
     //   2. Admin  — emails listed in admins/{email}. Can manage the
     //               Authorized Teachers list (below). Only the Owner can
@@ -137,9 +137,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Same-student links (across years and mid-year class changes): any
+    // authorised teacher answers a new question; only Admins and the Owner
+    // can change or remove an answer (Settings → Student Links).
+    match /studentLinks/{linkId} {
+      allow read, create: if isMoeUser();
+      allow update, delete: if isAdmin();
+    }
+
     // The roster of who may sign in at all. Every authorized teacher can
     // SEE this list (Settings → Authorized Teachers), but only admins/owner
-    // can change it (Settings → Manage Access, same page with extra
+    // can change it (Settings → Authorised Teachers List, same page with extra
     // controls for them).
     match /authorizedUsers/{email} {
       allow read: if isMoeUser();
@@ -147,7 +155,7 @@ service cloud.firestore {
     }
 
     // Who's an admin. Anyone authorized can see who the admins are (so the
-    // Manage Access page can display the list to a non-owner admin too),
+    // Authorised Teachers List page can display the list to a non-owner admin too),
     // but only the Owner can add or remove one.
     match /admins/{email} {
       allow read: if isMoeUser();

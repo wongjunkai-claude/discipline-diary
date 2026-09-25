@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.6.2";
+const APP_VERSION = "3.12.4";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -750,6 +750,8 @@ async function confirmDeleteYes() {
   else if (target.type === "addAdmin") await addAdminEmail(target.id);
   else if (target.type === "addAllExisting") await addExistingUsersBulk(target.emails || []);
   else if (target.type === "removeMember") await removeMemberFully(target.id);
+  else if (target.type === "undoStudentLink") await undoStudentLink(target.id);
+  else if (target.type === "changeStudentLink") await changeStudentLink(target.id);
 }
 // ---------- Access management (Authorized Teachers / Admins) ----------
 // Valid email shape only — the @moe.edu.sg suffix is enforced by
@@ -793,11 +795,12 @@ async function removeAuthorizedEmail(email) {
 // back under "Add Existing Users". Skipped while they're still an admin
 // or the owner (they keep access that way). If they're added again later,
 // they're asked for their name the next time they sign in.
-async function purgeUserDocs(email) {
+async function purgeUserDocs(email, adminAlsoRemoved = false) {
   const e = (email || "").toLowerCase();
   const owner = (state.currentOwnerEmail || OWNER_EMAIL).toLowerCase();
   if (!e || e === owner || e === OWNER_EMAIL.toLowerCase()) return;
-  if ((state.adminsList || []).some((a) => a.id === e) && !state.isOwner) return;
+  // Still an admin (they keep access that way): leave their record alone.
+  if ((state.adminsList || []).some((a) => a.id === e) && !adminAlsoRemoved) return;
   const uids = (state.userList || []).filter((u) => (u.email || "").toLowerCase() === e && u._uid).map((u) => u._uid);
   await Promise.all(uids.map((id) => deleteDoc(doc(db, "users", id))));
 }
@@ -811,11 +814,12 @@ async function purgeUserDocs(email) {
 // there's nothing to remove from that collection for them anyway.
 async function removeMemberFully(email) {
   try {
+    let adminRemoved = false;
     await Promise.all([
       deleteDoc(doc(db, "authorizedUsers", email)).catch((err) => console.warn("removeMemberFully: authorizedUsers delete failed (may not exist):", err)),
-      deleteDoc(doc(db, "admins", email)).catch((err) => console.warn("removeMemberFully: admins delete failed (expected if caller isn't Owner):", err)),
+      deleteDoc(doc(db, "admins", email)).then(() => { adminRemoved = true; }).catch((err) => console.warn("removeMemberFully: admins delete failed (expected if caller isn't Owner):", err)),
     ]);
-    await purgeUserDocs(email);
+    await purgeUserDocs(email, adminRemoved);
   } catch (err) { console.error("removeMemberFully failed:", err); state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
   render();
 }
@@ -1140,6 +1144,13 @@ const state = {
   studentViewName: null,
   studentViewClass: null,
   studentViewFromSection: "dashboard",
+  studentViewOpenYears: {}, // past years opened in the student view
+  studentLinks: {}, // studentLinks/{id}: confirmed same-student links across years
+  linkPromptQueue: [], // students to ask about right after saving an entry
+  linkError: "",
+  linkSearch: "", // Settings → Student Links search
+  linkArchiveOpen: false, // Settings → Student Links: graduated students shown
+  linkYearsOpen: {}, // Settings → Student Links: which year headers are open
   showWatchlistInfo: false,
   backupError: "",
   postponePicker: null,
@@ -1443,6 +1454,13 @@ function startListening() {
   );
   ensureHolidaysSeeded();
   checkAnnualPublicHolidayFetch();
+  // Same-student links. Denied until the updated rules are published —
+  // treated as "no links yet" rather than as lost access.
+  onSnapshot(
+    collection(db, "studentLinks"),
+    (snap) => { const m = {}; snap.docs.forEach((d) => { m[d.id] = d.data(); }); state.studentLinks = m; render(); },
+    (err) => { console.warn("studentLinks listener failed:", err); state.studentLinks = {}; }
+  );
   unsubHolidays = onSnapshot(
     doc(db, "holidays", "singapore"),
     (snap) => { if (snap.exists()) { state.holidays = snap.data(); render(); } },
@@ -1822,6 +1840,7 @@ function findRelatedRecords(studentName) {
 async function createIncidentDocForStudent(name, studentClass, date, selectedIssues, othersText, now, links) {
   const issues = selectedIssues.map((type) => freshGroomingIssue(type, othersText, date, classLevel(studentClass)));
   const issueSummary = issues.map((x) => groomingIssueLabel(x)).join(", ");
+  queueStudentLinkCheck(name, studentClass, date);
   const docRef = await addDoc(collection(db, "incidents"), {
     studentName: name, studentClass, date, issues,
     linkedSuspensionIds: (links?.suspensionIds || []).slice(),
@@ -2106,7 +2125,7 @@ async function submitEditIncident() {
 // ==================== SUSPENSIONS (new unified per-day model) ====================
 function freshSuspDraft() {
   return {
-    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: todayISO(),
+    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: firstSchoolDayFrom(todayISO(), null),
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {},
     tagPm: false, pmAttendees: [], pmOthersText: "",
@@ -2124,6 +2143,30 @@ function freshSuspDraft() {
 // A new start date or class re-lays every day from the new start (for the
 // new class's school days), dropping any hand-picked dates, so no
 // out-of-school or in-school day is left behind on the old dates.
+// The first school day on or after `iso` for this level (today, if today
+// is one) — the default start date for a new suspension or time out.
+function firstSchoolDayFrom(iso, level) {
+  return isNonSchoolDay(iso, level) ? nextSchoolDay(iso, level) : iso;
+}
+// Save-time check: day 1 must be a school day for the student's level.
+function startDateProblem(d) {
+  if (!d.startDate || !d.studentClass) return "";
+  return isNonSchoolDay(d.startDate, classLevel(d.studentClass))
+    ? `${formatDate(d.startDate)} isn't a school day for ${d.studentClass} (weekend, holiday or HBL/closure day). Choose another start date.`
+    : "";
+}
+// Class chosen or changed: day 1 moves off a non-school day for the new
+// level, and the days are laid out again only when the level actually
+// changed (a class fix within the same level keeps rooms and dates).
+function onSuspClassChange(d, newClass, isTimeOut) {
+  const oldLevel = classLevel(d.studentClass);
+  d.studentClass = newClass;
+  const level = classLevel(newClass);
+  const movedStart = d.startDate && isNonSchoolDay(d.startDate, level);
+  if (movedStart) d.startDate = nextSchoolDay(d.startDate, level);
+  if (movedStart || oldLevel !== level) resetSuspDays(d);
+  if (isTimeOut) regenerateTimeOutDates(d); else regenerateSuspDates(d);
+}
 function resetSuspDays(d) {
   d.ossDates = [];
   d.issDates = [];
@@ -2218,6 +2261,7 @@ async function submitNewSuspension(e) {
     render();
     return;
   }
+  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp) { state.suspFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.suspFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2258,6 +2302,7 @@ async function submitNewSuspension(e) {
     render();
     try {
       const now = Date.now();
+      queueStudentLinkCheck(studentName, studentClass, d.startDate);
       const docRef = await addDoc(collection(db, "suspensions"), {
         studentName, studentClass, reason, ...multiReasonFields(d), startDate: d.startDate,
         totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
@@ -2338,6 +2383,7 @@ async function submitEditSuspension(e) {
     render();
     return;
   }
+  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp && (s.startDate !== d.startDate || s.studentClass !== studentClass)) { state.suspFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.suspFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2403,7 +2449,7 @@ async function submitEditSuspension(e) {
 // independently later.
 function freshTimeOutDraft() {
   return {
-    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: todayISO(),
+    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: firstSchoolDayFrom(todayISO(), null),
     toType: "Recess",
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {}, issAdministrators: {},
@@ -2440,6 +2486,7 @@ async function submitNewTimeOut(e) {
     render();
     return;
   }
+  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp) { state.toFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.toFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2482,6 +2529,7 @@ async function submitNewTimeOut(e) {
     render();
     try {
       const now = Date.now();
+      queueStudentLinkCheck(studentName, studentClass, d.startDate);
       const docRef = await addDoc(collection(db, "timeOuts"), {
         studentName, studentClass, reason, ...multiReasonFields(d), startDate: d.startDate, toType: d.toType,
         totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays,
@@ -2564,6 +2612,7 @@ async function submitEditTimeOut(e) {
     render();
     return;
   }
+  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp && (t.startDate !== d.startDate || t.studentClass !== studentClass)) { state.toFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.toFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2675,6 +2724,7 @@ async function submitNewParentMeeting(e) {
     try {
       const now = Date.now();
       const attendeeSummaryStr = attendees.map((a) => a === "Others" && othersText ? `Others (${othersText})` : a).join(", ");
+      queueStudentLinkCheck(studentName, studentClass, postponedTo || date);
       const docRef = await addDoc(collection(db, "parentMeetings"), {
         studentName, studentClass, date, reason, reasons, attendees, othersText, pmStatus, postponedTo, ...slotFields, ...postponedSlot,
         loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
@@ -2781,10 +2831,13 @@ async function submitEditParentMeeting(e) {
   // Only worth flagging when the edit actually moves who/when this
   // meeting is for — editing just the reason or attendees shouldn't
   // re-trigger this on every save.
-  const identityChanged = updated.studentName !== m.studentName || updated.studentClass !== m.studentClass || updated.date !== m.date;
-  if (identityChanged) {
-    const dup = findDuplicateParentMeeting(updated.studentName, updated.studentClass, updated.date, id);
-    if (guardDuplicate(dup, `${updated.studentName} already has a parent meeting on ${formatDate(updated.date)} (logged by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
+  // Uses the date the meeting actually happens on, so setting or moving a
+  // "Postponed to" date onto another meeting's day is caught too.
+  const newOn = { ...m, ...updated };
+  const identityChanged = updated.studentName !== m.studentName || updated.studentClass !== m.studentClass || pmDate(newOn) !== pmDate(m) || isPmCounted(newOn) !== isPmCounted(m);
+  if (identityChanged && isPmCounted(newOn)) {
+    const dup = findDuplicateParentMeeting(updated.studentName, updated.studentClass, pmDate(newOn), id);
+    if (guardDuplicate(dup, `${updated.studentName} already has a parent meeting on ${formatDate(pmDate(newOn))} (logged by ${dup?.loggedBy || "another teacher"}). Save anyway?`, doSave)) return;
   }
   await doSave();
 }
@@ -2866,7 +2919,7 @@ function renderPostponeDateField(m) {
   return `
     <div class="dd-pm-postpone-row">
       ${m.postponedTo
-        ? `<div class="dd-sans" style="font-size:14px">${formatDate(m.postponedTo)}${m.postponedTime ? ` · ${escapeHtml(pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation))}` : ""}</div>`
+        ? `<div class="dd-sans dd-fit-line" style="font-size:14px" data-fit="">${formatDate(m.postponedTo)}${m.postponedTime ? ` · ${escapeHtml(pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation))}` : ""}</div>`
         : `<div class="dd-mono-muted" style="font-size:12px">Not set yet</div>`}
       <button type="button" class="dd-date-icon-btn" data-pp-open="save" data-id="${m.id}" title="Choose the postponed meeting date">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
@@ -2979,7 +3032,7 @@ function calendarDayInfo(iso) {
 }
 // How a day behaves in a picker. Weekends, public and school holidays can't
 // be picked anywhere. Closure/HBL days are shown everywhere; on
-// Suspension/Time Out they're blocked for the student's level, while for
+// Grooming/Suspension/Time Out they're blocked for the student's level, while for
 // parent meetings they're just a note and stay pickable.
 function pickerDayState(iso, pp) {
   const info = calendarDayInfo(iso);
@@ -3090,6 +3143,7 @@ function confirmPostponePick() {
   }
   const m = state.parentMeetings.find((x) => x.id === pp.pmId);
   if (!m) { ppRender(); return; }
+  const dupPm = findDuplicateParentMeeting(m.studentName, m.studentClass, pp.selected, m.id);
   requestDeleteConfirmation("setPostponeDate", pp.pmId, {
     date: pp.selected, slot, tone: "confirm",
     message: "Confirm this meeting booking?",
@@ -3098,6 +3152,7 @@ function confirmPostponePick() {
       ["Date", `${formatDate(pp.selected)} (${weekdayName(pp.selected)})`],
       ["Time", formatTimeRange(slot.time, slot.endTime)],
       ["Location", slot.location],
+      ...(dupPm ? [["Note", `${m.studentName} already has a parent meeting on this day (logged by ${dupPm.loggedBy || "another teacher"}).`]] : []),
     ],
   });
 }
@@ -3254,8 +3309,61 @@ function renderRoomButtons(key) {
     const selected = v.loc === r && !disabled;
     const cls = selected ? "dd-avail-chip-selected" : clash ? "dd-avail-chip-full" : disabled ? "dd-room-waiting" : "dd-avail-chip-free";
     return `<button type="button" class="dd-room-btn ${cls}" data-room-slot="${key}" data-room="${r}" ${disabled ? "disabled" : ""} aria-pressed="${selected}">
-      <span class="dd-room-name">${r}</span><span class="dd-room-status">${status}</span></button>`;
+      <span class="dd-room-name" data-fit="rooms-${key}">${r}</span><span class="dd-room-status">${status}</span></button>`;
   }).join("");
+}
+// Text that must stay on one line (marked data-fit) is shrunk just enough
+// to fit the width it has on this phone. Elements sharing a data-fit name
+// all take the same (smallest needed) size, so e.g. both room buttons
+// match. An element's own inline size is remembered and restored first.
+// Search boxes (data-fit-placeholder) get a placeholder size that shows
+// the whole hint.
+const FIT_MIN_PX = 9;
+let fitCanvas = null;
+function fitOneLine() {
+  const groups = new Map();
+  document.querySelectorAll("[data-fit]").forEach((el, i) => {
+    if (el.dataset.fitBase === undefined) el.dataset.fitBase = el.style.fontSize || "";
+    el.style.fontSize = el.dataset.fitBase;
+    const key = el.dataset.fit || `_solo${i}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(el);
+  });
+  groups.forEach((els) => {
+    let size = Infinity;
+    els.forEach((el) => {
+      if (!el.clientWidth) return;
+      const base = parseFloat(getComputedStyle(el).fontSize);
+      if (el.scrollWidth <= el.clientWidth) { size = Math.min(size, base); return; }
+      // Largest size (to 0.5px) that fits, found in a few halvings.
+      let lo = FIT_MIN_PX, hi = base;
+      while (hi - lo > 0.5) {
+        const mid = (lo + hi) / 2;
+        el.style.fontSize = `${mid}px`;
+        if (el.scrollWidth <= el.clientWidth) lo = mid; else hi = mid;
+      }
+      size = Math.min(size, Math.floor(lo * 2) / 2);
+      el.style.fontSize = el.dataset.fitBase;
+    });
+    if (size !== Infinity) els.forEach((el) => { if (parseFloat(getComputedStyle(el).fontSize) > size) el.style.fontSize = `${size}px`; });
+  });
+  document.querySelectorAll("[data-fit-placeholder]").forEach((el) => {
+    const cs = getComputedStyle(el);
+    const avail = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+    if (avail <= 0) return;
+    fitCanvas = fitCanvas || document.createElement("canvas");
+    const ctx = fitCanvas.getContext("2d");
+    ctx.font = `400 16px ${cs.fontFamily}`;
+    const w16 = ctx.measureText(el.placeholder).width;
+    el.style.setProperty("--ph-size", `${Math.max(10, Math.min(16, Math.floor((avail / w16) * 16 * 2) / 2))}px`);
+  });
+}
+window.addEventListener("resize", () => fitOneLine());
+// Re-measure once fonts are in, and whenever another weight finishes
+// loading (sizes measured with the fallback font would be off).
+if (document.fonts) {
+  if (document.fonts.ready) document.fonts.ready.then(() => fitOneLine());
+  if (document.fonts.addEventListener) document.fonts.addEventListener("loadingdone", () => fitOneLine());
 }
 // Refreshes a picker's rooms (and the postponed picker's ✓) in place.
 function updateSlotDom(key) {
@@ -3264,7 +3372,7 @@ function updateSlotDom(key) {
   // A room that's become unavailable for the new time is dropped.
   if (v.loc && (!v.start || !v.end || timeToMin(v.end) <= timeToMin(v.start) || roomClash(v.loc, v.b.date, v.start, v.end, v.b.excludeId))) v.b.obj[v.b.f.loc] = "";
   const rooms = document.querySelector(`[data-slot-rooms="${key}"]`);
-  if (rooms) rooms.innerHTML = renderRoomButtons(key);
+  if (rooms) { rooms.innerHTML = renderRoomButtons(key); fitOneLine(); }
   if (key === "pp") updatePostponeOkButton();
 }
 
@@ -3446,6 +3554,7 @@ function render() {
   root.innerHTML = renderMain();
   attachMainListeners();
   attachSlotPickers();
+  fitOneLine();
   restoreScrollPositions(scrolls);
   // The Authorised Teachers List's add/remove/promote actions can fail
   // silently-looking otherwise (e.g. a rules rejection) — the confirm
@@ -3524,6 +3633,7 @@ function renderMain() {
   html += state.timePop ? renderTimePop() : "";
   html += state.confirmDeleteTarget ? renderDeleteConfirmModal() : "";
   html += state.pendingDuplicateConfirm ? renderDuplicateConfirmModal() : "";
+  if (!state.saving && !state.pendingDuplicateConfirm && !state.confirmDeleteTarget && (state.linkPromptQueue || []).length) html += renderLinkPromptModal();
   html += state.undoToast ? renderUndoToast() : "";
   return html + renderKnownStudentsDatalist();
 }
@@ -3588,7 +3698,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Dashboard</div>
-          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings, suspensions and time outs this semester (Terms 1–2 until Term 3 starts, then Terms 3–4). Tap the ⓘ next to the watchlist heading to see exactly what puts a student in each tier. Tap a student's name anywhere in the app to see everything on file for them across all four logs.</p>
+          <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings, suspensions and time outs this semester (Terms 1–2 until Term 3 starts, then Terms 3–4). Tap the ⓘ next to the watchlist heading to see exactly what puts a student in each tier. Tap a student's name anywhere in the app to see this year's records for them across all four logs, with earlier years listed at the bottom (tap a year to open it). Because two students can share a name and classes change every year, an earlier year is only added after a teacher confirms it's the same student: the app asks once (right after saving, and in the student's view) and remembers the answer for everyone. It also asks when the same name appears in another class of the same level in the same year (a mid-year class change); Yes counts both classes as one student, including on the Students' Watchlist. All answers are listed under Settings → Student Links, where Admins and the Owner can change or remove them. The P1–P6 boxes at the top of each log count this year's entries only.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Grooming Log</div>
@@ -3608,7 +3718,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Choosing dates</div>
-          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen. On Grooming, Suspension and Time Out, choose the student's class first, since HBL and closure days depend on the level. Changing a suspension's or time out's start date or class lays its days out again from the new start.</p>
+          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Grooming, Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen. On Grooming, Suspension and Time Out, choose the student's class first, since HBL and closure days depend on the level. A suspension or time out must start on a school day for the class. Changing its start date, or changing the class to a different level, lays its days out again from the new start.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -3945,8 +4055,11 @@ function computeYearRoster(records, year) {
   const rows = {};
   records.forEach((s) => {
     if (s.deleted || !s.startDate || !s.startDate.startsWith(`${year}-`)) return;
-    const key = studentKey(s.studentName, s.studentClass);
-    rows[key] = rows[key] || { name: s.studentName, cls: s.studentClass, count: 0 };
+    // One row per student: classes confirmed as a mid-year class change
+    // count as one student (shown under the latest class).
+    const key = `${normalizeName(s.studentName)}|${normCls(sameYearGroup(year, s.studentName, s.studentClass || "")[0])}`;
+    rows[key] = rows[key] || { name: s.studentName, cls: s.studentClass, count: 0, last: "" };
+    if (s.startDate >= rows[key].last) { rows[key].cls = s.studentClass; rows[key].last = s.startDate; }
     rows[key].count++;
   });
   return Object.values(rows).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
@@ -3963,7 +4076,7 @@ function computeRepeatVsUnique(year) {
   const groomingCounts = {};
   state.incidents.forEach((it) => {
     if (it.deleted || !it.date || !it.date.startsWith(`${year}-`) || !Array.isArray(it.issues)) return;
-    const key = studentKey(it.studentName, it.studentClass);
+    const key = `${normalizeName(it.studentName)}|${normCls(sameYearGroup(year, it.studentName, it.studentClass || "")[0])}`;
     groomingCounts[key] = (groomingCounts[key] || 0) + it.issues.length;
   });
   const groomingStudents = Object.values(groomingCounts);
@@ -4111,7 +4224,7 @@ function renderStackedAreaChart(rows) {
       <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">
         ${ticks.map((t) => `
           <line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="#E4E1D4" stroke-width="1"></line>
-          <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" font-family="Inter, system-ui, -apple-system, sans-serif" fill="#8A8571">${t}</text>`).join("")}
+          <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" font-family="Geist, system-ui, -apple-system, sans-serif" fill="#8A8571">${t}</text>`).join("")}
         <polygon points="${areaFor(grooming, zeros)}" fill="${CHART_COLORS.discipline}" fill-opacity="0.75"></polygon>
         <polygon points="${areaFor(groomPlusSusp, grooming)}" fill="${OSS_DOT_COLOR}" fill-opacity="0.85"></polygon>
         <polygon points="${areaFor(totals, groomPlusSusp)}" fill="${CHART_COLORS.timeOut}" fill-opacity="0.85"></polygon>
@@ -4120,10 +4233,10 @@ function renderStackedAreaChart(rows) {
         <polyline points="${lineFor(grooming)}" fill="none" stroke="${CHART_COLORS.discipline}" stroke-width="1.5"></polyline>
         ${totals.map((t, i) => `<circle cx="${x(i)}" cy="${y(t)}" r="2.2" fill="#FBFAF6" stroke="${CHART_COLORS.timeOut}" stroke-width="1.3"></circle>`).join("")}
         ${totals.map((t, i) => t > 0
-          ? `<text x="${x(i)}" y="${y(t) - 6}" text-anchor="middle" font-size="9" font-weight="700" font-family="Inter, system-ui, -apple-system, sans-serif" fill="#1B2A41">${t}</text>`
+          ? `<text x="${x(i)}" y="${y(t) - 6}" text-anchor="middle" font-size="9" font-weight="700" font-family="Geist, system-ui, -apple-system, sans-serif" fill="#1B2A41">${t}</text>`
           : "").join("")}
         ${rows.map((r, i) => i % labelEvery === 0
-          ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="Inter, system-ui, -apple-system, sans-serif" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
+          ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="Geist, system-ui, -apple-system, sans-serif" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
           : "").join("")}
       </svg>
       <div class="dd-cal-legend dd-daytype-legend" style="margin-top:8px;padding-top:8px">
@@ -4409,6 +4522,10 @@ function renderSettingsSection() {
       <div class="dd-settings-menu-group">
         ${years.map((y) => `<button type="button" class="dd-settings-menu-row" data-action="settings-open-year" data-year="${y}"><span>${y}</span><span class="dd-settings-chevron">›</span></button>`).join("")}
       </div>`;
+  } else if (state.settingsView === "studentLinks") {
+    body = `
+      ${backBtn("Settings", "settings-back-to-menu")}
+      ${renderStudentLinksSettings()}`;
   } else if (state.settingsView === "classesForYear") {
     const year = new Date().getFullYear();
     const draft = state._classDraft || classOptionsForCurrentYear();
@@ -4561,7 +4678,7 @@ function renderSettingsSection() {
   } else {
     const year = new Date().getFullYear();
     const needsReview = !state.classConfig?.classesByYear?.[String(year)];
-    const menuRow = (label, action) => `<button type="button" class="dd-settings-menu-row" data-action="${action}"><span>${label}</span><span class="dd-settings-chevron">›</span></button>`;
+    const menuRow = (label, action) => `<button type="button" class="dd-settings-menu-row" data-action="${action}"><span class="dd-settings-menu-label" data-fit="settings-menu">${label}</span><span class="dd-settings-chevron">›</span></button>`;
     body = `
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Settings</div>
       ${needsReview ? `<div class="dd-error" style="margin-bottom:10px">Classes for ${year} haven't been reviewed yet — pick which classes are active this year below.</div>` : ""}
@@ -4570,6 +4687,7 @@ function renderSettingsSection() {
         ${menuRow("Classes For The Year", "settings-open-classes")}
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
         ${menuRow("Authorised Teachers List", "settings-open-access")}
+        ${menuRow("Student Links", "settings-open-links")}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -4598,7 +4716,9 @@ function renderLevelBreakdown(pageKey, items, dateField, isActive) {
   const year = new Date().getFullYear();
   const moe = computeMoeCalendar(year);
   const today = todayISO();
-  const active = items.filter(isActive || ((it) => !it.deleted));
+  // This year's entries only, matching the term table below (and the
+  // students' level, which changes every year).
+  const active = items.filter(isActive || ((it) => !it.deleted)).filter((it) => String(it[dateField] || "").startsWith(`${year}-`));
   const levelCounts = [1, 2, 3, 4, 5, 6].map((lvl) => ({
     level: lvl,
     count: active.filter((it) => classLevel(it.studentClass) === lvl).length,
@@ -4717,7 +4837,16 @@ function renderDayDetail(dateISO, incl) {
   return `
     <div class="dd-day-detail">
       <div class="dd-day-detail-title">${formatDate(dateISO)}</div>
-      ${items.length === 0 ? `<div class="dd-mono-muted" style="font-size:12px;font-style:italic">Nothing logged this day.</div>` : items.map((it) => `
+      ${items.length === 0 ? `<div class="dd-mono-muted" style="font-size:12px">Nothing logged this day.</div>` : items.map((it) => it.type === "parentMeeting" ? `
+        <div class="dd-day-detail-row dd-day-detail-row-pm">
+          <div class="dd-day-detail-pm-line">
+            <span class="dd-cal-dot" style="background:${typeColor[it.type]}"></span>
+            <span class="dd-day-detail-name">${escapeHtml(it.name)}</span>
+            <span class="dd-day-detail-class">${escapeHtml(it.cls || "")}</span>
+          </div>
+          ${it.location ? `<div class="dd-day-detail-pm-slot">${escapeHtml(it.location)}</div>` : ""}
+          ${it.note ? `<div class="dd-day-detail-pm-note dd-day-detail-note${it.noteKind === "moved" ? " dd-day-detail-note-moved" : ""}">${escapeHtml(it.note)}</div>` : ""}
+        </div>` : `
         <div class="dd-day-detail-row">
           <span class="dd-cal-dot" style="background:${typeColor[it.type]}"></span>
           <span class="dd-day-detail-name">${escapeHtml(it.name)}</span>
@@ -5198,33 +5327,42 @@ function renderDashboardSection() {
   const watchCounts = {};
   const watchClass = {};
   const watchName = {};
+  // A student who changed class mid-year (confirmed in their student view)
+  // is counted once, shown under their latest class.
+  const watchDate = {};
+  const watchKey = (name, cls, date) => {
+    const y = parseInt(String(date).slice(0, 4), 10);
+    const grp = cls ? sameYearGroup(y, name, cls) : [""];
+    return `${y}|${normalizeName(name)}|${normCls(grp[0])}`;
+  };
+  const noteClass = (key, cls, date) => { if (cls && (!watchDate[key] || date >= watchDate[key])) { watchClass[key] = cls; watchDate[key] = date; } };
   activeIncidents.forEach((i) => {
     if (i.date < semester.start || i.date > semester.end) return;
     const isLegacy = !Array.isArray(i.issues);
     const maxStage = isLegacy ? 0 : groomingEntryMaxStage(i);
-    const key = studentKey(i.studentName, i.studentClass);
+    const key = watchKey(i.studentName, i.studentClass, i.date);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
     if (maxStage >= 3) watchCounts[key].third++;
     else if (maxStage >= 2) watchCounts[key].second++;
-    watchClass[key] = i.studentClass || watchClass[key];
+    noteClass(key, i.studentClass, i.date);
     watchName[key] = i.studentName || watchName[key];
   });
   activeSusp.forEach((s) => {
     if (s.startDate < semester.start || s.startDate > semester.end) return;
-    const key = studentKey(s.studentName, s.studentClass);
+    const key = watchKey(s.studentName, s.studentClass, s.startDate);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
     watchCounts[key].suspension++;
-    watchClass[key] = s.studentClass || watchClass[key];
+    noteClass(key, s.studentClass, s.startDate);
     watchName[key] = s.studentName || watchName[key];
   });
   // Time outs count toward risk tiers too (1 = Low, 2-3 = Medium, 4+ = High),
   // as an extra "or" criterion alongside suspensions and warnings.
   activeTo.forEach((t) => {
     if (t.startDate < semester.start || t.startDate > semester.end) return;
-    const key = studentKey(t.studentName, t.studentClass);
+    const key = watchKey(t.studentName, t.studentClass, t.startDate);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
     watchCounts[key].timeOut++;
-    watchClass[key] = t.studentClass || watchClass[key];
+    noteClass(key, t.studentClass, t.startDate);
     watchName[key] = t.studentName || watchName[key];
   });
   // Risk tiers (per semester, counted by entry not by issue). Meeting ANY
@@ -5377,7 +5515,7 @@ function renderLogSection() {
         ${state.disciplineExpandedLevel ? renderClassPillsRow("discipline", state.disciplineExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="search-input" placeholder="Search by name, class, issue, or teacher…" value="${escapeHtml(state.query)}" />
+            <input class="dd-input dd-search" data-fit-placeholder id="search-input" placeholder="Search by name, class, issue, or teacher…" value="${escapeHtml(state.query)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.incidents.length === 0 ? "No entries yet. Log the first grooming issue to start the record." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderIncidentDetail).join("")}</div>`}
@@ -5390,29 +5528,399 @@ function renderLogSection() {
     </div>`;
 }
 
+// ---------- Same-name students across years ----------
+// Classes change every year, so a student's earlier records can't be found
+// by name + class. Instead, a teacher confirms once which earlier record (if
+// any) is the same student; the answer is saved in studentLinks and shared.
+// Nothing is linked automatically: two students can share a name.
+function allStudentRecords() {
+  return [
+    ...state.incidents.filter((i) => !i.deleted).map((r) => ({ kind: "grooming", r, date: r.date })),
+    ...state.suspensions.filter((x) => !x.deleted).map((r) => ({ kind: "susp", r, date: r.startDate })),
+    ...state.timeOuts.filter((x) => !x.deleted).map((r) => ({ kind: "to", r, date: r.startDate })),
+    ...state.parentMeetings.filter((x) => !x.deleted).map((r) => ({ kind: "pm", r, date: pmDate(r) || r.date })),
+  ].filter((x) => x.date).map((x) => ({ ...x, year: parseInt(x.date.slice(0, 4), 10) }));
+}
+function normCls(c) { return (c || "").trim().toUpperCase(); }
+function linkId(year, name, cls) {
+  return `${year}_${encodeURIComponent(normalizeName(name))}_${encodeURIComponent(normCls(cls))}`;
+}
+// Mid-year class change: one answer per pair of classes (either order).
+function moveId(year, name, clsA, clsB) {
+  const [a, b] = [normCls(clsA), normCls(clsB)].sort();
+  return `move_${year}_${encodeURIComponent(normalizeName(name))}_${encodeURIComponent(a)}_${encodeURIComponent(b)}`;
+}
+function moveDecision(year, name, a, b) { return (state.studentLinks || {})[moveId(year, name, a, b)] || null; }
+// All classes a student was in during one year: the class itself plus any
+// confirmed as the same student after a class change.
+function sameYearGroup(year, name, cls) {
+  const nm = normalizeName(name);
+  const edges = Object.values(state.studentLinks || {}).filter((d) => d.kind === "move" && d.decision === "same" && d.year === year && normalizeName(d.name) === nm);
+  const seen = new Set([normCls(cls)]);
+  const out = [cls.trim()];
+  for (let grew = true; grew;) {
+    grew = false;
+    edges.forEach((d) => {
+      const [a, b] = d.classes;
+      [[a, b], [b, a]].forEach(([x, y]) => { if (seen.has(normCls(x)) && !seen.has(normCls(y))) { seen.add(normCls(y)); out.push(y); grew = true; } });
+    });
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+// The earlier-year answer for a student in a year (any of their classes).
+function linkDecision(year, name, cls) {
+  for (const c of sameYearGroup(year, name, cls)) { const d = (state.studentLinks || {})[linkId(year, name, c)]; if (d) return d; }
+  return null;
+}
+// Same-name records at a level in a year, grouped into students (classes
+// already confirmed as one student are one option).
+function nameGroupsAt(all, year, name, level, excludeClasses = []) {
+  const nm = normalizeName(name);
+  const ex = new Set(excludeClasses.map(normCls));
+  const counts = new Map();
+  all.forEach((x) => {
+    if (x.year !== year || normalizeName(x.r.studentName) !== nm || classLevel(x.r.studentClass) !== level) return;
+    const c = normCls(x.r.studentClass);
+    if (ex.has(c)) return;
+    counts.set(c, { cls: x.r.studentClass.trim(), count: (counts.get(c)?.count || 0) + 1 });
+  });
+  const groups = [];
+  const done = new Set();
+  [...counts.values()].sort((a, b) => a.cls.localeCompare(b.cls)).forEach((o) => {
+    if (done.has(normCls(o.cls))) return;
+    const members = sameYearGroup(year, name, o.cls).filter((c) => counts.has(normCls(c)));
+    members.forEach((c) => done.add(normCls(c)));
+    groups.push({ cls: members[0], classes: members, count: members.reduce((n, c) => n + counts.get(normCls(c)).count, 0) });
+  });
+  return groups;
+}
+// Earlier same-name students this year's student could be: the nearest
+// earlier year with records for that name one level lower per year back.
+function linkCandidates(year, name, cls, all = allStudentRecords()) {
+  const lvl = classLevel(cls);
+  if (lvl === 999) return null;
+  for (let y = year - 1; y >= year - 6; y--) {
+    const expected = lvl - (year - y);
+    if (expected < 1) break;
+    const options = nameGroupsAt(all, y, name, expected);
+    if (options.length) return { year: y, options };
+  }
+  return null;
+}
+// The next unanswered question for a student in a year, if any: first a
+// same-year class change (same name, same level, another class), then the
+// earlier year.
+function pendingLinkQuestion(year, name, cls, all = allStudentRecords()) {
+  const lvl = classLevel(cls);
+  if (lvl === 999) return null;
+  const group = sameYearGroup(year, name, cls);
+  const moveOpts = nameGroupsAt(all, year, name, lvl, group)
+    .filter((o) => !group.some((g) => o.classes.some((c) => moveDecision(year, name, g, c))));
+  if (moveOpts.length) return { type: "move", year, name, cls, candYear: year, options: moveOpts };
+  if (linkDecision(year, name, cls)) return null;
+  const c = linkCandidates(year, name, cls, all);
+  return c ? { type: "year", year, name, cls, candYear: c.year, options: c.options } : null;
+}
+// A student's records grouped by year: the tapped record's year (its class
+// plus any confirmed class change), then earlier years only along confirmed
+// links. Also returns the next unanswered question and the answers given
+// (for undo).
+function studentRecordsByYear(name, cls) {
+  const all = allStudentRecords();
+  const exactYears = all.filter((x) => studentKey(x.r.studentName, x.r.studentClass) === studentKey(name, cls)).map((x) => x.year);
+  let id = { year: exactYears.length ? Math.max(...exactYears) : new Date().getFullYear(), name, cls };
+  const byYear = new Map();
+  const classesByYear = new Map();
+  const addGroup = (y, n, c) => {
+    const grp = sameYearGroup(y, n, c);
+    classesByYear.set(y, grp);
+    const keys = new Set(grp.map((g) => studentKey(n, g)));
+    all.forEach((x) => {
+      if (x.year !== y || !keys.has(studentKey(x.r.studentName, x.r.studentClass))) return;
+      if (!byYear.has(y)) byYear.set(y, { grooming: [], susp: [], to: [], pm: [] });
+      byYear.get(y)[x.kind].push(x.r);
+    });
+    return grp;
+  };
+  const answered = [];
+  let question = null;
+  for (let hop = 0; hop < 12; hop++) {
+    const grp = addGroup(id.year, id.name, id.cls);
+    for (let a = 0; a < grp.length; a++) for (let b = a + 1; b < grp.length; b++) {
+      const d = moveDecision(id.year, id.name, grp[a], grp[b]);
+      if (d && d.decision === "same") answered.push({ kind: "move", year: id.year, name: id.name, classes: [grp[a], grp[b]], dec: d });
+    }
+    question = pendingLinkQuestion(id.year, id.name, id.cls, all);
+    if (question) break;
+    const dec = linkDecision(id.year, id.name, id.cls);
+    if (!dec) break;
+    answered.push({ kind: "year", from: { year: id.year, name: id.name, cls: dec.cls }, dec });
+    if (dec.decision !== "linked" || !dec.toYear || !dec.toClass) break;
+    id = { year: dec.toYear, name: id.name, cls: dec.toClass };
+  }
+  byYear.forEach((g) => {
+    g.grooming.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    g.susp.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+    g.to.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+    g.pm.sort((a, b) => (pmDate(b) || b.date || "").localeCompare(pmDate(a) || a.date || ""));
+  });
+  return { byYear, classesByYear, question, answered };
+}
+// Saves an answer. For a class change, the picked option is "same" and
+// every other option listed is "different" (so it isn't asked again).
+async function saveStudentLink(q, toClass) {
+  state.linkError = "";
+  const base = { name: q.name, by: teacherName(), at: Date.now() };
+  try {
+    if (q.type === "move") {
+      for (const o of q.options) {
+        const same = !!toClass && normCls(o.cls) === normCls(toClass);
+        await setDoc(doc(db, "studentLinks", moveId(q.year, q.name, q.cls, o.cls)), { ...base, kind: "move", year: q.year, classes: [q.cls, o.cls], decision: same ? "same" : "different" });
+      }
+    } else {
+      await setDoc(doc(db, "studentLinks", linkId(q.year, q.name, q.cls)), { ...base, kind: "year", year: q.year, cls: q.cls,
+        decision: toClass ? "linked" : "new", toYear: toClass ? q.candYear : null, toClass: toClass || null });
+    }
+  } catch (err) { state.linkError = err?.code === "permission-denied" ? "Couldn't save — the updated database rules (firestore.rules) haven't been published yet." : `Couldn't save — ${err?.message || String(err)}`; }
+  render();
+}
+async function undoStudentLink(linkDocId) {
+  state.linkError = "";
+  try { await deleteDoc(doc(db, "studentLinks", linkDocId)); }
+  catch (err) { state.linkError = err?.code === "permission-denied" ? "Only Admins and the Owner can remove student links." : `Couldn't remove — ${err?.message || String(err)}`; }
+  render();
+}
+// Settings → Student Links: every saved answer, newest year first. Anyone
+// can look; only Admins and the Owner can change or remove an answer
+// (firestore.rules enforces the same).
+function studentLinkLine(id, d) {
+  if (d.kind === "move") {
+    const cls = [...(d.classes || [])].sort((a, b) => a.localeCompare(b)).map(escapeHtml);
+    return d.decision === "same"
+      ? `${cls.join(" / ")} (${d.year}): same student`
+      : `${cls.join(" / ")} (${d.year}): different students`;
+  }
+  return d.decision === "linked"
+    ? `${escapeHtml(d.cls)} (${d.year}) same student as ${escapeHtml(d.toClass)} (${d.toYear})`
+    : `${escapeHtml(d.cls)} (${d.year}) different student from earlier years`;
+}
+const ICON_PENCIL = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`;
+const ICON_BIN = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>`;
+// The year a student is in P6 (every student moves up one level a year),
+// worked out from any answer about them; null if the class has no level.
+function linkP6Year(d) {
+  const cls = d.kind === "move" ? (d.classes || [])[0] : d.cls;
+  const lvl = classLevel(cls);
+  return lvl === 999 ? null : d.year + (6 - lvl);
+}
+function renderStudentLinksSettings() {
+  const canEdit = !!state.isAdmin;
+  const q = normalizeName(state.linkSearch || "");
+  const thisYear = new Date().getFullYear();
+  const all = Object.entries(state.studentLinks || {})
+    .filter(([, d]) => d && d.name && (!q || normalizeName(d.name).includes(q)))
+    .sort(([, a], [, b]) => (b.year - a.year) || normalizeName(a.name).localeCompare(normalizeName(b.name)) || (b.at || 0) - (a.at || 0));
+  // Students past their P6 year have graduated: their answers are parked in
+  // the archive at the bottom (still searchable and editable).
+  const graduated = ([, d]) => { const p6 = linkP6Year(d); return p6 !== null && p6 < thisYear; };
+  const entries = all.filter((e) => !graduated(e));
+  const archived = all.filter(graduated);
+  const years = [...new Set(entries.map(([, d]) => d.year))];
+  const when = (t) => (t ? formatDate(new Date(t + 8 * 3600000).toISOString().slice(0, 10)) : "");
+  const row = ([id, d]) => {
+    const viewCls = d.kind === "move" ? (d.classes || [])[0] : d.cls;
+    return `
+        <div class="dd-link-row">
+          <div class="dd-link-row-top">
+            <span class="dd-card-student-link dd-link-row-name" data-action="view-student" data-name="${escapeHtml(d.name)}" data-class="${escapeHtml(viewCls || "")}">${escapeHtml(d.name)}</span>
+            ${canEdit ? `
+            <span class="dd-link-row-icons">
+              <button type="button" class="dd-link-icon" data-link-change="${escapeHtml(id)}" title="Change answer" aria-label="Change answer">${ICON_PENCIL}</button>
+              <button type="button" class="dd-link-icon dd-link-icon-remove" data-link-remove="${escapeHtml(id)}" title="Remove" aria-label="Remove">${ICON_BIN}</button>
+            </span>` : ""}
+          </div>
+          <div class="dd-link-row-text" data-fit="">${studentLinkLine(id, d)}</div>
+          <div class="dd-mono-muted dd-link-row-meta">${escapeHtml(d.by || "")}${d.at ? ` · ${when(d.at)}` : ""}</div>
+        </div>`;
+  };
+  // Collapsible year headers (closed by default; a search opens every
+  // year with a match).
+  const yearsOpen = state.linkYearsOpen || {};
+  const yearBlock = (key, label, count, inner) => {
+    const open = !!q || !!yearsOpen[key];
+    return `
+      <div class="dd-student-year">
+        <button type="button" class="dd-settings-menu-row" data-action="toggle-link-year" data-key="${escapeHtml(key)}" aria-expanded="${open}">
+          <span>${label}</span>
+          <span class="dd-settings-chevron">${open ? "⌄" : "›"}</span>
+        </button>
+        ${open ? `<div class="dd-link-year-body">${inner}</div>` : ""}
+      </div>`;
+  };
+  const gradYears = [...new Set(archived.map(([, d]) => linkP6Year(d)))].sort((a, b) => b - a);
+  const archiveOpen = !!state.linkArchiveOpen || (!!q && archived.length > 0 && entries.length === 0);
+  const archiveHtml = archived.length ? `
+      <div class="dd-settings-menu-group" style="margin-top:22px">
+        <button type="button" class="dd-settings-menu-row" data-action="toggle-link-archive" aria-expanded="${archiveOpen}">
+          <span>Archive</span>
+          <span class="dd-settings-chevron">${archiveOpen ? "⌄" : "›"}</span>
+        </button>
+        ${archiveOpen ? `<div class="dd-link-archive">${gradYears.map((gy) => {
+          const items = archived.filter(([, d]) => linkP6Year(d) === gy);
+          return yearBlock(`grad-${gy}`, `Graduated end of ${gy}`, items.length, items.map(row).join(""));
+        }).join("")}</div>` : ""}
+      </div>` : "";
+  return `
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0 4px">Student Links</div>
+      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">Answers to "Is this the same student?" — for students with the same name across years or after a class change.${canEdit ? "" : " Only Admins and the Owner can change these."}</div>
+      <input class="dd-input dd-search" id="link-search-input" data-fit-placeholder placeholder="Search by student name…" value="${escapeHtml(state.linkSearch || "")}" style="margin-bottom:12px" />
+      ${entries.length === 0 ? `<div class="dd-dash-empty">${q ? "No current students match this name." : "No answers yet for current students."}</div>` : `
+      <div class="dd-settings-menu-group">${years.map((y) => {
+        const items = entries.filter(([, d]) => d.year === y);
+        return yearBlock(String(y), String(y), items.length, items.map(row).join(""));
+      }).join("")}</div>`}
+      ${archiveHtml}
+      ${state.linkError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.linkError)}</div>` : ""}`;
+}
+// "Change answer": the saved answer is removed and the same question is
+// asked again straight away (as a pop-up).
+async function changeStudentLink(linkDocId) {
+  const d = (state.studentLinks || {})[linkDocId];
+  if (!d) return;
+  const cls = d.kind === "move" ? (d.classes || [])[0] : d.cls;
+  state.linkError = "";
+  try {
+    await deleteDoc(doc(db, "studentLinks", linkDocId));
+    state.linkPromptQueue = [{ year: d.year, name: d.name, cls }, ...(state.linkPromptQueue || [])];
+  } catch (err) { state.linkError = err?.code === "permission-denied" ? "Only Admins and the Owner can change student links." : `Couldn't change — ${err?.message || String(err)}`; }
+  render();
+}
+// After a new entry is saved, ask straight away (once) if that student's
+// name matches an earlier year.
+function queueStudentLinkCheck(name, cls, date) {
+  if (!name || !cls || !date) return;
+  const year = parseInt(String(date).slice(0, 4), 10);
+  state.linkPromptQueue = [...(state.linkPromptQueue || []), { year, name, cls }];
+}
+function currentLinkPrompt() {
+  const all = allStudentRecords();
+  while ((state.linkPromptQueue || []).length) {
+    const p = state.linkPromptQueue[0];
+    const q = pendingLinkQuestion(p.year, p.name, p.cls, all);
+    if (q) return q;
+    state.linkPromptQueue = state.linkPromptQueue.slice(1);
+  }
+  return null;
+}
+// The question, in the teacher's own wording: Yes/No when there's one
+// earlier student with that name, a multiple choice (plus "None of the
+// above") when there are several.
+function renderLinkQuestion(q, where) {
+  const attrs = `data-q-type="${q.type}" data-year="${q.year}" data-name="${escapeHtml(q.name)}" data-cls="${escapeHtml(q.cls)}" data-cand-year="${q.candYear}" data-where="${where}"`;
+  const opt = (o) => `${escapeHtml(q.name)} in ${escapeHtml((o.classes || [o.cls]).join(" / "))} in ${q.candYear}`;
+  const count = (o) => `<span class="dd-mono-muted" style="font-size:12px"> · ${o.count} record${o.count === 1 ? "" : "s"}</span>`;
+  const head = `<div class="dd-link-q-head">Is this ${escapeHtml(q.name)} (${escapeHtml(q.cls)}) referring to:</div>`;
+  if (q.options.length === 1) {
+    const o = q.options[0];
+    return `
+      <div class="dd-link-q" ${attrs}>
+        ${head}
+        <div class="dd-link-q-single">${opt(o)}?${count(o)}</div>
+        <div class="dd-link-q-btns">
+          <button type="button" class="dd-add-btn" style="flex:1;background:#8A8571" data-link-answer="no" ${attrs}>No</button>
+          <button type="button" class="dd-add-btn" style="flex:1" data-link-answer="yes" data-to-class="${escapeHtml(o.cls)}" ${attrs}>Yes</button>
+        </div>
+        <div class="dd-link-q-hint">No means a different student with the same name.</div>
+      </div>`;
+  }
+  const name = `link-choice-${where}`;
+  return `
+    <div class="dd-link-q" ${attrs}>
+      ${head}
+      <div class="dd-link-q-options">
+        ${q.options.map((o, i) => `<label class="dd-link-q-option"><input type="radio" name="${name}" value="${escapeHtml(o.cls)}" /><span>${opt(o)}${count(o)}${i < q.options.length - 1 ? `<span class="dd-link-q-or"> OR</span>` : ""}</span></label>`).join("")}
+        <label class="dd-link-q-option"><input type="radio" name="${name}" value="" data-none="1" /><span>None of the above</span></label>
+      </div>
+      <div class="dd-link-q-btns">
+        <button type="button" class="dd-add-btn" style="flex:1" data-link-answer="choice" data-radio="${name}" disabled ${attrs}>Confirm</button>
+      </div>
+      <div class="dd-link-q-hint">None of the above means a different student with the same name.</div>
+    </div>`;
+}
+function renderLinkPromptModal() {
+  const q = currentLinkPrompt();
+  if (!q) return "";
+  return `
+    <div class="dd-modal-backdrop" id="link-prompt-backdrop">
+      <div class="dd-modal" style="max-width:420px" role="dialog" aria-label="Same name found in an earlier year">
+        <div class="dd-modal-title" style="margin-bottom:6px">${q.type === "move" ? `Same name in another ${escapeHtml(q.cls.replace(/-.*/, ""))} class` : `Same name found in ${q.candYear}`}</div>
+        ${renderLinkQuestion(q, "modal")}
+        ${state.linkError ? `<div class="dd-error" style="margin-top:8px">${escapeHtml(state.linkError)}</div>` : ""}
+      </div>
+    </div>`;
+}
+
 function renderStudentView() {
   const name = state.studentViewName || "";
   const cls = state.studentViewClass || "";
-  const matches = (rec) => studentKey(rec.studentName, rec.studentClass) === studentKey(name, cls);
-  const grooming = state.incidents.filter((i) => !i.deleted && matches(i)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const suspensions = state.suspensions.filter((s) => !s.deleted && matches(s)).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
-  const timeOuts = state.timeOuts.filter((t) => !t.deleted && matches(t)).sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
-  const meetings = state.parentMeetings.filter((m) => !m.deleted && matches(m)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const latestClass = (grooming[0]?.studentClass) || (suspensions[0]?.studentClass) || (timeOuts[0]?.studentClass) || (meetings[0]?.studentClass) || cls;
-  const sectionBlock = (title, count, items, renderFn) => `
-    <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:20px 0 8px">${title} (${count})</div>
-    ${count === 0 ? `<div class="dd-dash-empty">Nothing on file.</div>` : `<div style="display:flex;flex-direction:column;gap:12px">${items.map(renderFn).join("")}</div>`}`;
+  const { byYear, classesByYear, question, answered } = studentRecordsByYear(name, cls);
+  const thisYear = new Date().getFullYear();
+  const empty = { grooming: [], susp: [], to: [], pm: [] };
+  const cur = byYear.get(thisYear) || empty;
+  const pastYears = [...byYear.keys()].filter((y) => y < thisYear).sort((a, b) => b - a);
+  const latest = [cur.grooming[0], cur.susp[0], cur.to[0], cur.pm[0]].find(Boolean);
+  const curClasses = classesByYear.get(thisYear) || [];
+  const latestClass = curClasses.length > 1 ? curClasses.join(" / ") : (latest?.studentClass || cls);
+  const sectionBlock = (title, items, renderFn, hideIfEmpty) => (hideIfEmpty && !items.length) ? "" : `
+    <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:20px 0 8px">${title} (${items.length})</div>
+    ${items.length === 0 ? `<div class="dd-dash-empty">Nothing on file.</div>` : `<div style="display:flex;flex-direction:column;gap:12px">${items.map(renderFn).join("")}</div>`}`;
+  const blocks = (g, hideIfEmpty) => `
+        ${sectionBlock("Grooming Log", g.grooming, renderIncidentDetail, hideIfEmpty)}
+        ${sectionBlock("Suspension Log", g.susp, renderSuspensionDetail, hideIfEmpty)}
+        ${sectionBlock("Time Out Log", g.to, renderTimeOutDetail, hideIfEmpty)}
+        ${sectionBlock("Parent Meets", g.pm, renderParentMeetingDetail, hideIfEmpty)}`;
+  const open = state.studentViewOpenYears || {};
+  const linkNotes = answered.map((a) => {
+    const text = a.kind === "move"
+      ? `${escapeHtml(a.classes.join(" and "))} in ${a.year} confirmed as the same student (class change)`
+      : a.dec.decision === "linked"
+        ? `${escapeHtml(a.from.cls)} ${a.from.year} linked to ${escapeHtml(a.from.name)} in ${escapeHtml(a.dec.toClass)} in ${a.dec.toYear}`
+        : `${escapeHtml(a.from.cls)} ${a.from.year} marked as a different student from earlier ${escapeHtml(a.from.name)}s`;
+    const docId = a.kind === "move" ? moveId(a.year, a.name, a.classes[0], a.classes[1]) : linkId(a.from.year, a.from.name, a.from.cls);
+    return `
+        <div class="dd-link-note" data-link-id="${escapeHtml(docId)}">${text} <span class="dd-mono-muted">(${escapeHtml(a.dec.by || "")})</span></div>`;
+  }).join("");
+  const questionHtml = question ? `
+        <div class="dd-link-q-card">${renderLinkQuestion(question, "view")}</div>` : "";
+  const pastHtml = pastYears.length ? `
+        <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:28px 0 8px">Past years</div>
+        <div class="dd-settings-menu-group dd-student-years">
+          ${pastYears.map((y) => {
+            const g = byYear.get(y);
+            const n = g.grooming.length + g.susp.length + g.to.length + g.pm.length;
+            const cls0 = (classesByYear.get(y) || []).join(" / ");
+            return `
+          <div class="dd-student-year">
+            <button type="button" class="dd-settings-menu-row" data-action="toggle-student-year" data-year="${y}" aria-expanded="${!!open[y]}">
+              <span>${y}${cls0 ? ` <span class="dd-mono-muted" style="font-size:12px">${escapeHtml(cls0)}</span>` : ""}</span>
+              <span class="dd-student-year-meta"><span class="dd-mono-muted" style="font-size:12px">${n} record${n === 1 ? "" : "s"}</span><span class="dd-settings-chevron">${open[y] ? "⌄" : "›"}</span></span>
+            </button>
+            ${open[y] ? `<div class="dd-student-year-body">${blocks(g, true)}</div>` : ""}
+          </div>`;
+          }).join("")}
+        </div>` : "";
   return `
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
         <button type="button" class="dd-back-link" data-action="student-view-back">‹ Back</button>
         <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">${escapeHtml(name)}${latestClass ? ` <span class="dd-mono-muted" style="font-size:14px;font-weight:400">${escapeHtml(latestClass)}</span>` : ""}</div>
-        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:6px">Everything on file for this student, across all four logs.</div>
-        ${sectionBlock("Grooming Log", grooming.length, grooming, renderIncidentDetail)}
-        ${sectionBlock("Suspension Log", suspensions.length, suspensions, renderSuspensionDetail)}
-        ${sectionBlock("Time Out Log", timeOuts.length, timeOuts, renderTimeOutDetail)}
-        ${sectionBlock("Parent Meets", meetings.length, meetings, renderParentMeetingDetail)}
+        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:6px">${thisYear} records across all four logs.${pastYears.length ? " Earlier years are at the bottom." : ""}</div>
+        ${blocks(cur, false)}
+        ${questionHtml}
+        ${pastHtml}
+        ${state.linkError && state.section === "studentView" ? `<div class="dd-error" style="margin-top:8px">${escapeHtml(state.linkError)}</div>` : ""}
+        ${linkNotes ? `<div class="dd-link-notes">${linkNotes}</div>` : ""}
       </div>
       ${state.editingIncidentId ? renderEditIncidentForm() : ""}
       ${state.editingSuspensionId ? renderSuspForm(true) : ""}
@@ -5457,7 +5965,7 @@ function renderIncidentDetail(it) {
         ${linkedPm.map((x) => `<div class="dd-related-link" data-action="jump-to-pm" data-id="${x.id}">Parent Meet — ${formatDateShort(x.date)} — ${escapeHtml(truncateName(x.reason || "", 30))}</div>`).join("")}
       </div>` : ""}
       ${isLegacy ? `
-      <div class="dd-mono-muted" style="font-size:12px;font-style:italic;margin:12px 0">This is an entry from before the Grooming Log rework — no per-issue tracking available for it.</div>
+      <div class="dd-mono-muted" style="font-size:12px;margin:12px 0">This is an entry from before the Grooming Log rework — no per-issue tracking available for it.</div>
       ` : `
       <div style="margin:12px 0;display:flex;flex-direction:column;gap:10px">
         ${issues.map((issue) => {
@@ -5494,7 +6002,7 @@ function renderIncidentDetail(it) {
             })()}
             ${cfg.instructions ? (issue.stage === 1
               ? `<div class="dd-issue-instruction">${escapeHtml(cfg.instructions[0] || "")}</div>`
-              : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px;font-style:italic">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`) : ""}
+              : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`) : ""}
             ${cfg.note ? `<div class="dd-issue-instruction">${escapeHtml(cfg.note)}</div>` : ""}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
@@ -5510,7 +6018,7 @@ function renderIncidentDetail(it) {
       </div>`}
       <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Follow-up thread</div>
       <div class="dd-followups">
-        ${followUps.length === 0 ? `<div class="dd-sans" style="font-size:14px;font-style:italic;color:#8A8571">No follow-ups logged yet.</div>` : followUps.map((fu) => {
+        ${followUps.length === 0 ? `<div class="dd-sans" style="font-size:14px;color:#8A8571">No follow-ups logged yet.</div>` : followUps.map((fu) => {
           if (state.editingFollowUpId === fu.id) {
             return `<div class="dd-followup">
               <div class="dd-followup-edit-row">
@@ -5741,7 +6249,7 @@ function renderSuspensionSection() {
         ${state.suspensionExpandedLevel ? renderClassPillsRow("suspension", state.suspensionExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="susp-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.suspQuery)}" />
+            <input class="dd-input dd-search" data-fit-placeholder id="susp-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.suspQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.suspensions.length === 0 ? "No suspensions logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderSuspensionDetail).join("")}</div>`}
@@ -5788,7 +6296,7 @@ function renderSuspensionDetail(s) {
         ${entries.map((e) => `<div class="dd-followup"><div class="dd-followup-note">${SUSP_TYPE_STYLE[e.type].label}${e.type === "ISS" && e.venue ? ` — ${escapeHtml(e.venue)}` : ""}</div><div class="dd-followup-meta">${formatDate(e.date)}</div></div>`).join("")}
       </div>
       <button class="dd-history-toggle" data-action="toggle-susp-history" data-id="${s.id}">${state.historyOpen[s.id] ? "Hide audit trail" : "Show audit trail"}</button>
-      ${state.historyOpen[s.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
+      ${state.historyOpen[s.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
         <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Delete Entry</button>
@@ -5862,7 +6370,7 @@ function renderSuspFieldsBody(d, idPrefix, excludeSuspensionId) {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
               </div>
               <span class="dd-venue-date">${formatDate(dt)}</span>
-              <span class="dd-sans" style="font-size:13px;flex:1;${d.issVenues[dt] ? "" : "font-style:italic;color:#8A8571"}">${d.issVenues[dt] ? escapeHtml(d.issVenues[dt]) : "Pending Location"}</span>
+              <span class="dd-sans" style="font-size:13px;flex:1;${d.issVenues[dt] ? "" : "color:#8A8571"}">${d.issVenues[dt] ? escapeHtml(d.issVenues[dt]) : "Pending Location"}</span>
               ${d.issVenues[dt] ? `<button type="button" class="dd-followup-icon-btn" data-action="${idPrefix}-unbook-iss" data-date="${dt}" title="Remove this booking">✕</button>` : ""}
             </div>`).join("")}
         </div>
@@ -6065,7 +6573,7 @@ function renderTimeOutSection() {
         ${state.timeOutExpandedLevel ? renderClassPillsRow("timeOut", state.timeOutExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="to-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.toQuery)}" />
+            <input class="dd-input dd-search" data-fit-placeholder id="to-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.toQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.timeOuts.length === 0 ? "No time outs logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderTimeOutDetail).join("")}</div>`}
@@ -6115,7 +6623,7 @@ function renderTimeOutDetail(t) {
         ${entries.map((e) => `<div class="dd-followup"><div class="dd-followup-note">${escapeHtml(timeOutDayLabel(e))}</div><div class="dd-followup-meta">${formatDate(e.date)}</div></div>`).join("")}
       </div>
       <button class="dd-history-toggle" data-action="toggle-to-history" data-id="${t.id}">${state.historyOpen[t.id] ? "Hide audit trail" : "Show audit trail"}</button>
-      ${state.historyOpen[t.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
+      ${state.historyOpen[t.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-timeout" data-id="${t.id}">Edit entry</button>
         <button class="dd-add-btn" style="background:#A3372B" data-action="delete-timeout" data-id="${t.id}">Delete Entry</button>
@@ -6388,7 +6896,7 @@ function renderParentMeetingSection() {
         ${state.pmExpandedLevel ? renderClassPillsRow("pm", state.pmExpandedLevel) : ""}
         <div class="dd-panel">
           <div class="dd-search-wrap">
-            <input class="dd-input dd-search" id="pm-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.pmQuery)}" />
+            <input class="dd-input dd-search" data-fit-placeholder id="pm-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.pmQuery)}" />
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.parentMeetings.length === 0 ? "No parent meetings logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderParentMeetingDetail).join("")}</div>`}
@@ -6433,7 +6941,7 @@ function renderParentMeetingDetail(m) {
       <div class="dd-pm-status-row" style="margin-top:8px">
         ${PM_MEETING_STATUS_OPTIONS.map((s) => `<button type="button" class="dd-pm-status-pill dd-pm-status-pill-sm ${(m.pmStatus || "Scheduled") === s ? "active" : ""}" style="${(m.pmStatus || "Scheduled") === s ? `background:${PM_MEETING_STATUS_STYLE[s].ink};border-color:${PM_MEETING_STATUS_STYLE[s].ink}` : ""}" data-action="set-pm-status-quick" data-id="${m.id}" data-status="${s}">${s}</button>`).join("")}
       </div>
-      ${state.pmQuickError?.id === m.id ? `<div class="dd-error" role="alert" style="margin-top:6px">${escapeHtml(state.pmQuickError.message)}</div>` : ""}
+      ${state.pmQuickError?.id === m.id && (m.pmStatus || "Scheduled") !== "Scheduled" && roomClash(m.location, m.date, m.time, m.endTime, m.id) ? `<div class="dd-error" role="alert" style="margin-top:6px">${escapeHtml(state.pmQuickError.message)}</div>` : ""}
       ${m.pmStatus === "Postponed" ? `
       <div class="dd-pm-postpone-block">
         <div class="dd-field-label" style="margin-bottom:4px">Postponed to</div>
@@ -6450,7 +6958,7 @@ function renderParentMeetingDetail(m) {
         <div><div class="dd-field-label">Reason(s) for Meeting</div><ul class="dd-field-value dd-reason-bullets">${pmReasonLines(m).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>
       </div>
       <button class="dd-history-toggle" data-action="toggle-pm-history" data-id="${m.id}">${state.historyOpen[m.id] ? "Hide audit trail" : "Show audit trail"}</button>
-      ${state.historyOpen[m.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="font-style:italic;color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
+      ${state.historyOpen[m.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-pm" data-id="${m.id}">Edit entry</button>
         <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Delete Entry</button>
@@ -6526,9 +7034,58 @@ function attachMainListeners() {
       state.studentViewFromSection = state.section;
       state.studentViewName = el.dataset.name;
       state.studentViewClass = el.dataset.class || "";
+      state.studentViewOpenYears = {};
       state.section = "studentView";
       window.scrollTo(0, 0);
       render();
+    }));
+  // Same-student question (student view card and after-save pop-up).
+  document.querySelectorAll(".dd-link-q input[type=radio]").forEach((el) =>
+    el.addEventListener("change", () => {
+      const btn = el.closest(".dd-link-q").querySelector('[data-link-answer="choice"]');
+      if (btn) btn.disabled = false;
+    }));
+  document.querySelectorAll("[data-link-answer]").forEach((el) =>
+    el.addEventListener("click", () => {
+      if (el.disabled) return;
+      const q = pendingLinkQuestion(parseInt(el.dataset.year, 10), el.dataset.name, el.dataset.cls) || { type: el.dataset.qType, year: parseInt(el.dataset.year, 10), name: el.dataset.name, cls: el.dataset.cls, candYear: parseInt(el.dataset.candYear, 10), options: [] };
+      let toClass = null;
+      if (el.dataset.linkAnswer === "yes") toClass = el.dataset.toClass;
+      else if (el.dataset.linkAnswer === "choice") {
+        const picked = el.closest(".dd-link-q").querySelector(`input[name="${el.dataset.radio}"]:checked`);
+        if (!picked) return;
+        toClass = picked.value || null;
+      }
+      // The pop-up then shows the next question for this student, if any
+      // (e.g. the earlier year after a class change). If saving failed,
+      // it closes and the error shows on the page instead.
+      saveStudentLink(q, toClass).then(() => {
+        if (el.dataset.where === "modal" && state.linkError) {
+          state.linkPromptQueue = (state.linkPromptQueue || []).slice(1);
+          state.saveError = true; state.saveErrorDetail = state.linkError; state.linkError = "";
+          render();
+        }
+      });
+    }));
+  document.querySelectorAll("[data-link-remove]").forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("undoStudentLink", el.dataset.linkRemove, {
+      message: "Remove this answer? The question will be asked again in the student's view.", tone: "confirm" })));
+  document.querySelectorAll("[data-link-change]").forEach((el) =>
+    el.addEventListener("click", () => requestDeleteConfirmation("changeStudentLink", el.dataset.linkChange, {
+      message: "Change this answer? The question will be asked again now.", tone: "confirm" })));
+  const linkSearch = document.getElementById("link-search-input");
+  if (linkSearch) linkSearch.addEventListener("input", () => {
+    state.linkSearch = linkSearch.value;
+    const pos = linkSearch.selectionStart;
+    renderKeepingPageScroll();
+    const again = document.getElementById("link-search-input");
+    if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (e) { /* non-fatal */ } }
+  });
+  document.querySelectorAll('[data-action="toggle-student-year"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const y = el.dataset.year;
+      state.studentViewOpenYears = { ...(state.studentViewOpenYears || {}), [y]: !(state.studentViewOpenYears || {})[y] };
+      renderKeepingPageScroll();
     }));
   document.querySelectorAll('[data-action="student-view-back"]').forEach((el) =>
     el.addEventListener("click", () => { state.section = state.studentViewFromSection || "dashboard"; render(); }));
@@ -6577,6 +7134,12 @@ function attachMainListeners() {
   document.querySelectorAll('[data-action="settings-open-year"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsSelectedYear = parseInt(el.dataset.year, 10); state.settingsView = "yearReport"; render(); }));
 
+  document.querySelectorAll('[data-action="toggle-link-year"]').forEach((el) =>
+    el.addEventListener("click", () => { const k = el.dataset.key; state.linkYearsOpen = { ...(state.linkYearsOpen || {}), [k]: !(state.linkYearsOpen || {})[k] }; renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="toggle-link-archive"]').forEach((el) =>
+    el.addEventListener("click", () => { state.linkArchiveOpen = !state.linkArchiveOpen; renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="settings-open-links"]').forEach((el) =>
+    el.addEventListener("click", () => { state.settingsView = "studentLinks"; state.linkError = ""; render(); }));
   document.querySelectorAll('[data-action="settings-open-classes"]').forEach((el) =>
     el.addEventListener("click", () => { state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
 
@@ -7131,7 +7694,7 @@ function attachSuspFormModalListeners() {
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._suspDraft[name] = el.value; }); };
     syncField("studentName");
     const classEl = form.elements["studentClass"];
-    if (classEl) classEl.addEventListener("change", () => { state._suspDraft.studentClass = classEl.value; regenerateSuspDates(resetSuspDays(state._suspDraft)); renderKeepingModalScroll(); });
+    if (classEl) classEl.addEventListener("change", () => { onSuspClassChange(state._suspDraft, classEl.value, false); renderKeepingModalScroll(); });
     attachMultiReasonListeners(form, state._suspDraft);
 
     attachSuspFieldListeners(form, "susp", state._suspDraft);
@@ -7192,7 +7755,7 @@ function attachTimeOutFormModalListeners() {
     const syncField = (name) => { const el = form.elements[name]; if (el) el.addEventListener("input", () => { state._toDraft[name] = el.value; }); };
     syncField("studentName");
     const classEl = form.elements["studentClass"];
-    if (classEl) classEl.addEventListener("change", () => { state._toDraft.studentClass = classEl.value; regenerateTimeOutDates(resetSuspDays(state._toDraft)); renderKeepingModalScroll(); });
+    if (classEl) classEl.addEventListener("change", () => { onSuspClassChange(state._toDraft, classEl.value, true); renderKeepingModalScroll(); });
     attachMultiReasonListeners(form, state._toDraft);
 
     attachTimeOutFieldListeners(form, "to", state._toDraft);
