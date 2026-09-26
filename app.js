@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.12.4";
+const APP_VERSION = "3.14.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1935,7 +1935,6 @@ async function submitNewIncident() {
       state.section = "log";
       state.disciplineFilter = "all";
       state.selectedIncidentId = docRef.id;
-      state.entryExpanded[docRef.id] = true;
     } catch (err) {
       state.saveError = true;
       state.saveErrorDetail = err?.message || String(err);
@@ -2125,7 +2124,7 @@ async function submitEditIncident() {
 // ==================== SUSPENSIONS (new unified per-day model) ====================
 function freshSuspDraft() {
   return {
-    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: firstSchoolDayFrom(todayISO(), null),
+    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: firstSchoolDayFrom(todayISO(), null), autoStart: true,
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {},
     tagPm: false, pmAttendees: [], pmOthersText: "",
@@ -2148,21 +2147,16 @@ function freshSuspDraft() {
 function firstSchoolDayFrom(iso, level) {
   return isNonSchoolDay(iso, level) ? nextSchoolDay(iso, level) : iso;
 }
-// Save-time check: day 1 must be a school day for the student's level.
-function startDateProblem(d) {
-  if (!d.startDate || !d.studentClass) return "";
-  return isNonSchoolDay(d.startDate, classLevel(d.studentClass))
-    ? `${formatDate(d.startDate)} isn't a school day for ${d.studentClass} (weekend, holiday or HBL/closure day). Choose another start date.`
-    : "";
-}
-// Class chosen or changed: day 1 moves off a non-school day for the new
-// level, and the days are laid out again only when the level actually
-// changed (a class fix within the same level keeps rooms and dates).
+// Class chosen or changed: the default start (not one the teacher picked)
+// moves off a non-school day for the new level, and the days are laid out
+// again only when the level actually changed (a class fix within the same
+// level keeps rooms and dates).
 function onSuspClassChange(d, newClass, isTimeOut) {
   const oldLevel = classLevel(d.studentClass);
   d.studentClass = newClass;
   const level = classLevel(newClass);
-  const movedStart = d.startDate && isNonSchoolDay(d.startDate, level);
+  // Only the automatic default start moves; a date the teacher picked stays.
+  const movedStart = d.autoStart && d.startDate && isNonSchoolDay(d.startDate, level);
   if (movedStart) d.startDate = nextSchoolDay(d.startDate, level);
   if (movedStart || oldLevel !== level) resetSuspDays(d);
   if (isTimeOut) regenerateTimeOutDates(d); else regenerateSuspDates(d);
@@ -2261,7 +2255,6 @@ async function submitNewSuspension(e) {
     render();
     return;
   }
-  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp) { state.suspFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.suspFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2328,7 +2321,6 @@ async function submitNewSuspension(e) {
       state.section = "suspensions";
       state.suspTab = "All";
       state.selectedSuspId = docRef.id;
-      state.entryExpanded[docRef.id] = true;
       syncSuspensionToSheet({ id: docRef.id, studentName, studentClass, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days, loggedBy: teacherName(), deleted: false });
     } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
@@ -2383,7 +2375,6 @@ async function submitEditSuspension(e) {
     render();
     return;
   }
-  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp && (s.startDate !== d.startDate || s.studentClass !== studentClass)) { state.suspFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.suspFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2449,7 +2440,7 @@ async function submitEditSuspension(e) {
 // independently later.
 function freshTimeOutDraft() {
   return {
-    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: firstSchoolDayFrom(todayISO(), null),
+    studentName: "", studentClass: "", reasons: [], reasonOthersText: "", startDate: firstSchoolDayFrom(todayISO(), null), autoStart: true,
     toType: "Recess",
     totalDays: null, issDays: 0, ossDays: 0,
     ossDates: [], issDates: [], issOverridden: [], issVenues: {}, issAdministrators: {},
@@ -2486,7 +2477,6 @@ async function submitNewTimeOut(e) {
     render();
     return;
   }
-  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp) { state.toFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.toFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2555,7 +2545,6 @@ async function submitNewTimeOut(e) {
       state.section = "timeOuts";
       state.toTab = "All";
       state.selectedToId = docRef.id;
-      state.entryExpanded[docRef.id] = true;
       syncTimeOutToSheet({ id: docRef.id, studentName, studentClass, toType: d.toType, reason, startDate: d.startDate, totalDays: d.totalDays, issDays: d.issDays, ossDays: d.ossDays, days, loggedBy: teacherName(), deleted: false });
     } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
@@ -2612,7 +2601,6 @@ async function submitEditTimeOut(e) {
     render();
     return;
   }
-  { const sp = startDateProblem({ startDate: d.startDate, studentClass }); if (sp && (t.startDate !== d.startDate || t.studentClass !== studentClass)) { state.toFormError = sp; render(); return; } }
   if ((d.reasons || []).includes("Others") && !(d.reasonOthersText || "").trim()) {
     state.toFormError = "Specify what \"Others\" means in the reason.";
     render();
@@ -2735,7 +2723,6 @@ async function submitNewParentMeeting(e) {
       state.section = "parentMeetings";
       state.pmTab = "All";
       state.selectedPmId = docRef.id;
-      state.entryExpanded[docRef.id] = true;
       syncParentMeetingToSheet({ id: docRef.id, studentName, studentClass, date, reason, attendees, othersText, pmStatus, postponedTo, ...slotFields, ...postponedSlot, loggedBy: teacherName(), deleted: false });
     } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
@@ -3030,10 +3017,12 @@ function calendarDayInfo(iso) {
   if (c) return { kind: "closure", name: closureLabel(c.levels), levels: c.levels };
   return { kind: null, name: "" };
 }
-// How a day behaves in a picker. Weekends, public and school holidays can't
-// be picked anywhere. Closure/HBL days are shown everywhere; on
-// Grooming/Suspension/Time Out they're blocked for the student's level, while for
-// parent meetings they're just a note and stay pickable.
+// How a day behaves in a picker. Weekends, public and school holidays are
+// named and coloured everywhere. On Grooming and Parent Meet they can't be
+// picked; closure/HBL days are blocked on Grooming for the student's level
+// and just a note for parent meetings. On Suspension and Time Out every day
+// can be picked (colours still shown) — only the automatic defaults avoid
+// non-school days.
 function pickerDayState(iso, pp) {
   const info = calendarDayInfo(iso);
   let kind = info.kind, name = info.name, blocked = kind === "weekend" || kind === "public" || kind === "school";
@@ -3041,6 +3030,7 @@ function pickerDayState(iso, pp) {
     if (pp.context === "pm") blocked = false;
     else blocked = pp.level ? info.levels.includes(pp.level) : info.levels.length >= 6;
   }
+  if (pp.context === "susp" || pp.context === "to") blocked = false;
   if (pp.minExclusive && iso <= pp.minExclusive) blocked = true;
   return { kind, name, blocked };
 }
@@ -3718,7 +3708,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Choosing dates</div>
-          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names and can't be picked. School closure and HBL days (blue) are shown too: on Grooming, Suspension and Time Out they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen. On Grooming, Suspension and Time Out, choose the student's class first, since HBL and closure days depend on the level. A suspension or time out must start on a school day for the class. Changing its start date, or changing the class to a different level, lays its days out again from the new start.</p>
+          <p>Date fields on the Grooming, Suspension, Time Out and Parent Meet forms — and a grooming issue's follow-up deadline — open the app's own calendar. Weekends (grey), public holidays (pink) and school holidays (yellow) are shown with their names; on Grooming and Parent Meet they can't be picked. School closure and HBL days (blue) are shown too: on Grooming they're blocked for the levels affected; for parent meetings they're just a note and can still be picked. Overlapping HBL entries are combined per day (e.g. P3/P4/P5 HBL). When changing a date, the calendar opens on the one already chosen. On Grooming, Suspension and Time Out, choose the student's class first, since HBL and closure days depend on the level. On Suspension and Time Out any day can be picked (the colours still show weekends, holidays and HBL days), but the default start and the days filled in automatically are always school days. Changing the start date, or changing the class to a different level, lays the days out again from the new start.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Status dots</div>
@@ -4239,7 +4229,7 @@ function renderStackedAreaChart(rows) {
           ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="8" font-family="Geist, system-ui, -apple-system, sans-serif" fill="#8A8571">${escapeHtml(String(r.label).slice(0, 3))}</text>`
           : "").join("")}
       </svg>
-      <div class="dd-cal-legend dd-daytype-legend" style="margin-top:8px;padding-top:8px">
+      <div class="dd-cal-legend dd-trend-legend" style="margin-top:8px;padding-top:8px">
         <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${CHART_COLORS.discipline}"></span>Grooming</div>
         <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${OSS_DOT_COLOR}"></span>Suspension</div>
         <div class="dd-cal-legend-item"><span class="dd-legend-swatch" style="background:${CHART_COLORS.timeOut}"></span>Time Out</div>
@@ -4369,8 +4359,18 @@ function renderSettingsSection() {
         <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
       </div>
       <div id="report-print-area">
-      ${renderTallyGrid(["discipline", "suspension", "timeOut", "parentMeeting"], totals, timeOutTypeBreakdown(state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`))))}
+      ${renderTallyGrid(["discipline", "suspension", "timeOut", "parentMeeting"], totals)}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term</div>
+      ${(() => {
+        const termRows = computeYearTermTrend(year);
+        const rowTotal = (t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting;
+        const grandDiscipline = termRows.reduce((s, t) => s + t.discipline, 0);
+        const grandSuspension = termRows.reduce((s, t) => s + t.suspension, 0);
+        const grandToByType = {};
+        TO_TYPES.forEach((ty) => { grandToByType[ty.key] = termRows.reduce((s, t) => s + (t.timeOutByType[ty.key] || 0), 0); });
+        const grandMeeting = termRows.reduce((s, t) => s + t.parentMeeting, 0);
+        const grandTotal = termRows.reduce((s, t) => s + rowTotal(t), 0);
+        return `
       <div class="dd-level-breakdown dd-level-breakdown-byterm">
         <div class="dd-level-row dd-level-row-header">
           <div class="dd-level-cell-class">Term</div>
@@ -4378,21 +4378,32 @@ function renderSettingsSection() {
           <div class="dd-level-cell-term dd-level-cell-term-susp" style="color:${CHART_COLORS.suspension}">Susp</div>
           <div class="dd-level-cell-term dd-level-cell-term-timeout dd-level-cell-term-timeout-first dd-byterm-to-head" style="color:${CHART_COLORS.timeOut}">Time Out</div>
           <div class="dd-level-cell-term dd-level-cell-term-meet" style="color:${CHART_COLORS.parentMeeting}">Meet</div>
+          <div class="dd-level-cell-term dd-level-cell-term-total">Total</div>
         </div>
         <div class="dd-level-row dd-level-row-header dd-level-row-subheader">
           <div class="dd-level-cell-class"></div>
           <div class="dd-level-cell-term dd-level-cell-term-groom"></div><div class="dd-level-cell-term dd-level-cell-term-susp"></div>
           ${TO_TYPES.map((t, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}" style="color:${CHART_COLORS.timeOut}">${t.abbrev}</div>`).join("")}
           <div class="dd-level-cell-term dd-level-cell-term-meet"></div>
+          <div class="dd-level-cell-term dd-level-cell-term-total"></div>
         </div>
-        ${computeYearTermTrend(year).map((t) => `
+        ${termRows.map((t) => `
           <div class="dd-level-row">
             <div class="dd-level-cell-class">${t.label.replace("Term ", "T")}</div>
             <div class="dd-level-cell-term dd-level-cell-term-groom">${t.discipline}</div><div class="dd-level-cell-term dd-level-cell-term-susp">${t.suspension}</div>
             ${TO_TYPES.map((ty, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}">${t.timeOutByType[ty.key] || 0}</div>`).join("")}
             <div class="dd-level-cell-term dd-level-cell-term-meet">${t.parentMeeting}</div>
+            <div class="dd-level-cell-term dd-level-cell-term-total">${rowTotal(t)}</div>
           </div>`).join("")}
-      </div>
+        <div class="dd-level-row dd-level-row-total">
+          <div class="dd-level-cell-class">Total</div>
+          <div class="dd-level-cell-term dd-level-cell-term-groom">${grandDiscipline}</div><div class="dd-level-cell-term dd-level-cell-term-susp">${grandSuspension}</div>
+          ${TO_TYPES.map((ty, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}">${grandToByType[ty.key]}</div>`).join("")}
+          <div class="dd-level-cell-term dd-level-cell-term-meet">${grandMeeting}</div>
+          <div class="dd-level-cell-term dd-level-cell-term-total">${grandTotal}</div>
+        </div>
+      </div>`;
+      })()}
       <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Discipline load by month</div>
       ${(() => {
         const monthly = computeYearMonthlyTrend(year);
@@ -5317,6 +5328,18 @@ function renderPendingPmDates() {
       </div>
     </div>`;
 }
+// Row of "+ Grooming / + Suspension / + Time Out / + Parent Meet" buttons —
+// a common header shown at the top of every log tab (not just the
+// dashboard), so a new entry can be started from wherever you're standing.
+function renderNewEntryRow() {
+  return `
+    <div class="dd-new-entry-row">
+      <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ Grooming</button>
+      <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ Suspension</button>
+      <button class="dd-newbtn dd-newbtn-compact" id="btn-new-to-only" style="flex:1">+ Time Out</button>
+      <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parent Meet</button>
+    </div>`;
+}
 function renderDashboardSection() {
   const activeIncidents = state.incidents.filter((i) => !i.deleted);
   const activeSusp = state.suspensions.filter((s) => !s.deleted);
@@ -5388,12 +5411,7 @@ function renderDashboardSection() {
       <div class="dd-main">
         ${!state.classConfig?.classesByYear?.[String(new Date().getFullYear())] ? `
         <div class="dd-error" style="margin-bottom:12px" data-action="goto-classes-for-year">Classes for ${new Date().getFullYear()} haven't been reviewed yet — <button type="button" class="dd-back-link" data-action="goto-classes-for-year" style="text-decoration:underline">tap here to set them up</button>.</div>` : ""}
-        <div class="dd-new-entry-row">
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-case" style="flex:1">+ Grooming</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-susp-only" style="flex:1">+ Suspension</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-to-only" style="flex:1">+ Time Out</button>
-          <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parent Meet</button>
-        </div>
+        ${renderNewEntryRow()}
 
         ${renderGroomingFollowUpList()}
 
@@ -5506,6 +5524,7 @@ function renderLogSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderNewEntryRow()}
         ${renderLevelBreakdown("discipline", state.incidents, "date")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
@@ -5525,6 +5544,9 @@ function renderLogSection() {
       </div>
       ${state.showNewForm ? renderNewForm() : ""}
       ${state.editingIncidentId ? renderEditIncidentForm() : ""}
+      ${state.showNewSuspForm ? renderSuspForm(false) : ""}
+      ${state.showNewToForm ? renderTimeOutForm(false) : ""}
+      ${state.showNewPmForm ? renderPmForm(false) : ""}
     </div>`;
 }
 
@@ -6242,6 +6264,7 @@ function renderSuspensionSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderNewEntryRow()}
         ${renderLevelBreakdown("suspension", state.suspensions, "startDate")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
@@ -6259,6 +6282,9 @@ function renderSuspensionSection() {
       </div>
       ${state.showNewSuspForm ? renderSuspForm(false) : ""}
       ${state.editingSuspensionId ? renderSuspForm(true) : ""}
+      ${state.showNewForm ? renderNewForm() : ""}
+      ${state.showNewToForm ? renderTimeOutForm(false) : ""}
+      ${state.showNewPmForm ? renderPmForm(false) : ""}
     </div>`;
 }
 
@@ -6439,7 +6465,7 @@ function renderKeepingPageScroll() {
 function attachSuspFieldListeners(form, idPrefix, d) {
   const onChange = renderKeepingModalScroll;
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
-  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateSuspDates(resetSuspDays(d)); onChange(); });
+  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; d.autoStart = false; regenerateSuspDates(resetSuspDays(d)); onChange(); });
 
   const totalEl = document.getElementById(`${idPrefix}-total-days`);
   if (totalEl) totalEl.addEventListener("change", () => {
@@ -6566,6 +6592,7 @@ function renderTimeOutSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderNewEntryRow()}
         ${renderLevelBreakdown("timeOut", state.timeOuts, "startDate")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.toTab === t ? "active" : ""}" data-action="set-to-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
@@ -6583,6 +6610,9 @@ function renderTimeOutSection() {
       </div>
       ${state.showNewToForm ? renderTimeOutForm(false) : ""}
       ${state.editingTimeOutId ? renderTimeOutForm(true) : ""}
+      ${state.showNewForm ? renderNewForm() : ""}
+      ${state.showNewSuspForm ? renderSuspForm(false) : ""}
+      ${state.showNewPmForm ? renderPmForm(false) : ""}
     </div>`;
 }
 function renderTimeOutDetail(t) {
@@ -6755,7 +6785,7 @@ function attachTimeOutFieldListeners(form, idPrefix, d) {
   if (typeEl) typeEl.addEventListener("change", () => { d.toType = typeEl.value; regenerateTimeOutDates(d); onChange(); });
 
   const startDateEl = document.getElementById(`${idPrefix}-start-date`);
-  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; regenerateTimeOutDates(resetSuspDays(d)); onChange(); });
+  if (startDateEl) startDateEl.addEventListener("change", () => { d.startDate = startDateEl.value; d.autoStart = false; regenerateTimeOutDates(resetSuspDays(d)); onChange(); });
 
   const totalEl = document.getElementById(`${idPrefix}-total-days`);
   if (totalEl) totalEl.addEventListener("change", () => {
@@ -6889,6 +6919,7 @@ function renderParentMeetingSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
+        ${renderNewEntryRow()}
         ${renderLevelBreakdown("pm", state.parentMeetings.map((m) => ({ ...m, countDate: pmDate(m) })), "countDate", isPmCounted)}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
@@ -6906,6 +6937,9 @@ function renderParentMeetingSection() {
       </div>
       ${state.showNewPmForm ? renderPmForm(false) : ""}
       ${state.editingPmId ? renderPmForm(true) : ""}
+      ${state.showNewForm ? renderNewForm() : ""}
+      ${state.showNewSuspForm ? renderSuspForm(false) : ""}
+      ${state.showNewToForm ? renderTimeOutForm(false) : ""}
     </div>`;
 }
 
@@ -7465,6 +7499,7 @@ function attachMainListeners() {
 // Grooming Log page — filter pills, search, follow-up thread, audit
 // trail, and the per-issue resolve/escalate/override/undo actions.
 function attachGroomingListeners() {
+  attachNewEntryRowListeners();
   document.querySelectorAll('[data-action="set-discipline-filter"]').forEach((el) =>
     el.addEventListener("click", () => { state.disciplineFilter = el.dataset.filter; render(); }));
 
@@ -7533,6 +7568,50 @@ function attachGroomingListeners() {
     el.addEventListener("change", () => { if (el.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, el.value); }));
   document.querySelectorAll('[data-action="undo-issue-action"]').forEach((el) =>
     el.addEventListener("click", () => undoGroomingIssueAction(el.dataset.id, el.dataset.issue)));
+
+  // The shared "+ Suspension / + Time Out / + Parent Meet" buttons can pop
+  // their form up on this tab too, so those forms' own listeners need
+  // wiring here as well, not just on their own tabs.
+  attachSuspFormModalListeners();
+  attachTimeOutFormModalListeners();
+  attachPmFormModalListeners();
+}
+
+// Wires up the "+ Grooming / + Suspension / + Time Out / + Parent Meet"
+// row — present at the top of every log tab, not just the dashboard.
+function attachNewEntryRowListeners() {
+  const newCaseBtn = document.getElementById("btn-new-case");
+  if (newCaseBtn) newCaseBtn.addEventListener("click", () => {
+    state.showNewForm = true;
+    state._newIncidentDraft = freshIncidentDraft();
+    state.newIncidentFormError = "";
+    render();
+  });
+
+  const newSuspOnlyBtn = document.getElementById("btn-new-susp-only");
+  if (newSuspOnlyBtn) newSuspOnlyBtn.addEventListener("click", () => {
+    state.showNewSuspForm = true;
+    state.editingSuspensionId = null;
+    state._suspDraft = freshSuspDraft();
+    state.suspFormError = "";
+    render();
+  });
+  const newToOnlyBtn = document.getElementById("btn-new-to-only");
+  if (newToOnlyBtn) newToOnlyBtn.addEventListener("click", () => {
+    state.showNewToForm = true;
+    state.editingTimeOutId = null;
+    state._toDraft = freshTimeOutDraft();
+    state.toFormError = "";
+    render();
+  });
+  const newPmOnlyBtn = document.getElementById("btn-new-pm-only");
+  if (newPmOnlyBtn) newPmOnlyBtn.addEventListener("click", () => {
+    state.showNewPmForm = true;
+    state.editingPmId = null;
+    state._pmDraft = freshPmDraft();
+    state.pmFormError = "";
+    render();
+  });
 }
 
 function attachDashboardListeners() {
@@ -7610,38 +7689,7 @@ function attachDashboardListeners() {
     render();
   });
 
-  const newCaseBtn = document.getElementById("btn-new-case");
-  if (newCaseBtn) newCaseBtn.addEventListener("click", () => {
-    state.showNewForm = true;
-    state._newIncidentDraft = freshIncidentDraft();
-    state.newIncidentFormError = "";
-    render();
-  });
-
-  const newSuspOnlyBtn = document.getElementById("btn-new-susp-only");
-  if (newSuspOnlyBtn) newSuspOnlyBtn.addEventListener("click", () => {
-    state.showNewSuspForm = true;
-    state.editingSuspensionId = null;
-    state._suspDraft = freshSuspDraft();
-    state.suspFormError = "";
-    render();
-  });
-  const newToOnlyBtn = document.getElementById("btn-new-to-only");
-  if (newToOnlyBtn) newToOnlyBtn.addEventListener("click", () => {
-    state.showNewToForm = true;
-    state.editingTimeOutId = null;
-    state._toDraft = freshTimeOutDraft();
-    state.toFormError = "";
-    render();
-  });
-  const newPmOnlyBtn = document.getElementById("btn-new-pm-only");
-  if (newPmOnlyBtn) newPmOnlyBtn.addEventListener("click", () => {
-    state.showNewPmForm = true;
-    state.editingPmId = null;
-    state._pmDraft = freshPmDraft();
-    state.pmFormError = "";
-    render();
-  });
+  attachNewEntryRowListeners();
 
   attachSuspFormModalListeners();
   attachTimeOutFormModalListeners();
@@ -7651,6 +7699,7 @@ function attachDashboardListeners() {
 
 
 function attachSuspListeners() {
+  attachNewEntryRowListeners();
   document.querySelectorAll('[data-action="set-susp-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
 
@@ -7672,6 +7721,10 @@ function attachSuspListeners() {
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
 
   attachSuspFormModalListeners();
+  // The shared "+ Grooming / + Time Out / + Parent Meet" buttons can pop
+  // their form up on this tab too.
+  attachTimeOutFormModalListeners();
+  attachPmFormModalListeners();
 }
 
 // Shared between the Suspension Log page (editing) and the Dashboard's
@@ -7715,6 +7768,7 @@ function attachSuspFormModalListeners() {
 }
 
 function attachTimeOutListeners() {
+  attachNewEntryRowListeners();
   document.querySelectorAll('[data-action="set-to-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.toTab = el.dataset.tab; render(); }));
 
@@ -7736,6 +7790,10 @@ function attachTimeOutListeners() {
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
 
   attachTimeOutFormModalListeners();
+  // The shared "+ Grooming / + Suspension / + Parent Meet" buttons can pop
+  // their form up on this tab too.
+  attachSuspFormModalListeners();
+  attachPmFormModalListeners();
 }
 
 // Shared between the Time Out Log page (editing), the Dashboard's
@@ -7776,6 +7834,7 @@ function attachTimeOutFormModalListeners() {
 }
 
 function attachPmListeners() {
+  attachNewEntryRowListeners();
   const search = document.getElementById("pm-search-input");
   if (search) search.addEventListener("input", debounce(() => {
     if (!search.isConnected) return; // page re-rendered from elsewhere while the timer was pending
@@ -7799,6 +7858,10 @@ function attachPmListeners() {
     el.addEventListener("click", () => setPmStatusQuick(el.dataset.id, el.dataset.status)));
 
   attachPmFormModalListeners();
+  // The shared "+ Grooming / + Suspension / + Time Out" buttons can pop
+  // their form up on this tab too.
+  attachSuspFormModalListeners();
+  attachTimeOutFormModalListeners();
 }
 
 // Attaches listeners for the multi-select "Reason(s) for meeting"

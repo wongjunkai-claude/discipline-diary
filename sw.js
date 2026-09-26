@@ -1,4 +1,4 @@
-const CACHE = "discipline-diary-v224";
+const CACHE = "discipline-diary-v227";
 const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
   "./fonts/geist-400.woff2", "./fonts/geist-500.woff2", "./fonts/geist-600.woff2", "./fonts/geist-700.woff2", "./fonts/geist-800.woff2"];
 // Firebase's own code, loaded from Google's CDN. The URLs include the

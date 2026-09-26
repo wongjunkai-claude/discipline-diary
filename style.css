@@ -315,10 +315,13 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-day-detail-row { display: flex; align-items: center; gap: 7px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1B2A41; padding: 4px 0; flex-wrap: wrap; }
 .dd-day-detail-row .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
 .dd-day-detail-class { color: #8A8571; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; }
-.dd-day-detail-location { color: #8A8571; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; margin-left: auto; }
+.dd-day-detail-location { color: #8A8571; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; flex-basis: 100%; margin: 2px 0 0 15px; }
 .dd-cal-legend { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #C9C4B4; }
 .dd-cal-legend-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .dd-daytype-legend { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 6px 10px; }
+.dd-trend-legend { display: flex; justify-content: center; flex-wrap: nowrap; gap: 4px 10px; }
+.dd-trend-legend .dd-cal-legend-item { white-space: nowrap; }
+@media (max-width: 360px) { .dd-trend-legend { gap: 4px 6px; } .dd-trend-legend .dd-cal-legend-item { font-size: 10.5px; } .dd-trend-legend .dd-legend-swatch { width: 8px; height: 8px; } }
 .dd-cal-legend-col { display: flex; flex-direction: column; gap: 6px; }
 .dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; }
 .dd-cal-legend-item .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
@@ -385,10 +388,12 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-level-breakdown-byterm .dd-level-cell-term-timeout { background: rgba(46, 110, 142, 0.07); }
 .dd-level-breakdown-byterm .dd-level-cell-term-timeout-first { border-left: 1px solid #E4E1D4; }
 .dd-level-breakdown-byterm .dd-level-cell-term-meet { background: rgba(60, 110, 71, 0.06); border-left: 1px solid #E4E1D4; }
+.dd-level-breakdown-byterm .dd-level-cell-term-total { font-weight: 700; border-left: 1px solid #C9C4B4; }
 .dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-groom,
 .dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-susp,
 .dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-timeout,
-.dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-meet { background: #F2EFE6; }
+.dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-meet,
+.dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-total { background: #F2EFE6; }
 
 .dd-back-link { background: none; border: none; color: #1B2A41; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0; }
 .dd-rank-row { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #E4E1D4; padding-bottom: 6px; }
@@ -759,12 +764,12 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 /* "By term" table: one shared grid for every row, so the columns line up
    exactly (Time Out's heading spans its 4 sub-columns). Everything is
    centred both ways. */
-.dd-level-breakdown-byterm .dd-level-row { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.dd-level-breakdown-byterm .dd-level-row { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); }
 .dd-level-breakdown-byterm .dd-level-cell-class,
-.dd-level-breakdown-byterm .dd-level-cell-term { width: auto; min-width: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding-left: 2px; padding-right: 2px; box-sizing: border-box; white-space: nowrap; }
+.dd-level-breakdown-byterm .dd-level-cell-term { width: auto; min-width: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding-left: 1px; padding-right: 1px; box-sizing: border-box; white-space: nowrap; }
 .dd-level-breakdown-byterm .dd-byterm-to-head { grid-column: span 4; }
 .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-term,
-.dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: min(10px, 2.6vw); letter-spacing: 0; }
+.dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: min(9px, 2.2vw); letter-spacing: -0.15px; }
 
 /* Monthly figures table: five equal columns; month names and headers
    ("Suspension") each stay on one line, sized down on narrow phones. */
@@ -775,12 +780,16 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-level-breakdown-monthly .dd-level-row-header .dd-level-cell-term,
 .dd-level-breakdown-monthly .dd-level-row-header .dd-level-cell-class { font-size: min(10px, 2.3vw); letter-spacing: 0; }
 .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) > * { font-size: 13px; line-height: 1.3; }
+/* The "Term"/"Total" label column is narrower now that Total is a 9th
+   column, so it scales down with viewport width like the header row does. */
+.dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) .dd-level-cell-class { font-size: min(12px, 3vw); }
+@media (max-width: 360px) { .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) .dd-level-cell-class { font-size: 9px; letter-spacing: -0.2px; } }
 /* Annual Report tally: less space between each title and its number. */
 /* Every tally (Dashboard and Annual Report): large numbers sitting close
    under their titles. */
 .dd-tally-label { min-height: 0; line-height: 1; }
-.dd-tally-number { line-height: 0.8; margin-top: 2px; }
-.dd-tally-number-big, .dd-tally-number-big-3 { margin-top: 6px; margin-bottom: 2px; }
+.dd-tally-number { line-height: 0.8; margin-top: 7px; }
+.dd-tally-number-big, .dd-tally-number-big-3 { margin-top: 11px; margin-bottom: 2px; }
 /* Time Out type blocks (one row of 4): tightened so "CCA" fits. */
 .dd-tally-nested { gap: 2px; }
 .dd-tally-nested-block { padding: 2px 0; flex: 1 1 auto; }
@@ -792,7 +801,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 @media (max-width: 360px) {
   .dd-pp-hol { letter-spacing: -0.15px; }
   .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-term,
-  .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: 8px; letter-spacing: -0.2px; padding-left: 1px; padding-right: 1px; }
+  .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: 7px; letter-spacing: -0.3px; padding-left: 0; padding-right: 0; }
 }
 
 /* One-line text that shrinks to fit (see fitOneLine in app.js). */

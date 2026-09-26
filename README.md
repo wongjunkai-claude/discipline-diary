@@ -55,6 +55,11 @@ hosted free on GitHub Pages. Everything can be maintained from a browser.
 
 ## The four logs (Firestore collections)
 
+The "+ Grooming / + Suspension / + Time Out / + Parent Meet" row sits at the
+top of the dashboard and every one of the four log tabs (`renderNewEntryRow()`)
+— a new entry of any kind can be started from wherever you're standing, not
+just from the dashboard.
+
 Every record also has `loggedBy`, `loggedByUid`, `createdAt` and a `history`
 audit trail (every create, edit and status change, with who and when).
 
@@ -102,22 +107,26 @@ Date column (no Apps Script change needed). Rules: `roomClash()` /
 `pmBooking()` in `app.js`.
 
 **Choosing dates.** Date fields on the Grooming, Parent Meet, Suspension and
-Time Out forms, a grooming issue's follow-up deadline and a postponed meeting's new date use an in-app calendar instead of
-the phone's own date picker, so it can show holidays: weekends (grey),
-public holidays (pink) and school holidays (yellow) are named and can't be
-picked. Closure/HBL days (blue) are shown everywhere: blocked for the
-affected levels on Grooming (date caught and follow-up deadlines),
-Suspension and Time Out, a note only (still pickable) for parent meetings.
+Time Out forms, a grooming issue's follow-up deadline and a postponed
+meeting's new date use an in-app calendar instead of the phone's own date
+picker, so it can show holidays: weekends (grey), public holidays (pink),
+school holidays (yellow) and closure/HBL days (blue) are coloured and named.
+- Grooming (date caught, follow-up deadlines): weekends and holidays can't
+  be picked, nor closure/HBL days for the student's level.
+- Parent Meet: weekends and holidays can't be picked; closure/HBL days are
+  just a note.
+- Suspension and Time Out: any day can be picked (colours still shown). The
+  defaults stay on school days: a new form starts on the next school day,
+  that default moves off an HBL day when the class is chosen, and the days
+  filled in automatically after day 1 skip non-school days.
+
 On Grooming, Suspension and Time Out the class must be chosen before any
-date, since closure days depend on the level. A suspension's or time out's
-start date must be a school day for the class (a new form starts on the
-next school day, and saving checks it). Changing the start date, or
-changing the class to a different level, lays its days out again
-from the new start. Settings and the chart's Custom range use the phone's
-own date picker. Overlapping closure/HBL entries are combined per day, with
-levels always in order (P3/P4 on 24–29 Sep + P5 on 24–25 Sep → "P3/P4/P5
-HBL" on 24–25, "P3/P4 HBL" on 28–29). See
-`calendarDayInfo()` / `pickerDayState()` in `app.js`.
+date, since closure days depend on the level. Changing the start date, or
+changing the class to a different level, lays a suspension's or time out's
+days out again from the new start. Settings and the chart's Custom range
+use the phone's own date picker. Overlapping closure/HBL entries are
+combined per day, with levels always in order. See `calendarDayInfo()` /
+`pickerDayState()` in `app.js`.
 
 **Status dots** on entry cards: green = completed, orange = ongoing
 (upcoming, active or in progress), red = cancelled, or postponed with no
