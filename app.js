@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.22.4";
+const APP_VERSION = "3.24.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1182,8 +1182,9 @@ const state = {
   weekViewMonday: null, // set on first render to this week's Monday
   yearViewYear: null, // set on first render to the current year
   selectedCalendarDay: null,
-  chartCustomFrom: lastNMonthKeys(3)[0],
-  chartCustomTo: lastNMonthKeys(1)[0],
+  // Custom range, as full dates (YYYY-MM-DD).
+  chartCustomFrom: `${lastNMonthKeys(3)[0]}-01`,
+  chartCustomTo: todayISO(),
   showChartCustomModal: false,
 
   incidents: [],
@@ -3337,9 +3338,9 @@ function renderPostponePicker() {
         </div>
         <div class="dd-pp-legend">
           <span><i class="dd-pp-sw dd-pp-weekend"></i>Weekend</span>
-          <span><i class="dd-pp-sw dd-pp-public"></i>Public holiday</span>
-          <span><i class="dd-pp-sw dd-pp-school"></i>School holiday</span>
-          <span><i class="dd-pp-sw dd-pp-closure"></i>Closure / HBL</span>
+          <span><i class="dd-pp-sw dd-pp-public"></i>Public Holiday</span>
+          <span><i class="dd-pp-sw dd-pp-school"></i>School Holiday</span>
+          <span><i class="dd-pp-sw dd-pp-closure"></i>Closure / HBL Day</span>
         </div>
         ${isField ? "" : `<div style="margin-top:2px">${renderSlotPicker("pp")}</div>`}
         <div style="display:flex;gap:8px;margin-top:12px">
@@ -4114,7 +4115,7 @@ function chartRangeKeys() {
     case "term3": return monthKeysForTerm(2);
     case "term4": return monthKeysForTerm(3);
     case "thisYear": return currentYearMonthKeys();
-    case "custom": return monthKeysInRange(state.chartCustomFrom, state.chartCustomTo);
+    case "custom": return monthKeysInRange(monthKey(customRangeBounds().from), monthKey(customRangeBounds().to));
     default: return lastNMonthKeys(3);
   }
 }
@@ -4151,6 +4152,7 @@ const CHART_RANGE_OPTIONS_SECONDARY = [
   { key: "term2", label: "Term 2" },
   { key: "term3", label: "Term 3" },
   { key: "term4", label: "Term 4" },
+  { key: "all", label: "All" },
   { key: "custom", label: "Custom" },
 ];
 const CATEGORY_META = {
@@ -4205,7 +4207,7 @@ function computeYearTermTrend(year) {
   return moe.terms.map((t) => {
     const termTimeOuts = state.timeOuts.filter((x) => !x.deleted && x.startDate >= t.start && x.startDate <= t.end);
     return {
-      label: t.label,
+      label: t.label, start: t.start, end: t.end,
       discipline: state.incidents.filter((i) => !i.deleted && i.date >= t.start && i.date <= t.end).length,
       suspension: state.suspensions.filter((s) => !s.deleted && s.startDate >= t.start && s.startDate <= t.end).length,
       timeOut: termTimeOuts.length,
@@ -4264,34 +4266,47 @@ function pctChangeLabel(prev, curr) {
   return `${pct > 0 ? "up" : "down"} ${Math.abs(pct)}% (${prev} → ${curr})`;
 }
 function computeYearNarrative(year) {
-  const terms = computeYearTermTrend(year);
+  // Only completed terms are compared — mid-year, a term that's barely
+  // started (or not started) would otherwise read as near-0 and make
+  // everything look like it fell.
+  const today = todayISO();
+  const allTerms = computeYearTermTrend(year);
+  const terms = allTerms.filter((t) => t.end < today);
+  const inProgress = allTerms.find((t) => t.start <= today && t.end >= today);
   const thisYear = computeYearlyCategoryTotals(year);
   const lastYear = computeYearlyCategoryTotals(year - 1);
   const hasLastYear = lastYear.discipline + lastYear.suspension + lastYear.timeOut + lastYear.parentMeeting > 0;
   const topIssue = computeTopGroomingIssueType(year);
   const levelRanking = computeYearLevelRanking(year);
   const classRanking = computeYearClassRanking(year);
+  const first = terms[0], lastT = terms[terms.length - 1];
+  const soFar = allTerms.some((t) => t.end >= today);
+  const inProgressNote = inProgress ? ` ${inProgress.label} is still in progress, so it's left out of the comparison.` : "";
 
-  const withinYear = terms.every((t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting === 0)
+  const withinYear = allTerms.every((t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting === 0)
     ? `No grooming, suspension, time out, or parent meeting entries were logged for ${year} yet, so a within-year trend can't be drawn.`
-    : `Across the four terms, grooming issues ${describeTrend(terms[0].discipline, terms[3].discipline)} (Term 1: ${terms[0].discipline}, Term 4: ${terms[3].discipline}), suspensions ${describeTrend(terms[0].suspension, terms[3].suspension)} (Term 1: ${terms[0].suspension}, Term 4: ${terms[3].suspension}), time outs ${describeTrend(terms[0].timeOut, terms[3].timeOut)} (Term 1: ${terms[0].timeOut}, Term 4: ${terms[3].timeOut}), and parent meetings ${describeTrend(terms[0].parentMeeting, terms[3].parentMeeting)} (Term 1: ${terms[0].parentMeeting}, Term 4: ${terms[3].parentMeeting}).` +
-      (topIssue ? ` The most common grooming issue this year was ${topIssue.type}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "");
+    : terms.length < 2
+      ? `Fewer than two terms have finished so far, so there isn't a term-to-term trend to describe yet.` + (topIssue ? ` The most common grooming issue so far is ${topIssue.type}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "")
+      : `From ${first.label} to ${lastT.label}, grooming issues ${describeTrend(first.discipline, lastT.discipline)} (${first.discipline} → ${lastT.discipline}), suspensions ${describeTrend(first.suspension, lastT.suspension)} (${first.suspension} → ${lastT.suspension}), time outs ${describeTrend(first.timeOut, lastT.timeOut)} (${first.timeOut} → ${lastT.timeOut}), and parent meetings ${describeTrend(first.parentMeeting, lastT.parentMeeting)} (${first.parentMeeting} → ${lastT.parentMeeting}).` +
+        inProgressNote +
+        (topIssue ? ` The most common grooming issue this year was ${topIssue.type}, logged ${topIssue.count} time${topIssue.count === 1 ? "" : "s"}.` : "");
 
   const acrossYears = !hasLastYear
     ? `There isn't a prior year on record yet to compare ${year} against.`
-    : `Compared to ${year - 1}, grooming issues are ${pctChangeLabel(lastYear.discipline, thisYear.discipline)}, suspensions are ${pctChangeLabel(lastYear.suspension, thisYear.suspension)}, time outs are ${pctChangeLabel(lastYear.timeOut, thisYear.timeOut)}, and parent meetings are ${pctChangeLabel(lastYear.parentMeeting, thisYear.parentMeeting)}.`;
+    : `Compared to ${year - 1}${soFar ? " (a full year, against this year so far)" : ""}, grooming issues are ${pctChangeLabel(lastYear.discipline, thisYear.discipline)}, suspensions are ${pctChangeLabel(lastYear.suspension, thisYear.suspension)}, time outs are ${pctChangeLabel(lastYear.timeOut, thisYear.timeOut)}, and parent meetings are ${pctChangeLabel(lastYear.parentMeeting, thisYear.parentMeeting)}.`;
 
   const improvements = [];
   const concerns = [];
-  if (terms.length === 4) {
-    if (terms[3].discipline < terms[0].discipline) improvements.push("grooming issues eased off by Term 4 compared to Term 1");
-    else if (terms[3].discipline > terms[0].discipline) concerns.push("grooming issues were higher in Term 4 than Term 1 — worth watching whether this continues into next year");
-    if (terms[3].suspension < terms[0].suspension) improvements.push("suspensions were less frequent by Term 4");
-    else if (terms[3].suspension > terms[0].suspension) concerns.push("suspensions picked up later in the year rather than easing off");
-    if (terms[3].timeOut < terms[0].timeOut) improvements.push("time outs were less frequent by Term 4");
-    else if (terms[3].timeOut > terms[0].timeOut) concerns.push("time outs picked up later in the year rather than easing off");
+  if (terms.length >= 2) {
+    const by = `by ${lastT.label} compared to ${first.label}`;
+    if (lastT.discipline < first.discipline) improvements.push(`grooming issues eased off ${by}`);
+    else if (lastT.discipline > first.discipline) concerns.push(`grooming issues were higher in ${lastT.label} than ${first.label} — worth watching whether this continues`);
+    if (lastT.suspension < first.suspension) improvements.push(`suspensions were less frequent ${by}`);
+    else if (lastT.suspension > first.suspension) concerns.push("suspensions picked up later in the year rather than easing off");
+    if (lastT.timeOut < first.timeOut) improvements.push(`time outs were less frequent ${by}`);
+    else if (lastT.timeOut > first.timeOut) concerns.push("time outs picked up later in the year rather than easing off");
   }
-  if (hasLastYear) {
+  if (hasLastYear && !soFar) {
     const casesThis = thisYear.discipline + thisYear.suspension + thisYear.timeOut;
     const casesLast = lastYear.discipline + lastYear.suspension + lastYear.timeOut;
     if (casesThis < casesLast) improvements.push(`overall discipline cases (grooming + suspensions + time outs) are down from ${year - 1}`);
@@ -4305,7 +4320,225 @@ function computeYearNarrative(year) {
   const improvementsPara = improvements.length ? `Improvements: ${improvements.join("; ")}.` : "No clear year-over-year or in-year improvement stood out from the numbers alone.";
   const concernsPara = concerns.length ? `Areas for improvement: ${concerns.join("; ")}.` : "No particular class or level stood out as needing extra attention this year.";
 
-  return { withinYear, acrossYears, improvementsPara, concernsPara };
+  return { withinYear, acrossYears, hasLastYear, soFar, startedTerms: terms, improvements, concerns, improvementsPara, concernsPara };
+}
+// Most frequent reasons across one log's records for a year (a record with
+// several reasons counts once towards each).
+function computeTopReasons(records, year) {
+  const tally = {};
+  records.forEach((r) => {
+    if (r.deleted || !r.startDate || !r.startDate.startsWith(`${year}-`)) return;
+    multiReasonsFromSaved(r).selected.forEach((x) => { if (x) tally[x] = (tally[x] || 0) + 1; });
+  });
+  return Object.entries(tally).sort((a, b) => b[1] - a[1]).map(([reason, count]) => ({ reason, count }));
+}
+const pctOf = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+const plural = (n, word, many) => `${n} ${n === 1 ? word : (many || word + "s")}`;
+// Everything the Trend Analysis page says, worked out from the same counts
+// shown elsewhere in the report (no AI writing — a template filled in from
+// data, so every figure can be traced back to real records). Also builds
+// the Recommendations list: each one only appears when the numbers that
+// justify it are there, and quotes those numbers.
+// School days in a year's terms up to today (all of them for a past year) —
+// the base for "how often" figures, so holidays and weekends don't dilute them.
+function schoolDaysSoFar(year) {
+  const today = todayISO();
+  let n = 0;
+  computeMoeCalendar(year).terms.forEach((t) => {
+    for (let d = t.start; d <= t.end && d <= today; d = addDays(d, 1)) if (!isNonSchoolDay(d, null)) n++;
+  });
+  return n;
+}
+// Each time out type on its own: how many, how many days served, how often
+// (per school week), and the most students on that type on one day — what
+// decides whether it needs a standing arrangement (a set room, a duty
+// roster) rather than being arranged case by case. The type is what the
+// student is kept out of (recess, lessons, CCA, a learning experience),
+// not where the behaviour happened.
+const TO_TYPE_FROM = { Recess: "recess", Lesson: "lessons", CCA: "CCA", LearningExperience: "learning experiences" };
+function computeTimeOutTypeStats(year) {
+  const recs = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`));
+  const schoolWeeks = schoolDaysSoFar(year) / 5;
+  const typeOf = (t) => (TO_TYPES.some((x) => x.key === t.toType) ? t.toType : "Recess");
+  const types = TO_TYPES.map((ty) => {
+    const list = recs.filter((t) => typeOf(t) === ty.key);
+    const perDay = {};
+    let days = 0;
+    list.forEach((t) => suspensionDayEntries(t).forEach((e) => { days++; perDay[e.date] = (perDay[e.date] || 0) + 1; }));
+    return { key: ty.key, from: TO_TYPE_FROM[ty.key], count: list.length, days, perWeek: schoolWeeks > 0 ? list.length / schoolWeeks : 0, maxSameDay: Math.max(0, ...Object.values(perDay)) };
+  });
+  return { schoolWeeks, types };
+}
+function howOftenLabel(perWeek) {
+  if (perWeek <= 0) return "";
+  if (perWeek >= 1.05) return `about ${Math.round(perWeek * 10) / 10} a school week`;
+  const every = Math.round(1 / perWeek);
+  return every <= 1 ? "about once a school week" : `about once every ${every} school weeks`;
+}
+function computeYearInsights(year) {
+  const n = computeYearNarrative(year);
+  const totals = computeYearlyCategoryTotals(year);
+  const last = computeYearlyCategoryTotals(year - 1);
+  const cases = totals.discipline + totals.suspension + totals.timeOut;
+  const casesLast = last.discipline + last.suspension + last.timeOut;
+  const terms = n.startedTerms.map((t) => ({ ...t, cases: t.discipline + t.suspension + t.timeOut }));
+  const months = computeYearMonthlyTrend(year).map((m) => ({ ...m, cases: m.discipline + m.suspension + m.timeOut }));
+  const levels = computeYearLevelRanking(year);
+  const classes = computeYearClassRanking(year);
+  const dow = computeDayOfWeekPattern(year).filter((d) => d.day !== "Sat" && d.day !== "Sun");
+  const pos = computeTermPositionPattern(year);
+  const ru = computeRepeatVsUnique(year);
+  const esc = computeEscalationRate(year);
+  const suspIntervals = computeRepeatSuspensionIntervals(year);
+  const suspRoster = computeYearSuspensionRoster(year);
+  const toRoster = computeYearTimeOutRoster(year);
+  const topIssue = computeTopGroomingIssueType(year);
+  const suspReasons = computeTopReasons(state.suspensions, year);
+  const toReasons = computeTopReasons(state.timeOuts, year);
+  const yearTimeOuts = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`));
+  const sections = [];
+  const recs = [];
+  if (cases + totals.parentMeeting === 0) {
+    sections.push({ title: "Year at a glance", paras: [`No grooming, suspension, time out or parent meeting entries were logged for ${year}, so there's nothing to analyse yet.`] });
+    recs.push("Keep logging every case as it happens, so next year's report has a full picture to work from.");
+    return { sections, wentWell: [], toWatch: [], recs };
+  }
+
+  // Year at a glance
+  sections.push({ title: "Year at a glance", paras: [
+    `${year} recorded ${plural(cases, "discipline case")}: ${plural(totals.discipline, "grooming entry", "grooming entries")}, ${plural(totals.suspension, "suspension")} and ${plural(totals.timeOut, "time out")}. ${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} held.` +
+    (n.soFar ? ` The year is still in progress, so these are figures to date.` : "") +
+    (n.hasLastYear ? ` Overall cases are ${pctChangeLabel(casesLast, cases)} on ${year - 1}${n.soFar ? " (all of last year)" : ""}.` : ""),
+  ] });
+
+  // How the year unfolded
+  const busiestTerm = terms.slice().sort((a, b) => b.cases - a.cases)[0];
+  const quietestTerm = terms.slice().sort((a, b) => a.cases - b.cases)[0];
+  const busiestMonth = months.slice().sort((a, b) => b.cases - a.cases)[0];
+  const unfold = [n.withinYear];
+  if (cases > 0 && busiestTerm && busiestTerm.cases > 0) {
+    unfold.push(`Of the ${terms.length === 4 ? "four" : "completed"} terms, ${busiestTerm.label} was the busiest (${plural(busiestTerm.cases, "case")}, ${pctOf(busiestTerm.cases, cases)}% of the year's cases)` +
+      (quietestTerm && quietestTerm.label !== busiestTerm.label ? ` and ${quietestTerm.label} the quietest (${quietestTerm.cases}).` : ".") +
+      (busiestMonth && busiestMonth.cases > 0 ? ` The single busiest month was ${busiestMonth.label} with ${plural(busiestMonth.cases, "case")}.` : ""));
+  }
+  sections.push({ title: "How the year unfolded", paras: unfold });
+
+  // Compared with last year
+  sections.push({ title: `Compared with ${year - 1}`, paras: [n.acrossYears] });
+
+  // Where cases concentrated
+  const where = [];
+  if (cases > 0) {
+    if (levels[0] && levels[0].total > 0) where.push(`${levels[0].label} had the most cases of any level (${levels[0].total}, ${pctOf(levels[0].total, cases)}% of the year).`);
+    if (classes[0]) where.push(`The most-flagged class was ${classes[0].label} (${classes[0].total}, ${pctOf(classes[0].total, cases)}%)${classes[1] ? `, followed by ${classes[1].label} (${classes[1].total})` : ""}.`);
+    const weekTotal = dow.reduce((s2, d) => s2 + d.count, 0);
+    const busiestDay = dow.slice().sort((a, b) => b.count - a.count)[0];
+    if (weekTotal > 0) where.push(`${busiestDay.day === "Mon" ? "Monday" : busiestDay.day === "Tue" ? "Tuesday" : busiestDay.day === "Wed" ? "Wednesday" : busiestDay.day === "Thu" ? "Thursday" : "Friday"} was the busiest school day (${pctOf(busiestDay.count, weekTotal)}% of weekday incidents).`);
+    const posTotal = pos.Early + pos.Mid + pos.Late;
+    if (posTotal > 0) {
+      const [pk, pv] = Object.entries(pos).sort((a, b) => b[1] - a[1])[0];
+      where.push(`By position within a term, ${pctOf(pv, posTotal)}% of incidents fell in the ${pk === "Early" ? "first" : pk === "Mid" ? "middle" : "last"} third.`);
+    }
+  }
+  if (where.length) sections.push({ title: "Where cases concentrated", paras: [where.join(" ")] });
+
+  // Students involved
+  const who = [];
+  const suspRepeatCount = suspRoster.filter((r) => r.count > 1).reduce((s2, r) => s2 + r.count, 0);
+  const toRepeatCount = toRoster.filter((r) => r.count > 1).reduce((s2, r) => s2 + r.count, 0);
+  if (ru.suspension.totalCount > 0) who.push(`${plural(ru.suspension.uniqueStudents, "student")} ${ru.suspension.uniqueStudents === 1 ? "was" : "were"} suspended${ru.suspension.repeatStudents > 0 ? `; the ${plural(ru.suspension.repeatStudents, "student")} suspended more than once ${ru.suspension.repeatStudents === 1 ? "accounts" : "account"} for ${pctOf(suspRepeatCount, ru.suspension.totalCount)}% of all suspensions` : ", none more than once"}.`);
+  if (ru.timeOut.totalCount > 0) who.push(`${plural(ru.timeOut.uniqueStudents, "student")} ${ru.timeOut.uniqueStudents === 1 ? "was" : "were"} given a time out${ru.timeOut.repeatStudents > 0 ? `; repeat students account for ${pctOf(toRepeatCount, ru.timeOut.totalCount)}% of time outs` : ", none more than once"}.`);
+  if (ru.grooming.totalCount > 0) who.push(`${plural(ru.grooming.uniqueStudents, "student")} had grooming issues logged${ru.grooming.repeatStudents > 0 ? `, ${ru.grooming.repeatStudents} of them more than once` : ""}.`);
+  const minGap = suspIntervals.length ? Math.min(...suspIntervals.map((r) => r.shortestGap)) : null;
+  if (minGap !== null) who.push(`The shortest gap between two suspensions for the same student was ${plural(minGap, "day")}.`);
+  if (who.length) sections.push({ title: "Students involved", paras: [who.join(" ")] });
+
+  // Grooming
+  const groom = [];
+  if (esc) {
+    if (topIssue) groom.push(`The most common grooming issue was ${topIssue.type} (${topIssue.count} of ${esc.total} issues, ${pctOf(topIssue.count, esc.total)}%).`);
+    groom.push(`${esc.pct1st}% of issues were settled at 1st Warning, ${esc.pct2nd}% reached 2nd Warning and ${esc.pctFinal}% reached Final Warning.`);
+  }
+  if (groom.length) sections.push({ title: "Grooming", paras: [groom.join(" ")] });
+
+  // Suspensions and time outs
+  const serious = [];
+  if (suspReasons.length) serious.push(`The most common reason for suspension was ${suspReasons[0].reason} (${plural(suspReasons[0].count, "suspension")})${suspReasons[1] ? `, then ${suspReasons[1].reason} (${suspReasons[1].count})` : ""}.`);
+  if (toReasons.length) serious.push(`For time outs it was ${toReasons[0].reason} (${toReasons[0].count}).`);
+  if (totals.suspension > 0) serious.push(`${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} held against ${plural(totals.suspension, "suspension")} and ${plural(totals.timeOut, "time out")}.`);
+  if (serious.length) sections.push({ title: "Suspensions and time outs", paras: [serious.join(" ")] });
+
+  // Time outs by type — each type's own count and frequency.
+  const toStats = computeTimeOutTypeStats(year);
+  if (yearTimeOuts.length) {
+    const wk = Math.round(toStats.schoolWeeks);
+    sections.push({
+      title: "Time outs by type",
+      paras: [`Over ${plural(wk, "school week")}${n.soFar ? " so far" : ""}:`],
+      list: toStats.types.map((t) => t.count === 0
+        ? `Time out from ${t.from}: none.`
+        : `Time out from ${t.from}: ${plural(t.count, "time out")} (${plural(t.days, "day")} served) — ${howOftenLabel(t.perWeek)}; at most ${plural(t.maxSameDay, "student")} on the same day.`),
+    });
+  }
+
+  // What went well / areas to watch
+  const wentWell = n.improvements.map((x) => x.charAt(0).toUpperCase() + x.slice(1) + ".");
+  if (esc && esc.pct1st >= 70) wentWell.push(`Most grooming issues (${esc.pct1st}%) were settled at 1st Warning.`);
+  if (ru.suspension.totalCount > 0 && ru.suspension.repeatStudents === 0) wentWell.push("No student was suspended more than once.");
+  const toWatch = n.concerns.map((x) => x.charAt(0).toUpperCase() + x.slice(1) + ".");
+
+  // Recommendations — only where the numbers call for it.
+  const suspRepeatShare = pctOf(suspRepeatCount, ru.suspension.totalCount);
+  if (ru.suspension.repeatStudents > 0 && suspRepeatShare >= 30) recs.push(`Put an individual support plan in place for the ${plural(ru.suspension.repeatStudents, "student")} suspended more than once — they account for ${suspRepeatShare}% of this year's suspensions. For example: regular check-ins with one named staff member, and involving parents early.`);
+  if (minGap !== null && minGap <= 30) recs.push(`At least one student was suspended again within ${plural(minGap, "day")}. Consider a re-entry meeting after every suspension and closer follow-up in the first weeks back.`);
+  // A time out type happening every school week or more is frequent enough
+  // to warrant a standing arrangement rather than arranging each one ad hoc.
+  const STRUCTURE = {
+    Recess: "a fixed supervised room and a recess duty roster",
+    Lesson: "a set place and a timetabled duty teacher for students taken out of lessons",
+    CCA: "a set place and a named supervisor for students kept out of CCA",
+    LearningExperience: "a set plan for who supervises students kept out of learning experiences",
+  };
+  toStats.types.filter((t) => t.count > 0 && t.perWeek >= 1).forEach((t) => recs.push(`Time outs from ${t.from} averaged ${Math.round(t.perWeek * 10) / 10} a school week${t.maxSameDay >= 2 ? `, with up to ${t.maxSameDay} students on the same day` : ""}. At that frequency, a standing arrangement — ${STRUCTURE[t.key]} — may work better than arranging each one as it comes.`));
+  if (totals.suspension > 0 && totals.parentMeeting < totals.suspension) recs.push(`Only ${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} logged against ${plural(totals.suspension, "suspension")}. Consider meeting parents after every suspension, and logging the meeting so it counts here.`);
+  if (esc && esc.pctFinal >= 20) recs.push(`${esc.pctFinal}% of grooming issues went all the way to Final Warning. Contacting parents earlier, at 1st or 2nd Warning, may stop more of them before they escalate.`);
+  if (topIssue && esc && topIssue.count >= 3 && pctOf(topIssue.count, esc.total) >= 30) recs.push(`${topIssue.type} made up ${pctOf(topIssue.count, esc.total)}% of grooming issues. A reminder about it before each term starts (at assembly or through form teachers) could cut repeat cases.`);
+  if (suspReasons.length && suspReasons[0].count >= 2 && pctOf(suspReasons[0].count, totals.suspension) >= 40) recs.push(`${suspReasons[0].reason} was behind ${pctOf(suspReasons[0].count, totals.suspension)}% of suspensions. A programme aimed at this behaviour${/fight|assault|aggress|bully/i.test(suspReasons[0].reason) ? " (for example conflict resolution or peer mediation)" : ""} could be worth planning for next year.`);
+  const posTotal = pos.Early + pos.Mid + pos.Late;
+  if (posTotal >= 5) {
+    const [pk, pv] = Object.entries(pos).sort((a, b) => b[1] - a[1])[0];
+    if (pctOf(pv, posTotal) >= 45) recs.push(pk === "Late" ? `${pctOf(pv, posTotal)}% of incidents came in the last third of a term. Plan extra reminders and supervision for the final weeks of each term.` : pk === "Early" ? `${pctOf(pv, posTotal)}% of incidents came in the first third of a term. Setting expectations clearly in the first week back may help.` : `${pctOf(pv, posTotal)}% of incidents came mid-term. Keep reminders going through the middle weeks, not just at the start.`);
+  }
+  const weekTotal = dow.reduce((s2, d) => s2 + d.count, 0);
+  const busiestDay = dow.slice().sort((a, b) => b.count - a.count)[0];
+  if (weekTotal >= 5 && pctOf(busiestDay.count, weekTotal) >= 30) {
+    const dayName = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday" }[busiestDay.day];
+    recs.push(`${dayName} had ${pctOf(busiestDay.count, weekTotal)}% of weekday incidents. It may help to look at what's different on ${dayName}s — for example the timetable, PE or CCA, or recess arrangements.`);
+  }
+  if (classes[0] && classes[0].total >= 5 && pctOf(classes[0].total, cases) >= 20) recs.push(`${classes[0].label} accounted for ${pctOf(classes[0].total, cases)}% of cases. Consider a class-level plan with its form teachers.`);
+  if (levels[0] && levels[0].total >= 5 && pctOf(levels[0].total, cases) >= 30) recs.push(`${levels[0].label} accounted for ${pctOf(levels[0].total, cases)}% of cases. A level-wide talk or programme may reach more students than following up case by case.`);
+  if (busiestTerm && cases >= 5 && pctOf(busiestTerm.cases, cases) >= 40) recs.push(`${busiestTerm.label} had ${pctOf(busiestTerm.cases, cases)}% of the year's cases. Plan ahead for the same period next year.`);
+  if (n.hasLastYear && casesLast > 0 && cases > casesLast && pctOf(cases - casesLast, casesLast) >= 20) recs.push(`Cases rose ${pctOf(cases - casesLast, casesLast)}% on ${year - 1}. Before planning next year, it's worth reviewing what changed between the two years (programmes, staffing or the cohort).`);
+  if (!recs.length) recs.push("Nothing in this year's numbers stands out as needing a change. Keep logging consistently so next year's comparison is meaningful.");
+  // Listed most-important first; kept to the top seven so it stays actionable.
+  return { sections, wentWell, toWatch, recs: recs.slice(0, 7) };
+}
+function renderTrendAnalysis(year) {
+  const ins = computeYearInsights(year);
+  const p = (t) => `<p class="dd-sans dd-ta-p">${escapeHtml(t)}</p>`;
+  const list = (items) => `<ul class="dd-ta-list">${items.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+  return `
+      ${reportSectionTitle("Trend analysis")}
+      <div class="dd-panel dd-ta-panel">
+        ${ins.sections.map((sct) => `<div class="dd-ta-head">${escapeHtml(sct.title)}</div>${sct.paras.map(p).join("")}${sct.list ? list(sct.list) : ""}`).join("")}
+        ${ins.wentWell.length ? `<div class="dd-ta-head">What went well</div>${list(ins.wentWell)}` : ""}
+        ${ins.toWatch.length ? `<div class="dd-ta-head">Areas to watch</div>${list(ins.toWatch)}` : ""}
+      </div>
+      ${reportSectionTitle("Recommendations")}
+      <div class="dd-panel dd-ta-panel">
+        <ol class="dd-ta-list">${ins.recs.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ol>
+        <p class="dd-mono-muted dd-ta-note">These suggestions come from the numbers in this report. Use them alongside what staff know about each student and class.</p>
+      </div>`;
 }
 
 // Per-student tally for any start-dated log (suspensions or time outs).
@@ -4609,36 +4842,31 @@ function renderDateRangeFields(idPrefix, startVal, endVal) {
     <label class="dd-label">End date</label>
     ${renderDateField(`${idPrefix}-end`, endVal, `min="${startVal}"`)}`;
 }
-function renderSettingsSection() {
-  const backBtn = (label, action) => `<button type="button" class="dd-back-link" data-action="${action}">← ${label}</button>`;
-  let body;
-  if (state.settingsView === "yearReport" && state.settingsSelectedYear) {
-    const year = state.settingsSelectedYear;
-    const totals = computeYearlyCategoryTotals(year);
-    body = `
-      <div class="dd-print-hide" style="display:flex;justify-content:space-between;align-items:flex-start">
-        ${backBtn("Years", "settings-back-to-years")}
-        <button type="button" class="dd-print-btn" id="btn-print-report">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"></path><rect x="4" y="9" width="16" height="8" rx="1.5"></rect><path d="M6 14h12v7H6z"></path></svg>
-          <span>Print/<br>Export PDF</span>
-        </button>
-      </div>
-      <div style="margin:10px 0">
-        <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
-      </div>
-      <div id="report-print-area">
-      ${renderTallyGrid(["discipline", "suspension", "timeOut", "parentMeeting"], totals)}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term</div>
-      ${(() => {
-        const termRows = computeYearTermTrend(year);
-        const rowTotal = (t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting;
-        const grandDiscipline = termRows.reduce((s, t) => s + t.discipline, 0);
-        const grandSuspension = termRows.reduce((s, t) => s + t.suspension, 0);
-        const grandToByType = {};
-        TO_TYPES.forEach((ty) => { grandToByType[ty.key] = termRows.reduce((s, t) => s + (t.timeOutByType[ty.key] || 0), 0); });
-        const grandMeeting = termRows.reduce((s, t) => s + t.parentMeeting, 0);
-        const grandTotal = termRows.reduce((s, t) => s + rowTotal(t), 0);
-        return `
+// ---------- Annual Summary report ----------
+// The report is laid out as six pages. On screen they simply follow one
+// another; when printing each starts on a new sheet, and Export PDF puts
+// each on its own A4 page:
+//   1. Annual summary + By term
+//   2. Discipline load by month
+//   3. By term (chart) + By position within term + By day of week
+//   4. Repeat vs. unique students + Grooming escalation rate + repeat intervals
+//   5. Most challenging levels + classes (+ this year's suspension/time out lists)
+//   6. Trend analysis + Recommendations
+const ICON_PRINTER = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"></path><rect x="4" y="9" width="16" height="8" rx="1.5"></rect><path d="M6 14h12v7H6z"></path></svg>`;
+const ICON_DOCUMENT = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h6"></path></svg>`;
+function reportSectionTitle(text) {
+  return `<div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">${text}</div>`;
+}
+function renderReportByTermTable(year) {
+  const termRows = computeYearTermTrend(year);
+  const rowTotal = (t) => t.discipline + t.suspension + t.timeOut + t.parentMeeting;
+  const grandDiscipline = termRows.reduce((s, t) => s + t.discipline, 0);
+  const grandSuspension = termRows.reduce((s, t) => s + t.suspension, 0);
+  const grandToByType = {};
+  TO_TYPES.forEach((ty) => { grandToByType[ty.key] = termRows.reduce((s, t) => s + (t.timeOutByType[ty.key] || 0), 0); });
+  const grandMeeting = termRows.reduce((s, t) => s + t.parentMeeting, 0);
+  const grandTotal = termRows.reduce((s, t) => s + rowTotal(t), 0);
+  return `
       <div class="dd-level-breakdown dd-level-breakdown-byterm">
         <div class="dd-level-row dd-level-row-header">
           <div class="dd-level-cell-class">Term</div>
@@ -4671,31 +4899,9 @@ function renderSettingsSection() {
           <div class="dd-level-cell-term dd-level-cell-term-total">${grandTotal}</div>
         </div>
       </div>`;
-      })()}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Discipline load by month</div>
-      ${(() => {
-        const monthly = computeYearMonthlyTrend(year);
-        return renderStackedAreaChart(monthly) + renderMonthlyBreakdownTable(monthly);
-      })()}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By term (chart)</div>
-      ${renderReportBarRows(computeYearTermTrend(year))}
-      ${(() => {
-        const n = computeYearNarrative(year);
-        return `
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Trend analysis</div>
-      <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${escapeHtml(n.withinYear)}</p>
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 10px">${escapeHtml(n.acrossYears)}</p>
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 8px"><b>${escapeHtml(n.improvementsPara)}</b></p>
-        <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">${escapeHtml(n.concernsPara)}</p>
-      </div>`;
-      })()}
-      ${(() => {
-        const ru = computeRepeatVsUnique(year);
-        const esc = computeEscalationRate(year);
-        const intervals = computeRepeatSuspensionIntervals(year);
-        const toIntervals = computeRepeatTimeOutIntervals(year);
-        const intervalsTable = (list) => `
+}
+function renderReportIntervalsTable(list) {
+  return `
       <div class="dd-level-breakdown">
         <div class="dd-level-row dd-level-row-header">
           <div class="dd-level-cell-class" style="width:auto;flex:1.4 1 0">Student</div>
@@ -4711,11 +4917,9 @@ function renderSettingsSection() {
           <div class="dd-level-cell-term">${r.averageGap}d</div>
         </div>`).join("")}
       </div>`;
-        const dow = computeDayOfWeekPattern(year);
-        const termPos = computeTermPositionPattern(year);
-        const maxDow = Math.max(1, ...dow.map((d) => d.count));
-        const maxTermPos = Math.max(1, termPos.Early, termPos.Mid, termPos.Late);
-        const barRow = (label, count, max, color) => `
+}
+function renderReportBar(label, count, max, color) {
+  return `
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
             <div class="dd-mono-muted" style="font-size:11px;width:34px;flex-shrink:0">${label}</div>
             <div style="flex:1;background:#F2EFE6;border-radius:2px;overflow:hidden;height:14px">
@@ -4723,8 +4927,187 @@ function renderSettingsSection() {
             </div>
             <div class="dd-mono-muted" style="font-size:11px;width:18px;text-align:right;flex-shrink:0">${count}</div>
           </div>`;
-        return `
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat vs. unique students</div>
+}
+function renderReportRoster(roster, noun, emptyText) {
+  if (!roster.length) return `<div class="dd-dash-empty">${emptyText}</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:6px">
+          ${roster.map((r) => `
+            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #E4E1D4;padding-bottom:6px">
+              <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(r.name))}${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">Class ${escapeHtml(r.cls)}</span>` : ""}</div>
+              <span class="dd-mono-muted" style="font-size:12px">${r.count} ${noun}${r.count === 1 ? "" : "s"}</span>
+            </div>`).join("")}
+        </div>`;
+}
+// Export PDF: draws each report page exactly as printing lays it out, and
+// puts each on its own A4 page. Printing to A4 with 12mm margins gives a
+// 703px-wide page, and the tablet-size 1.25x enlargement applies in print
+// too, so the report is laid out 562px wide there — the copy used for the
+// PDF is drawn at that same width, with the print styling (no header or
+// buttons, white background). The two libraries live in /lib (so it works
+// offline) and only load the first time Export PDF is used.
+const PDF_LAYOUT_WIDTH = 562;
+const PDF_LAYOUT_HEIGHT = 826;
+const loadedScripts = {};
+function loadScriptOnce(src) {
+  if (!loadedScripts[src]) {
+    loadedScripts[src] = new Promise((resolve, reject) => {
+      const el = document.createElement("script");
+      el.src = src; el.onload = resolve;
+      el.onerror = () => { delete loadedScripts[src]; reject(new Error("couldn't load the PDF tools — check your connection and try again")); };
+      document.head.appendChild(el);
+    });
+  }
+  return loadedScripts[src];
+}
+// The app's own font, embedded into the chart's SVG while it's drawn for the
+// PDF (an SVG turned into a picture can't reach the page's fonts).
+let pdfFontCss = null;
+async function loadPdfFontCss() {
+  if (pdfFontCss !== null) return pdfFontCss;
+  const b64 = async (url) => { const buf = new Uint8Array(await (await fetch(url)).arrayBuffer()); let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000)); return btoa(bin); };
+  try {
+    const [w400, w700] = await Promise.all([b64("./fonts/geist-400.woff2"), b64("./fonts/geist-700.woff2")]);
+    pdfFontCss = `@font-face{font-family:'Geist';font-weight:400;src:url(data:font/woff2;base64,${w400}) format('woff2')}@font-face{font-family:'Geist';font-weight:700;src:url(data:font/woff2;base64,${w700}) format('woff2')}`;
+  } catch { pdfFontCss = ""; }
+  return pdfFontCss;
+}
+// Where a report page can be split across sheets, the way printing does it:
+// between blocks (a panel, table or chart stays whole unless it's taller
+// than a sheet, in which case it splits between its lines), and never
+// straight after a section heading.
+function pdfBreakUnits(group, pageH) {
+  const top0 = group.getBoundingClientRect().top;
+  const unitOf = (el) => { const r = el.getBoundingClientRect(); return { top: r.top - top0, bottom: r.bottom - top0, keepWithNext: el.matches(".dd-dash-title, .dd-ta-head, .dd-report-heading") }; };
+  const flatten = (el) => {
+    const u = unitOf(el);
+    const kids = [...el.children].filter((k) => k.getBoundingClientRect().height > 0);
+    if (u.bottom - u.top <= pageH || !kids.length) return [u];
+    return kids.flatMap((k) => (k.matches("ul, ol") ? [...k.children].flatMap(flatten) : flatten(k)));
+  };
+  return [...group.children].filter((k) => k.getBoundingClientRect().height > 0).flatMap(flatten);
+}
+function pdfPageSlices(units, total, pageH) {
+  const slices = [];
+  let start = 0, i = 0;
+  while (i < units.length && start < total - 1) {
+    const pageEnd = start + pageH;
+    let j = i, lastCut = -1;
+    while (j < units.length && units[j].bottom <= pageEnd + 0.5) { if (!units[j].keepWithNext) lastCut = j; j++; }
+    if (j >= units.length && total <= pageEnd + 0.5) { slices.push([start, total]); return slices; }
+    if (lastCut < i) { slices.push([start, pageEnd]); start = pageEnd; while (i < units.length && units[i].bottom <= start) i++; continue; }
+    const cut = units[lastCut + 1] ? units[lastCut + 1].top : total;
+    slices.push([start, cut]); start = cut; i = lastCut + 1;
+  }
+  if (start < total - 1) slices.push([start, total]);
+  return slices;
+}
+async function exportAnnualReportPdf(year) {
+  await loadScriptOnce("./lib/html2canvas.min.js");
+  await loadScriptOnce("./lib/jspdf.umd.min.js");
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  const fontCss = await loadPdfFontCss();
+  const pages = [...document.querySelectorAll("#report-print-area .dd-report-page")];
+  if (!pages.length) throw new Error("nothing to export");
+  const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+  const M = 12, W = 210 - 2 * M, H = 297 - 2 * M;
+  const SCALE = 2.5;
+  let first = true;
+  for (const group of pages) {
+    let measured = null;
+    const canvas = await window.html2canvas(group, {
+      scale: SCALE, backgroundColor: "#ffffff", logging: false,
+      windowWidth: PDF_LAYOUT_WIDTH, windowHeight: PDF_LAYOUT_HEIGHT,
+      onclone: (doc, el) => {
+        doc.documentElement.classList.add("dd-pdf-render");
+        // The copy loses the charts' class-based sizing, so restate it inline
+        // before anything is measured.
+        el.querySelectorAll("svg.dd-area-chart, .dd-area-chart-wrap > svg").forEach((svg) => { svg.style.width = "100%"; svg.style.height = "auto"; svg.style.display = "block"; });
+        const r = el.getBoundingClientRect();
+        const pageH = (H / W) * r.width;
+        measured = { width: r.width, slices: pdfPageSlices(pdfBreakUnits(el, pageH), r.height, pageH) };
+        // Charts (SVG with text): drawn here onto a canvas at their laid-out
+        // size, with the app's font embedded — left as SVG they'd come out at
+        // their small built-in size in a system font.
+        const charts = [...el.querySelectorAll("svg")].filter((svg) => svg.querySelector("text"));
+        return Promise.all(charts.map((svg) => new Promise((resolve) => {
+          const cr = svg.getBoundingClientRect();
+          if (!cr.width) return resolve();
+          const copy = svg.cloneNode(true);
+          copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+          copy.setAttribute("width", cr.width); copy.setAttribute("height", cr.height);
+          if (fontCss) { const st = doc.createElementNS("http://www.w3.org/2000/svg", "style"); st.textContent = fontCss; copy.insertBefore(st, copy.firstChild); }
+          const img = new Image();
+          img.onload = () => setTimeout(() => {
+            const cv = doc.createElement("canvas");
+            cv.width = Math.round(cr.width * SCALE); cv.height = Math.round(cr.height * SCALE);
+            cv.style.width = `${cr.width}px`; cv.style.height = `${cr.height}px`; cv.style.display = "block";
+            cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+            svg.replaceWith(cv);
+            resolve();
+          }, 50);
+          img.onerror = () => resolve();
+          img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(copy));
+        })));
+      },
+    });
+    const pxPerCss = canvas.width / measured.width;
+    const mmPerCss = W / measured.width;
+    for (const [a, b] of measured.slices) {
+      const sy = Math.round(a * pxPerCss), sh = Math.min(canvas.height - sy, Math.round((b - a) * pxPerCss));
+      if (sh <= 0) continue;
+      const part = document.createElement("canvas");
+      part.width = canvas.width; part.height = sh;
+      const ctx = part.getContext("2d");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, part.width, part.height);
+      ctx.drawImage(canvas, 0, sy, canvas.width, sh, 0, 0, canvas.width, sh);
+      if (!first) pdf.addPage();
+      first = false;
+      pdf.addImage(part.toDataURL("image/jpeg", 0.9), "JPEG", M, M, W, (sh / pxPerCss) * mmPerCss);
+    }
+  }
+  pdf.save(`Annual Summary ${year}.pdf`);
+}
+function renderAnnualReportPages(year) {
+  const page = (n, html) => `<div class="dd-report-page" data-page="${n}">${html}</div>`;
+  // Page 1 — Annual summary + By term
+  const p1 = `
+      <div class="dd-report-heading" style="margin:10px 0">
+        <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
+      </div>
+      ${renderTallyGrid(["discipline", "suspension", "timeOut", "parentMeeting"], computeYearlyCategoryTotals(year))}
+      ${reportSectionTitle("By term")}
+      ${renderReportByTermTable(year)}`;
+  // Page 2 — Discipline load by month
+  const monthly = computeYearMonthlyTrend(year);
+  const p2 = `
+      ${reportSectionTitle("Discipline load by month")}
+      ${renderStackedAreaChart(monthly)}${renderMonthlyBreakdownTable(monthly)}`;
+  // Page 3 — By term (chart) + By position within term + By day of week
+  const dow = computeDayOfWeekPattern(year);
+  const termPos = computeTermPositionPattern(year);
+  const maxDow = Math.max(1, ...dow.map((d) => d.count));
+  const maxTermPos = Math.max(1, termPos.Early, termPos.Mid, termPos.Late);
+  const p3 = `
+      ${reportSectionTitle("By term (chart)")}
+      ${renderReportBarRows(computeYearTermTrend(year))}
+      ${reportSectionTitle("By position within term")}
+      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
+        ${renderReportBar("Early", termPos.Early, maxTermPos, CHART_COLORS.discipline)}
+        ${renderReportBar("Mid", termPos.Mid, maxTermPos, CHART_COLORS.discipline)}
+        ${renderReportBar("Late", termPos.Late, maxTermPos, CHART_COLORS.discipline)}
+      </div>
+      ${reportSectionTitle("By day of week")}
+      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
+        ${dow.filter((d) => d.day !== "Sun" && d.day !== "Sat").map((d) => renderReportBar(d.day, d.count, maxDow, CHART_COLORS.discipline)).join("")}
+        ${(dow[0].count + dow[6].count) > 0 ? renderReportBar("Wknd", dow[0].count + dow[6].count, maxDow, "#8A8571") : ""}
+      </div>`;
+  // Page 4 — Repeat vs. unique + Grooming escalation rate + repeat intervals
+  const ru = computeRepeatVsUnique(year);
+  const esc = computeEscalationRate(year);
+  const intervals = computeRepeatSuspensionIntervals(year);
+  const toIntervals = computeRepeatTimeOutIntervals(year);
+  const p4 = `
+      ${reportSectionTitle("Repeat vs. unique students")}
       <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 6px">
           <b>Suspensions:</b> ${ru.suspension.totalCount} suspension${ru.suspension.totalCount === 1 ? "" : "s"} across ${ru.suspension.uniqueStudents} student${ru.suspension.uniqueStudents === 1 ? "" : "s"}${ru.suspension.repeatStudents > 0 ? ` — ${ru.suspension.repeatStudents} of them suspended more than once` : ""}.
@@ -4736,63 +5119,46 @@ function renderSettingsSection() {
           <b>Grooming:</b> ${ru.grooming.totalCount} issue${ru.grooming.totalCount === 1 ? "" : "s"} across ${ru.grooming.uniqueStudents} student${ru.grooming.uniqueStudents === 1 ? "" : "s"}${ru.grooming.repeatStudents > 0 ? ` — ${ru.grooming.repeatStudents} flagged more than once` : ""}.
         </p>
       </div>
-
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Grooming escalation rate</div>
+      ${reportSectionTitle("Grooming escalation rate")}
       ${!esc ? `<div class="dd-dash-empty">No grooming issues logged this year.</div>` : `
       <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">
           Of ${esc.total} issue${esc.total === 1 ? "" : "s"} logged this year: <b>${esc.pct1st}%</b> never went past 1st Warning, <b>${esc.pct2nd}%</b> reached 2nd Warning, and <b>${esc.pctFinal}%</b> reached Final Warning.
         </p>
       </div>`}
-
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat suspension intervals</div>
-      ${intervals.length === 0 ? `<div class="dd-dash-empty">No student was suspended more than once.</div>` : intervalsTable(intervals)}
-
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Repeat time out intervals</div>
-      ${toIntervals.length === 0 ? `<div class="dd-dash-empty">No student was given more than one time out.</div>` : intervalsTable(toIntervals)}
-
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By day of week</div>
-      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
-        ${dow.filter((d) => d.day !== "Sun" && d.day !== "Sat").map((d) => barRow(d.day, d.count, maxDow, CHART_COLORS.discipline)).join("")}
-        ${(dow[0].count + dow[6].count) > 0 ? barRow("Wknd", dow[0].count + dow[6].count, maxDow, "#8A8571") : ""}
-      </div>
-
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">By position within term</div>
-      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
-        ${barRow("Early", termPos.Early, maxTermPos, CHART_COLORS.discipline)}
-        ${barRow("Mid", termPos.Mid, maxTermPos, CHART_COLORS.discipline)}
-        ${barRow("Late", termPos.Late, maxTermPos, CHART_COLORS.discipline)}
-      </div>`;
-      })()}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Most challenging levels</div>
+      ${reportSectionTitle("Repeat suspension intervals")}
+      ${intervals.length === 0 ? `<div class="dd-dash-empty">No student was suspended more than once.</div>` : renderReportIntervalsTable(intervals)}
+      ${reportSectionTitle("Repeat time out intervals")}
+      ${toIntervals.length === 0 ? `<div class="dd-dash-empty">No student was given more than one time out.</div>` : renderReportIntervalsTable(toIntervals)}`;
+  // Page 5 — Most challenging levels + classes (+ this year's lists)
+  const p5 = `
+      ${reportSectionTitle("Most challenging levels")}
       ${renderRankingList(computeYearLevelRanking(year))}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">Most challenging classes</div>
+      ${reportSectionTitle("Most challenging classes")}
       ${renderRankingList(computeYearClassRanking(year))}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">All suspensions this year</div>
-      ${(() => {
-        const roster = computeYearSuspensionRoster(year);
-        if (!roster.length) return `<div class="dd-dash-empty">No suspensions this year.</div>`;
-        return `<div style="display:flex;flex-direction:column;gap:6px">
-          ${roster.map((r) => `
-            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #E4E1D4;padding-bottom:6px">
-              <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(r.name))}${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">Class ${escapeHtml(r.cls)}</span>` : ""}</div>
-              <span class="dd-mono-muted" style="font-size:12px">${r.count} suspension${r.count === 1 ? "" : "s"}</span>
-            </div>`).join("")}
-        </div>`;
-      })()}
-      <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">All time outs this year</div>
-      ${(() => {
-        const roster = computeYearTimeOutRoster(year);
-        if (!roster.length) return `<div class="dd-dash-empty">No time outs this year.</div>`;
-        return `<div style="display:flex;flex-direction:column;gap:6px">
-          ${roster.map((r) => `
-            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #E4E1D4;padding-bottom:6px">
-              <div class="dd-sans" style="font-size:14px">${escapeHtml(truncateName(r.name))}${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">Class ${escapeHtml(r.cls)}</span>` : ""}</div>
-              <span class="dd-mono-muted" style="font-size:12px">${r.count} time out${r.count === 1 ? "" : "s"}</span>
-            </div>`).join("")}
-        </div>`;
-      })()}
-      </div>`;
+      ${reportSectionTitle("All suspensions this year")}
+      ${renderReportRoster(computeYearSuspensionRoster(year), "suspension", "No suspensions this year.")}
+      ${reportSectionTitle("All time outs this year")}
+      ${renderReportRoster(computeYearTimeOutRoster(year), "time out", "No time outs this year.")}`;
+  // Page 6 — Trend analysis + Recommendations
+  const p6 = renderTrendAnalysis(year);
+  return [p1, p2, p3, p4, p5, p6].map((h, i) => page(i + 1, h)).join("");
+}
+function renderSettingsSection() {
+  const backBtn = (label, action) => `<button type="button" class="dd-back-link" data-action="${action}">← ${label}</button>`;
+  let body;
+  if (state.settingsView === "yearReport" && state.settingsSelectedYear) {
+    const year = state.settingsSelectedYear;
+    body = `
+      <div class="dd-print-hide dd-report-toolbar">
+        ${backBtn("Years", "settings-back-to-years")}
+        <div class="dd-report-actions">
+          <button type="button" class="dd-print-btn" id="btn-print-report" title="Print">${ICON_PRINTER}<span>Print</span></button>
+          <button type="button" class="dd-print-btn" id="btn-export-pdf" title="Export PDF">${ICON_DOCUMENT}<span>Export PDF</span></button>
+        </div>
+      </div>
+      ${state.reportExportError ? `<div class="dd-error dd-print-hide">${escapeHtml(state.reportExportError)}</div>` : ""}
+      <div id="report-print-area">${renderAnnualReportPages(year)}</div>`;
   } else if (state.settingsView === "yearList") {
     const years = availableReportYears();
     body = `
@@ -5001,11 +5367,14 @@ function renderSettingsSection() {
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
+  // The Annual Summary's card is marked so printing / Export PDF can drop
+  // its frame (otherwise its border and fill run down every printed sheet).
+  const isReport = state.settingsView === "yearReport" && !!state.settingsSelectedYear;
   return `
     <div class="dd-app">
       ${renderNav()}
-      <div class="dd-main">
-        <div class="dd-panel">${body}</div>
+      <div class="dd-main${isReport ? " dd-report-main" : ""}">
+        <div class="dd-panel${isReport ? " dd-report-card" : ""}">${body}</div>
       </div>
     </div>`;
 }
@@ -5105,17 +5474,26 @@ function renderTallyGrid(cats, totals, timeOutBreakdown) {
         </div>`).join("")}
     </div>`;
 }
+// Each line in the day list says what the entry is, then its detail:
+// "Time Out (CCA) | Staff Room with Mr Tan", "In-School Suspension | Library",
+// "Out-of-School Suspension", "Parent Meet | 9:00–10:00 AM · Office",
+// "Grooming | Long Hair".
+function dayDetailLabel(kind, detail) {
+  const d = String(detail || "").trim();
+  return d ? `${kind} | ${d}` : kind;
+}
 function renderDayDetail(dateISO, incl) {
   if (!dateISO) return "";
   const items = [];
   if (incl.discipline) {
-    state.incidents.forEach((i) => { if (!i.deleted && i.date === dateISO) items.push({ type: "discipline", name: i.studentName, cls: i.studentClass }); });
+    state.incidents.forEach((i) => { if (!i.deleted && i.date === dateISO) items.push({ type: "discipline", name: i.studentName, cls: i.studentClass, location: dayDetailLabel("Grooming", incidentSummaryLabel(i)) }); });
   }
   if (incl.suspension) {
     state.suspensions.forEach((s) => {
       if (s.deleted) return;
       suspensionDayEntries(s).forEach((e) => {
-        if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "oss" : "iss", name: s.studentName, cls: s.studentClass, location: e.venue });
+        if (e.date === dateISO) items.push({ type: e.type === "OSS" ? "oss" : "iss", name: s.studentName, cls: s.studentClass,
+          location: e.type === "OSS" ? "Out-of-School Suspension" : dayDetailLabel("In-School Suspension", e.venue) });
       });
     });
   }
@@ -5133,11 +5511,11 @@ function renderDayDetail(dateISO, incl) {
       if (m.deleted) return;
       if (m.date === dateISO) {
         const note = m.pmStatus === "Cancelled" ? "(Cancelled)" : m.pmStatus === "Postponed" ? (m.postponedTo ? `(Postponed to ${formatDate(m.postponedTo)})` : "(Postponed)") : "";
-        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note, location: note ? "" : pmSlotLabel(m.time, m.endTime, m.location) });
+        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note, location: note ? "Parent Meet" : dayDetailLabel("Parent Meet", pmSlotLabel(m.time, m.endTime, m.location)) });
       }
       // The rescheduled meeting itself, on its new date.
       if (isPmRescheduled(m) && m.postponedTo === dateISO && m.date !== dateISO) {
-        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note: `(Postponed from ${formatDate(m.date)})`, noteKind: "moved", location: pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation) });
+        items.push({ type: "parentMeeting", name: m.studentName, cls: m.studentClass, note: `(Postponed from ${formatDate(m.date)})`, noteKind: "moved", location: dayDetailLabel("Parent Meet", pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation)) });
       }
     });
   }
@@ -5221,12 +5599,9 @@ function renderTodayView(incl) {
     ${renderDayDetail(viewDate, incl)}
     ${renderCalLegend(incl)}`;
 }
-function renderWeekCalendar(incl) {
-  const monday = state.weekViewMonday || currentWeekBounds().monday;
-  const sunday = addDays(monday, 6);
-  const days = [];
-  let cur = monday;
-  for (let i = 0; i < 7; i++) { days.push(cur); cur = addDays(cur, 1); }
+// Week-style tally: suspensions and time outs count each day served, so
+// the number answers "how many suspension days are there this week".
+function weekStyleTotals(days) {
   const totals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
   days.forEach((d) => {
     const c = computeCountsForDate(d);
@@ -5235,7 +5610,25 @@ function renderWeekCalendar(incl) {
     totals.suspension += c.suspensionISS + c.suspensionOSS;
     totals.timeOut += c.timeOutISS + c.timeOutOSS;
   });
-  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((x) => incl[x]);
+  return totals;
+}
+// Month/Year-style tally: each suspension and time out counted once, on
+// the date it starts.
+function rangeStyleTotals(fromISO, toISO) {
+  const inRange = (d) => d && d >= fromISO && d <= toISO;
+  return {
+    discipline: state.incidents.filter((i) => !i.deleted && inRange(i.date)).length,
+    suspension: suspensionEntryCountForRange(fromISO, toISO),
+    timeOut: timeOutEntryCountForRange(fromISO, toISO),
+    parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && inRange(pmDate(m))).length,
+  };
+}
+function datesInRange(fromISO, toISO) {
+  const out = [];
+  for (let d = fromISO; d <= toISO && out.length < 4000; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+function renderWeekCells(days, incl) {
   const today = todayISO();
   const cells = days.map((d) => {
     const c = computeCountsForDate(d);
@@ -5257,6 +5650,14 @@ function renderWeekCalendar(incl) {
       <div class="dd-cal-dots">${dots.join("")}</div>
     </button>`;
   });
+  return `<div class="dd-week-grid">${cells.join("")}</div>`;
+}
+function renderWeekCalendar(incl) {
+  const monday = state.weekViewMonday || currentWeekBounds().monday;
+  const sunday = addDays(monday, 6);
+  const days = datesInRange(monday, sunday);
+  const totals = weekStyleTotals(days);
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((x) => incl[x]);
   return `
     ${renderTallyGrid(cats, totals)}
     <div class="dd-cal-nav">
@@ -5267,7 +5668,7 @@ function renderWeekCalendar(incl) {
       </div>
       <button type="button" class="dd-cal-nav-btn" data-action="nav-next-week">›</button>
     </div>
-    <div class="dd-week-grid">${cells.join("")}</div>
+    ${renderWeekCells(days, incl)}
     ${renderDayDetail(state.selectedCalendarDay, incl)}
     ${renderCalLegend(incl)}
     ${renderDayTypeLegend()}`;
@@ -5294,7 +5695,7 @@ function isSchoolHolidayOnly(iso) {
   return extraHolidays.some((e) => iso >= e.startDate && iso <= e.endDate);
 }
 function isHolidayNotWeekend(iso) { return isSchoolHolidayOnly(iso) && !isWeekend(iso); }
-function renderMiniMonth(monthKeyStr, incl) {
+function renderMiniMonth(monthKeyStr, incl, range) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const firstDow = weekdayOf(`${monthKeyStr}-01`);
   const daysInMonth = new Date(y, m, 0).getDate();
@@ -5303,6 +5704,10 @@ function renderMiniMonth(monthKeyStr, incl) {
   for (let i = 0; i < firstDow; i++) cells.push(`<div class="dd-mini-cell dd-mini-cell-empty"></div>`);
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
+    if (range && (iso < range.from || iso > range.to)) {
+      cells.push(`<div class="dd-mini-cell dd-mini-out"><span class="dd-mini-daynum">${d}</span><div class="dd-mini-bar dd-mini-bar-empty"></div></div>`);
+      continue;
+    }
     const c = computeCountsForDate(iso);
     const segs = [];
     if (incl.discipline && c.discipline > 0) segs.push(CHART_COLORS.discipline);
@@ -5329,7 +5734,7 @@ function renderMiniMonth(monthKeyStr, incl) {
   }
   return `
     <div class="dd-mini-month">
-      <div class="dd-mini-month-title">${monthLabelFromKey(monthKeyStr).split(" ")[0]}</div>
+      <div class="dd-mini-month-title">${range && range.withYear ? monthLabelFromKey(monthKeyStr) : monthLabelFromKey(monthKeyStr).split(" ")[0]}</div>
       <div class="dd-mini-weekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
       <div class="dd-mini-grid">${cells.join("")}</div>
     </div>`;
@@ -5382,7 +5787,26 @@ function renderMonthCalendar(monthKeyStr, incl) {
   for (let i = 0; i < firstDow; i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = `${monthKeyStr}-${String(d).padStart(2, "0")}`;
-    const c = daily[iso];
+    cells.push(renderMonthCell(iso, daily[iso], incl));
+  }
+  return `
+    ${renderTallyGrid(cats, totals)}
+    <div class="dd-cal-nav">
+      <button type="button" class="dd-cal-nav-btn" data-action="cal-prev-month">‹</button>
+      <div class="dd-cal-nav-label">${monthLabelFromKey(monthKeyStr)}</div>
+      <button type="button" class="dd-cal-nav-btn" data-action="cal-next-month">›</button>
+    </div>
+    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    <div class="dd-cal-grid">${cells.join("")}</div>
+    ${renderDayDetail(state.selectedCalendarDay, incl)}
+    ${renderCalLegend(incl)}
+    ${renderDayTypeLegend()}`;
+}
+// One day in the month-style grid. `monthTag` adds a small month name
+// beside the day number (Custom ranges that cross into another month).
+function renderMonthCell(iso, c, incl, monthTag) {
+    const today = todayISO();
+    const d = parseInt(iso.slice(8, 10), 10);
     const dots = [];
     if (incl.discipline && c.discipline > 0) dots.push(`<span class="dd-cal-dot" style="background:${CHART_COLORS.discipline}" title="${c.discipline} discipline"></span>`);
     if (incl.suspension && c.suspensionISS > 0) dots.push(`<span class="dd-cal-dot dd-cal-dot-suspension" style="background:${CHART_COLORS.suspension}" title="${c.suspensionISS} in-school suspension"></span>`);
@@ -5398,20 +5822,202 @@ function renderMonthCalendar(monthKeyStr, incl) {
     const isOtherHol = !isPubHol && isHolidayNotWeekend(iso);
     const isClosure = !isPubHol && !isOtherHol && !isWknd && !!schoolClosureEntryFor(iso);
     const dayTypeClass = isPubHol ? "dd-mini-pubholiday" : isOtherHol ? "dd-mini-holiday" : isClosure ? "dd-mini-closure" : isWknd ? "dd-mini-weekend" : "";
-    cells.push(`<button type="button" class="dd-cal-cell ${dayTypeClass} ${iso === today ? "dd-cal-today" : ""} ${isSelected ? "dd-cal-selected" : ""}" data-action="select-cal-day" data-date="${iso}"><div class="dd-cal-daynum">${d}</div><div class="dd-cal-dots">${dots.join("")}</div></button>`);
-  }
+    return `<button type="button" class="dd-cal-cell ${dayTypeClass} ${iso === today ? "dd-cal-today" : ""} ${isSelected ? "dd-cal-selected" : ""}" data-action="select-cal-day" data-date="${iso}"><div class="dd-cal-daynum">${d}${monthTag ? `<span class="dd-cal-montag">${monthTag}</span>` : ""}</div><div class="dd-cal-dots">${dots.join("")}</div></button>`;
+}
+// ---------- Custom and All views ----------
+function customRangeBounds() {
+  let from = state.chartCustomFrom || todayISO(), to = state.chartCustomTo || todayISO();
+  // Older sessions kept month keys (YYYY-MM) here.
+  if (from.length === 7) from = `${from}-01`;
+  if (to.length === 7) { const [y, m] = to.split("-").map(Number); to = `${to}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`; }
+  if (from > to) [from, to] = [to, from];
+  return { from, to };
+}
+function addYearsISO(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y + n, m - 1, d));
+  return dt.toISOString().slice(0, 10);
+}
+// Which layout a Custom range gets, by length: up to 7 days → Week,
+// up to 31 days → Month, up to a year → Year, longer → the All trend graph.
+function customRangeLayout(from, to) {
+  const n = daysBetween(from, to) + 1;
+  if (n <= 7) return "week";
+  if (n <= 31) return "month";
+  if (to < addYearsISO(from, 1)) return "year";
+  return "all";
+}
+function allRangeBounds() {
+  const today = todayISO();
+  let from = today;
+  const consider = (d) => { if (d && d < from) from = d; };
+  state.incidents.forEach((i) => { if (!i.deleted) consider(i.date); });
+  state.suspensions.forEach((x) => { if (!x.deleted) consider(x.startDate); });
+  state.timeOuts.forEach((x) => { if (!x.deleted) consider(x.startDate); });
+  state.parentMeetings.forEach((m) => { if (isPmCounted(m)) consider(pmDate(m)); });
+  return { from, to: today };
+}
+// Title in the middle of the nav row, with invisible spacers where the
+// ‹ › arrows sit in the other views so it lines up the same way.
+function renderRangeNavLabel(title, from, to) {
   return `
-    ${renderTallyGrid(cats, totals)}
     <div class="dd-cal-nav">
-      <button type="button" class="dd-cal-nav-btn" data-action="cal-prev-month">‹</button>
-      <div class="dd-cal-nav-label">${monthLabelFromKey(monthKeyStr)}</div>
-      <button type="button" class="dd-cal-nav-btn" data-action="cal-next-month">›</button>
-    </div>
-    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
-    <div class="dd-cal-grid">${cells.join("")}</div>
+      <span class="dd-cal-nav-btn dd-cal-nav-spacer" aria-hidden="true"></span>
+      <div class="dd-cal-nav-label">
+        <div>${title}</div>
+        <div class="dd-cal-nav-sublabel">${from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`}</div>
+      </div>
+      <span class="dd-cal-nav-btn dd-cal-nav-spacer" aria-hidden="true"></span>
+    </div>`;
+}
+function renderCustomView(incl) {
+  const { from, to } = customRangeBounds();
+  const layout = customRangeLayout(from, to);
+  if (layout === "all") return renderTrendView(incl, from, to, "Custom");
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
+  const nav = renderRangeNavLabel("Custom", from, to);
+  const footer = `
     ${renderDayDetail(state.selectedCalendarDay, incl)}
     ${renderCalLegend(incl)}
     ${renderDayTypeLegend()}`;
+  if (layout === "week") {
+    const days = datesInRange(from, to);
+    return `${renderTallyGrid(cats, weekStyleTotals(days))}${nav}${renderWeekCells(days, incl)}${footer}`;
+  }
+  const totals = rangeStyleTotals(from, to);
+  if (layout === "month") {
+    const cells = [];
+    for (let i = 0; i < weekdayOf(from); i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
+    const crossesMonth = monthKey(from) !== monthKey(to);
+    datesInRange(from, to).forEach((iso, i) => {
+      const tag = crossesMonth && (i === 0 || iso.endsWith("-01")) ? monthLabelFromKey(monthKey(iso)).split(" ")[0].slice(0, 3) : "";
+      cells.push(renderMonthCell(iso, computeCountsForDate(iso), incl, tag));
+    });
+    return `${renderTallyGrid(cats, totals)}${nav}
+    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    <div class="dd-cal-grid">${cells.join("")}</div>${footer}`;
+  }
+  const months = monthKeysInRange(monthKey(from), monthKey(to));
+  const range = { from, to, withYear: from.slice(0, 4) !== to.slice(0, 4) };
+  return `${renderTallyGrid(cats, totals)}${nav}
+    <div class="dd-mini-year-grid">${months.map((mk) => renderMiniMonth(mk, incl, range)).join("")}</div>${footer}`;
+}
+function renderAllView(incl) {
+  const { from, to } = allRangeBounds();
+  return renderTrendView(incl, from, to, "All");
+}
+// The 5 lines of the long-range trend graph. The Suspension pill switches
+// both suspension lines together.
+const TREND_LINES = [
+  { key: "discipline", cat: "discipline", label: "Grooming", color: CHART_COLORS.discipline },
+  { key: "parentMeeting", cat: "parentMeeting", label: "Parent Meet", color: CHART_COLORS.parentMeeting },
+  { key: "timeOut", cat: "timeOut", label: "Time Out", color: CHART_COLORS.timeOut },
+  { key: "iss", cat: "suspension", label: "In-School Suspension", color: CHART_COLORS.suspension },
+  { key: "oss", cat: "suspension", label: "Out-of-School Suspension", color: OSS_DOT_COLOR },
+];
+// One point per month, trimmed to the range at both ends.
+function trendBuckets(from, to) {
+  return monthKeysInRange(monthKey(from), monthKey(to)).map((mk) => {
+    const [y, m] = mk.split("-").map(Number);
+    const start = `${mk}-01`, end = `${mk}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+    return { year: y, month: m, start: start < from ? from : start, end: end > to ? to : end };
+  });
+}
+// Counted like the Month and Year views: one per entry, on its start date.
+// A suspension with both in-school and out-of-school days counts on both
+// suspension lines.
+function computeTrendSeries(buckets) {
+  return buckets.map((b) => {
+    const inB = (d) => d && d >= b.start && d <= b.end;
+    let iss = 0, oss = 0;
+    state.suspensions.forEach((x) => {
+      if (x.deleted || !inB(x.startDate)) return;
+      const types = new Set(suspensionDayEntries(x).map((e) => (e.type === "OSS" ? "OSS" : "ISS")));
+      if (!types.size) types.add(x.type === "OSS" ? "OSS" : "ISS");
+      if (types.has("ISS")) iss++;
+      if (types.has("OSS")) oss++;
+    });
+    return {
+      ...b, iss, oss,
+      discipline: state.incidents.filter((i) => !i.deleted && inB(i.date)).length,
+      timeOut: state.timeOuts.filter((x) => !x.deleted && inB(x.startDate)).length,
+      parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && inB(pmDate(m))).length,
+    };
+  });
+}
+function renderTrendView(incl, from, to, title) {
+  const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
+  const lines = TREND_LINES.filter((l) => incl[l.cat]);
+  return `
+    ${renderTallyGrid(cats, rangeStyleTotals(from, to))}
+    ${renderRangeNavLabel(title, from, to)}
+    ${lines.length ? `
+    <div class="dd-trend-lines-wrap">
+      <div class="dd-trend-lines" data-from="${from}" data-to="${to}"></div>
+    </div>
+    <div class="dd-cal-legend dd-trend-lines-legend">
+      ${lines.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}
+    </div>
+    <div class="dd-mono-muted dd-trend-lines-note">One point per month. Each entry is counted once, on the date it starts.</div>` : ""}`;
+}
+// Drawn after the page is on screen, so the graph can be sized to the
+// space it actually has. Styled like a stock chart: thin lines, the value
+// axis fixed on the right, and the months scrolling sideways (starting at
+// the latest) when there are too many to fit. Each month with entries
+// shows its number; months with none show nothing.
+function drawTrendLineCharts() {
+  document.querySelectorAll(".dd-trend-lines").forEach((host) => {
+    const rows = computeTrendSeries(trendBuckets(host.dataset.from, host.dataset.to));
+    const lines = TREND_LINES.filter((l) => chartIncl()[l.cat]);
+    const axisW = 30;
+    host.innerHTML = `<div class="dd-trend-scroll"></div><div class="dd-trend-axis"></div>`;
+    const scroller = host.querySelector(".dd-trend-scroll"), axisBox = host.querySelector(".dd-trend-axis");
+    const avail = Math.max(200, host.clientWidth - axisW);
+    const H = 250, padT = 30, padB = 34, padL = 14, padR = 10, minGap = 30;
+    const n = rows.length;
+    const plotW = Math.max(avail - padL - padR, (n - 1) * minGap);
+    const W = plotW + padL + padR, plotH = H - padT - padB;
+    const maxV = Math.max(1, ...rows.flatMap((r) => lines.map((l) => r[l.key])));
+    const axisMax = niceAxisMax(maxV);
+    const x = (i) => (n === 1 ? padL + plotW / 2 : padL + (i * plotW) / (n - 1));
+    const y = (v) => padT + plotH - (v / axisMax) * plotH;
+    const font = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
+    const ticks = [...new Set([0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(axisMax * f)))];
+    const grid = ticks.map((t) => `<line x1="0" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#ECE9DF"}" stroke-width="1"></line>`).join("");
+    // A faint divider where each new year starts.
+    const yearLines = rows.map((r, i) => (i > 0 && r.month === 1 ? `<line x1="${x(i) - (x(i) - x(i - 1)) / 2}" y1="${padT - 8}" x2="${x(i) - (x(i) - x(i - 1)) / 2}" y2="${padT + plotH}" stroke="#C9C4B4" stroke-width="1" stroke-dasharray="3 3"></line>` : "")).join("");
+    // "Jan" with the year under it, on the first month and on every January.
+    const xLabels = rows.map((r, i) => `
+      <text x="${x(i)}" y="${padT + plotH + 14}" text-anchor="middle" font-size="9.5" ${font} fill="#6B6652">${MONTH_ABBR[r.month - 1]}</text>
+      ${i === 0 || r.month === 1 ? `<text x="${x(i)}" y="${padT + plotH + 27}" text-anchor="middle" font-size="9.5" font-weight="600" ${font} fill="#1B2A41">${r.year}</text>` : ""}`).join("");
+    const paths = lines.map((l) => `
+      ${n > 1 ? `<polyline points="${rows.map((r, i) => `${x(i)},${y(r[l.key])}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
+      ${rows.map((r, i) => (r[l.key] > 0 || n === 1 ? `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="2.3" fill="${l.color}" data-line="${l.key}"></circle>` : "")).join("")}`).join("");
+    // Numbers sit just above their point; where lines meet they stack
+    // upward so none covers another. Only nudged down if a stack would
+    // run off the top.
+    const G = 12;
+    const numbers = rows.map((r, i) => {
+      const labs = lines.filter((l) => r[l.key] > 0).map((l) => ({ l, v: r[l.key], pos: y(r[l.key]) - 6 })).sort((a, b) => b.pos - a.pos);
+      for (let k = 1; k < labs.length; k++) if (labs[k].pos > labs[k - 1].pos - G) labs[k].pos = labs[k - 1].pos - G;
+      const top = 10;
+      if (labs.length && labs[labs.length - 1].pos < top) {
+        labs[labs.length - 1].pos = top;
+        for (let k = labs.length - 2; k >= 0; k--) if (labs[k].pos < labs[k + 1].pos + G) labs[k].pos = labs[k + 1].pos + G;
+      }
+      return labs.map((lb) => `<text x="${x(i)}" y="${lb.pos}" text-anchor="middle" font-size="10.5" font-weight="700" ${font} fill="${lb.l.color}" stroke="#FBFAF6" stroke-width="3" paint-order="stroke" data-line="${lb.l.key}">${lb.v}</text>`).join("");
+    }).join("");
+    scroller.innerHTML = `<svg class="dd-trend-lines-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${yearLines}${xLabels}${paths}${numbers}</svg>`;
+    axisBox.innerHTML = `<svg width="${axisW}" height="${H}" viewBox="0 0 ${axisW} ${H}">${ticks.map((t) => `<text x="6" y="${y(t) + 3.5}" font-size="10" ${font} fill="#8A8571">${t}</text>`).join("")}</svg>`;
+    if (W > avail) scroller.scrollLeft = W;
+  });
+}
+let trendResizeBound = false;
+function bindTrendResize() {
+  if (trendResizeBound) return;
+  trendResizeBound = true;
+  let t = null;
+  window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(drawTrendLineCharts, 150); });
 }
 function renderChartCustomModal() {
   return `
@@ -5422,28 +6028,32 @@ function renderChartCustomModal() {
           <button type="button" class="dd-modal-close" id="chart-custom-modal-close">✕</button>
         </div>
         <label class="dd-label" style="margin-top:0">From</label>
-        ${renderDateField("chart-custom-from", `${state.chartCustomFrom}-01`)}
+        ${renderDateField("chart-custom-from", state.chartCustomFrom)}
         <label class="dd-label">To</label>
-        ${renderDateField("chart-custom-to", `${state.chartCustomTo}-01`)}
+        ${renderDateField("chart-custom-to", state.chartCustomTo, `min="${state.chartCustomFrom}"`)}
+        <div class="dd-mono-muted dd-custom-hint">Up to 7 days shows as a week, up to 31 days as a month, up to a year as a year, and anything longer as a trend graph.</div>
         <button class="dd-btn-primary" type="button" id="chart-custom-apply">Apply</button>
       </div>
     </div>`;
 }
-function renderMonthlyChart() {
-  const rangeMode = state.chartRangeMode || "thisMonth";
-  const incl = {
+function chartIncl() {
+  return {
     discipline: state.chartIncludeDiscipline !== false,
     suspension: state.chartIncludeSuspension !== false,
     timeOut: state.chartIncludeTimeOut !== false,
     parentMeeting: state.chartIncludeParentMeeting !== false,
   };
-  const rangePillsRow = (opts) => `
-    <div class="dd-range-pills">
+}
+function renderMonthlyChart() {
+  const rangeMode = state.chartRangeMode || "thisMonth";
+  const incl = chartIncl();
+  const rangePillsRow = (opts, cls = "") => `
+    <div class="dd-range-pills${cls}">
       ${opts.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
     </div>`;
   const rangeSelectorHtml = `
     ${rangePillsRow(CHART_RANGE_OPTIONS_PRIMARY)}
-    <div style="margin-top:8px">${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY)}</div>`;
+    <div style="margin-top:8px">${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY, " dd-range-pills-fit")}</div>`;
 
   if (rangeMode === "today") {
     return `
@@ -5481,6 +6091,16 @@ function renderMonthlyChart() {
       ${rangeSelectorHtml}
       ${renderCategoryToggles(incl)}
       ${renderYearCalendar(incl)}
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
+  }
+
+  if (rangeMode === "all" || rangeMode === "custom") {
+    return `
+    <div class="dd-panel" style="margin-top:16px">
+      ${rangeSelectorHtml}
+      ${renderCategoryToggles(incl)}
+      ${rangeMode === "all" ? renderAllView(incl) : renderCustomView(incl)}
     </div>
     ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
   }
@@ -5566,8 +6186,7 @@ function renderGroomingFollowUpList() {
   };
   const renderGroup = (g) => `
     <div class="dd-followup-row-item" data-action="jump-to-incident" data-id="${g.incidentId}">
-      <span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(g.name))}</span>
-      ${g.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:1px">${escapeHtml(g.studentClass)}</div>` : ""}
+      <div><span class="dd-sans" style="font-size:14px;font-weight:600">${escapeHtml(truncateName(g.name))}</span>${g.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(g.studentClass)}</span>` : ""}</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
         ${g.items.map((r) => `
         <div style="border-top:1px solid #E4E1D4;padding-top:6px">
@@ -5615,8 +6234,7 @@ function renderPendingPmDates() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         ${list.map((m) => `
         <div class="dd-followup-row-item dd-pending-pm-row">
-          <span class="dd-sans dd-card-student-link" style="font-size:14px;font-weight:600" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}" data-year="${(m.date || "").slice(0, 4)}">${escapeHtml(truncateName(m.studentName))}</span>
-          ${m.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:1px">${escapeHtml(m.studentClass)}</div>` : ""}
+          <div><span class="dd-sans dd-card-student-link" style="font-size:14px;font-weight:600" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}" data-year="${(m.date || "").slice(0, 4)}">${escapeHtml(truncateName(m.studentName))}</span>${m.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(m.studentClass)}</span>` : ""}</div>
           <div class="dd-pending-pm-grid">
             <div class="dd-field-label">Original meeting</div>
             <div class="dd-sans" style="font-size:14px">${formatDate(m.date)}${m.time ? `<div class="dd-mono-muted" style="font-size:11px">${escapeHtml(pmSlotLabel(m.time, m.endTime, m.location))}</div>` : ""}</div>
@@ -5745,7 +6363,7 @@ function renderDashboardSection() {
               if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
               return `
               <div style="border-bottom:1px solid #E4E1D4;padding-bottom:8px">
-                <div class="dd-sans dd-card-student-link" style="font-size:14px" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}" data-year="${new Date().getFullYear()}">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
+                <div class="dd-sans" style="font-size:14px"><span class="dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}" data-year="${new Date().getFullYear()}">${escapeHtml(truncateName(t.name))}</span>${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
                 ${stats.map((s) => `<div class="dd-mono-muted" style="font-size:12px;margin-top:2px">${s}</div>`).join("")}
               </div>`;
             }).join("")}
@@ -7296,7 +7914,7 @@ function renderParentMeetingDetail(m) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}" data-year="${(pmDate(m) || m.date || "").slice(0, 4)}">${escapeHtml(m.studentName)}${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
+          <div class="dd-card-student"><span class="dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}" data-year="${(pmDate(m) || m.date || "").slice(0, 4)}">${escapeHtml(m.studentName)}</span>${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
           <div class="dd-card-meta dd-card-meta-primary">${isPmRescheduled(m) ? `<s>${formatDate(m.date)}</s> → ${formatDate(m.postponedTo)}` : formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           ${(() => { const sl = isPmRescheduled(m) ? pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation) : m.pmStatus === "Scheduled" || !m.pmStatus ? pmSlotLabel(m.time, m.endTime, m.location) : ""; return sl ? `<div class="dd-card-meta dd-card-meta-primary">${escapeHtml(sl)}</div>` : ""; })()}
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
@@ -7600,16 +8218,36 @@ function attachMainListeners() {
   const signOutBtn = document.getElementById("btn-app-sign-out");
   if (signOutBtn) signOutBtn.addEventListener("click", signOutOfApp);
 
+  // Print: "Opening…" while the phone/browser builds its print preview,
+  // then back to "Print" as soon as the print screen has come up (the
+  // browser says so with beforeprint/afterprint; the timer is a backstop
+  // for browsers that don't).
+  const busyLabel = (btn, text) => {
+    const label = btn.querySelector("span");
+    const original = label ? label.textContent : "";
+    if (label) label.textContent = text;
+    btn.disabled = true;
+    let done = false;
+    return () => { if (done) return; done = true; if (label) label.textContent = original; btn.disabled = false; };
+  };
   const printReportBtn = document.getElementById("btn-print-report");
   if (printReportBtn) printReportBtn.addEventListener("click", () => {
-    const label = printReportBtn.querySelector("span");
-    if (label) label.textContent = "Opening…";
-    printReportBtn.style.opacity = "0.5";
-    // The native print dialog can take a moment to build its preview,
-    // especially on mobile — this lets the browser paint the "Opening…"
-    // state first, so the tap feels acknowledged immediately rather
-    // than looking like nothing happened while the dialog loads.
-    setTimeout(() => window.print(), 30);
+    const restore = busyLabel(printReportBtn, "Opening…");
+    const onBefore = () => setTimeout(restore, 300);
+    window.addEventListener("beforeprint", onBefore, { once: true });
+    window.addEventListener("afterprint", restore, { once: true });
+    // Let the browser paint "Opening…" first so the tap feels acknowledged.
+    setTimeout(() => { window.print(); setTimeout(restore, 2000); }, 30);
+  });
+  // Export PDF: builds the file here (same look as printing to PDF) and
+  // downloads it — no print screen involved.
+  const exportPdfBtn = document.getElementById("btn-export-pdf");
+  if (exportPdfBtn) exportPdfBtn.addEventListener("click", async () => {
+    const restore = busyLabel(exportPdfBtn, "Preparing…");
+    try { await exportAnnualReportPdf(state.settingsSelectedYear); }
+    catch (err) { state.reportExportError = `Couldn't create the PDF — ${err?.message || String(err)}.`; render(); return; }
+    finally { restore(); }
+    if (state.reportExportError) { state.reportExportError = ""; render(); }
   });
 
   const loadKnownBtn = document.getElementById("btn-load-known-holidays");
@@ -7985,6 +8623,8 @@ function attachNewEntryRowListeners() {
 }
 
 function attachDashboardListeners() {
+  drawTrendLineCharts();
+  bindTrendResize();
   document.querySelectorAll('[data-action="toggle-watchlist-info"]').forEach((el) =>
     el.addEventListener("click", () => { state.showWatchlistInfo = !state.showWatchlistInfo; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="toggle-chart-cat"]').forEach((el) =>
@@ -8047,14 +8687,16 @@ function attachDashboardListeners() {
   if (customModalBackdrop) customModalBackdrop.addEventListener("click", (e) => { if (e.target.id === "chart-custom-modal-backdrop") closeCustomModal(); });
   const customFromEl = document.getElementById("chart-custom-from");
   const customToEl = document.getElementById("chart-custom-to");
-  if (customFromEl) customFromEl.addEventListener("change", () => { if (customFromEl.value) state.chartCustomFrom = monthKey(customFromEl.value); renderKeepingModalScroll(); });
-  if (customToEl) customToEl.addEventListener("change", () => { if (customToEl.value) state.chartCustomTo = monthKey(customToEl.value); renderKeepingModalScroll(); });
+  // To can't be earlier than From: moving From past To pulls To along.
+  if (customFromEl) customFromEl.addEventListener("change", () => { if (customFromEl.value) { state.chartCustomFrom = customFromEl.value; if (state.chartCustomTo < state.chartCustomFrom) state.chartCustomTo = state.chartCustomFrom; } renderKeepingModalScroll(); });
+  if (customToEl) customToEl.addEventListener("change", () => { if (customToEl.value) state.chartCustomTo = customToEl.value < state.chartCustomFrom ? state.chartCustomFrom : customToEl.value; renderKeepingModalScroll(); });
   const customApplyBtn = document.getElementById("chart-custom-apply");
   if (customApplyBtn) customApplyBtn.addEventListener("click", () => {
     const fromSel = document.getElementById("chart-custom-from");
     const toSel = document.getElementById("chart-custom-to");
-    if (fromSel && fromSel.value) state.chartCustomFrom = monthKey(fromSel.value);
-    if (toSel && toSel.value) state.chartCustomTo = monthKey(toSel.value);
+    if (fromSel && fromSel.value) state.chartCustomFrom = fromSel.value;
+    if (toSel && toSel.value) state.chartCustomTo = toSel.value;
+    state.selectedCalendarDay = null;
     state.showChartCustomModal = false;
     render();
   });

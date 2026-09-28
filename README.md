@@ -157,6 +157,32 @@ To rename an offence without breaking older records, add the old name to
 
 **Deleting** an entry is permanent. A 5-second Undo appears straight after.
 
+## Dashboard views
+
+Pills: Day / Week / Month / Year, then Term 1–4 / All / Custom.
+
+- **Day and Week** tallies count suspension and time-out *days served*
+  (a 3-day suspension is 3 in its week), so they answer "how many are out
+  this week". **Month, Year, Term, All** and the Annual Summary count each
+  suspension and time out *once, on its start date*.
+- The day list labels each entry: `Grooming | Long Hair`,
+  `In-School Suspension | Library`, `Out-of-School Suspension`,
+  `Time Out (CCA) | Staff Room with Mr Tan`,
+  `Parent Meet | 09:00–10:00 · Office` (`dayDetailLabel()`).
+- **Custom** takes any two dates and picks the layout (and its way of
+  counting) by length (`customRangeLayout()`): up to 7 days → Week,
+  8–31 days → Month, up to a year → Year (months shown, days outside the
+  range greyed), longer → the All graph.
+- **All** runs from the earliest entry to today, drawn like a stock chart:
+  one line each for Grooming, Parent Meet, Time Out, In-School Suspension
+  and Out-of-School Suspension, one point per month
+  (`drawTrendLineCharts()`). Months with entries show their number; 0s are
+  left blank. Month names run along the bottom, with the year under the
+  first month and under each January. The value axis stays fixed on the
+  right while the months scroll sideways (opening at the latest). The
+  Show… pills switch lines off; Suspension switches both suspension
+  lines. A suspension with both kinds of days counts on both lines.
+
 ## Students' Watchlist
 
 This semester's records only: Terms 1–2 until Term 3 starts (so through
@@ -209,7 +235,19 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
 
 ## Settings
 
-- **Annual Summary Reports:** per-year report with a print / save-as-PDF button.
+- **Annual Summary Reports:** per-year report laid out as six pages — (1) annual
+  summary + by term, (2) discipline load by month, (3) by term chart + position
+  within term + day of week, (4) repeat vs. unique students + grooming
+  escalation rate + repeat suspension/time out intervals, (5) most challenging
+  levels + classes (+ this year's suspension/time out lists), (6) trend
+  analysis + recommendations. **Print** opens the browser's print screen (each
+  page starts a new A4 sheet). **Export PDF** builds the same pages as an A4
+  PDF in the app and downloads it (`Annual Summary YYYY.pdf`), using
+  html2canvas and jsPDF bundled in `lib/` (MIT licence; loaded only when
+  Export PDF is first used, cached for offline). The trend analysis and
+  recommendations are generated from the report's own figures by fixed
+  rules (`computeYearInsights()`), not AI; mid-year it compares completed
+  terms only.
 - **Classes For The Year:** the class list for the current year
   (`settings/classConfig`).
 - **Holidays / School Closure / HBL Days:** public and school holidays and

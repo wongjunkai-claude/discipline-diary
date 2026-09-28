@@ -319,7 +319,14 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-daytype-legend { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 6px 10px; }
 .dd-trend-legend { display: flex; justify-content: center; flex-wrap: nowrap; gap: 4px 10px; }
 .dd-trend-legend .dd-cal-legend-item { white-space: nowrap; }
-@media (max-width: 360px) { .dd-trend-legend { gap: 4px 6px; } .dd-trend-legend .dd-cal-legend-item { font-size: 10.5px; } .dd-trend-legend .dd-legend-swatch { width: 8px; height: 8px; } }
+/* Trend chart legend grows with the chart: the chart (an SVG) stretches to
+   its box's width, so the legend text is a fixed share of that width
+   (4.14% = 12px on a 390px phone, where the chart is 290px wide), with
+   the swatch and spacing in em so they scale along with it. */
+.dd-area-chart-wrap { container-type: inline-size; }
+.dd-trend-legend { font-size: max(10px, 4.14cqi); gap: 0.33em 0.83em; }
+.dd-trend-legend .dd-cal-legend-item { font-size: inherit; gap: 0.58em; }
+.dd-trend-legend .dd-legend-swatch { width: 0.83em; height: 0.83em; }
 .dd-cal-legend-col { display: flex; flex-direction: column; gap: 6px; }
 .dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; }
 .dd-cal-legend-item .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
@@ -578,6 +585,8 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 
 .dd-card-student-link { cursor: pointer; text-decoration: underline; text-decoration-color: #C9C4B4; text-underline-offset: 3px; }
 
+/* Printing / Save as PDF defaults to A4 paper (not US Letter). */
+@page { size: A4; margin: 12mm; }
 @media print {
   /* Without this, browsers strip background colors and images by
      default when printing — the stacked area chart in the Annual
@@ -590,7 +599,23 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   #report-print-area { padding: 0; }
   .dd-panel, .dd-level-breakdown, .dd-area-chart-wrap { break-inside: avoid; }
   .dd-dash-title { break-after: avoid; }
+  /* The Annual Summary's six pages each start on a new sheet. */
+  .dd-report-page + .dd-report-page { break-before: page; }
+  .dd-ta-head { break-after: avoid; }
+  .dd-ta-p, .dd-ta-list li { break-inside: avoid; }
+  /* No card frame around the report on paper. */
+  .dd-report-main { padding: 0 !important; max-width: none !important; }
+  .dd-report-card { border: none !important; background: #fff !important; padding: 0 !important; }
 }
+/* Export PDF renders the report the way it prints: these repeat the print
+   rules above for the off-screen copy the PDF is drawn from. */
+html.dd-pdf-render .dd-header, html.dd-pdf-render .dd-print-hide, html.dd-pdf-render .dd-undo-toast, html.dd-pdf-render .dd-offline-bar, html.dd-pdf-render .dd-toast { display: none !important; }
+html.dd-pdf-render body, html.dd-pdf-render .dd-app, html.dd-pdf-render .dd-main { background: #fff !important; }
+html.dd-pdf-render #report-print-area { padding: 0; }
+html.dd-pdf-render .dd-report-main { padding: 0 !important; max-width: none !important; }
+html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !important; padding: 0 !important; }
+/* Each report page reads as its own block on screen too. */
+.dd-report-page + .dd-report-page { margin-top: 6px; }
 
 .dd-nav-badge {
   position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
@@ -598,12 +623,26 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px #1B2A41;
 }
 
+/* Annual Summary toolbar: "← Years" on the left, Print and Export PDF
+   (icon + label, one line each) on the right. */
+.dd-report-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dd-report-actions { display: flex; align-items: center; gap: 12px; }
+.dd-print-btn:disabled { opacity: 0.5; cursor: default; }
+/* Trend analysis + Recommendations text. */
+.dd-ta-panel { background: #F7F5EE; border: 1px solid #E4E1D4; padding: 12px; margin-bottom: 4px; }
+.dd-ta-head { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #1B2A41; margin: 10px 0 3px; }
+.dd-ta-head:first-child { margin-top: 0; }
+.dd-ta-p { font-size: 13px; line-height: 1.55; margin: 0 0 6px; color: #1B2A41; }
+.dd-ta-list { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.55; color: #1B2A41; margin: 0 0 6px; padding-left: 20px; }
+.dd-ta-list li { margin-bottom: 4px; }
+.dd-ta-note { font-size: 11px; margin: 8px 0 0; }
+/* Print icon and its label side by side on one line, level with "← Years". */
 .dd-print-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: none;
-  color: #1B2A41; cursor: pointer; padding: 2px 4px; flex-shrink: 0;
+  display: flex; flex-direction: row; align-items: center; gap: 6px; background: none; border: none;
+  color: #1B2A41; cursor: pointer; padding: 2px 4px; flex-shrink: 0; white-space: nowrap;
 }
 .dd-print-btn span {
-  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 600; line-height: 1.25; text-align: center;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; line-height: 1.25;
 }
 
 /* Desktop / large-screen scaling — the app is built mobile-first with a
@@ -913,3 +952,36 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 .dd-link-archive { background: #FBFAF6; border-top: 1px solid #E4E1D4; }
 .dd-link-archive .dd-settings-menu-row { padding-left: 22px; }
 @media (max-width: 360px) { .dd-link-year-body { padding: 0 6px 8px; } .dd-link-row { padding: 9px 9px; } }
+
+/* Tablet and desktop: the calendar's marker legend and day-colour legend
+   each sit on one line (there's room), instead of the two-column blocks
+   used on phones. */
+@media (min-width: 700px) {
+  .dd-cal-legend-2col, .dd-daytype-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+  .dd-cal-legend-2col .dd-cal-legend-item, .dd-daytype-legend .dd-cal-legend-item { gap: 5px; }
+  .dd-cal-legend-2col .dd-cal-legend-col { display: contents; }
+}
+/* Upright tablets are the tightest fit for the one-line marker legend. */
+@media (min-width: 700px) and (max-width: 899px) {
+  .dd-cal-legend-2col, .dd-daytype-legend { gap: 6px 10px; }
+  .dd-cal-legend-2col .dd-cal-legend-item, .dd-daytype-legend .dd-cal-legend-item { font-size: 11.5px; }
+}
+
+/* ---------- Custom and All views ---------- */
+.dd-cal-nav-spacer { visibility: hidden; }
+.dd-cal-montag { font-size: 0.8em; color: #8A8571; margin-left: 2px; }
+.dd-cal-selected .dd-cal-montag { color: #fff; }
+.dd-mini-out { cursor: default; opacity: 0.3; }
+.dd-custom-hint { font-size: 11px; line-height: 1.45; margin: 10px 0 12px; }
+.dd-trend-lines-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 8px 4px 2px; }
+.dd-trend-lines { display: flex; align-items: flex-start; }
+.dd-trend-scroll { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+.dd-trend-axis { flex: 0 0 30px; border-left: 1px solid #C9C4B4; }
+.dd-trend-axis svg { display: block; }
+.dd-trend-lines-svg { display: block; }
+.dd-trend-lines-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.dd-legend-line { display: inline-block; width: 16px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+.dd-trend-lines-note { font-size: 11px; line-height: 1.45; margin-top: 8px; }
+/* Term 1–4 / All / Custom: widths follow the labels, so the short "All"
+   leaves room for "Custom". */
+.dd-range-pills-fit .dd-range-pill { flex: 1 1 auto; }

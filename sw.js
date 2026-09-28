@@ -1,6 +1,7 @@
-const CACHE = "discipline-diary-v243";
+const CACHE = "discipline-diary-v249";
 const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
-  "./fonts/geist-400.woff2", "./fonts/geist-500.woff2", "./fonts/geist-600.woff2", "./fonts/geist-700.woff2", "./fonts/geist-800.woff2"];
+  "./fonts/geist-400.woff2", "./fonts/geist-500.woff2", "./fonts/geist-600.woff2", "./fonts/geist-700.woff2", "./fonts/geist-800.woff2",
+  "./lib/html2canvas.min.js", "./lib/jspdf.umd.min.js"];
 // Firebase's own code, loaded from Google's CDN. The URLs include the
 // version number, so a cached copy never goes stale — caching it lets the
 // app open (and show an "offline" note) with no connection.
