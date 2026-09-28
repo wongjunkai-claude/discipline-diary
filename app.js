@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.22.1";
+const APP_VERSION = "3.22.4";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -474,10 +474,16 @@ function formatDateShort(iso) {
   const [, m, d] = iso.split("-").map(Number);
   return `${String(d).padStart(2, "0")} ${MONTH_ABBR[m - 1]}`;
 }
+// Just the (local) date of a millisecond timestamp, e.g. "28 Sep 2026".
+function formatDateFromMs(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  return `${String(d.getDate()).padStart(2, "0")} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+}
 function formatDateTime(ms) {
   if (!ms) return "";
   const d = new Date(ms);
-  const datePart = `${String(d.getDate()).padStart(2, "0")} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+  const datePart = formatDateFromMs(ms);
   const timePart = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   return `${datePart}, ${timePart}`;
 }
@@ -3566,6 +3572,7 @@ function fitOneLine() {
   document.querySelectorAll("[data-fit]").forEach((el, i) => {
     if (el.dataset.fitBase === undefined) el.dataset.fitBase = el.style.fontSize || "";
     el.style.fontSize = el.dataset.fitBase;
+    el.classList.remove("dd-fit-wrapped");
     const key = el.dataset.fit || `_solo${i}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(el);
@@ -3576,8 +3583,18 @@ function fitOneLine() {
       if (!el.clientWidth) return;
       const base = parseFloat(getComputedStyle(el).fontSize);
       if (el.scrollWidth <= el.clientWidth) { size = Math.min(size, base); return; }
+      // An element with data-fit-min won't shrink below that size: if it
+      // still doesn't fit there, it wraps onto a second line at its normal
+      // size instead (and doesn't pull the rest of its group down with it).
+      const min = parseFloat(el.dataset.fitMin) || FIT_MIN_PX;
+      if (el.dataset.fitMin) {
+        el.style.fontSize = `${min}px`;
+        const fitsAtMin = el.scrollWidth <= el.clientWidth;
+        el.style.fontSize = el.dataset.fitBase;
+        if (!fitsAtMin) { el.classList.add("dd-fit-wrapped"); return; }
+      }
       // Largest size (to 0.5px) that fits, found in a few halvings.
-      let lo = FIT_MIN_PX, hi = base;
+      let lo = min, hi = base;
       while (hi - lo > 0.5) {
         const mid = (lo + hi) / 2;
         el.style.fontSize = `${mid}px`;
@@ -6320,7 +6337,7 @@ function renderIncidentDetail(it) {
                 <div style="flex:1;min-width:0">
                   <div class="dd-followup-note">${escapeHtml(noteEntry.note)}</div>
                   <div class="dd-followup-meta">Logged by ${escapeHtml(noteEntry.by || "")} · ${formatDate(noteEntry.at)}</div>
-                  ${noteEntry.editedAt ? `<div class="dd-followup-meta">Edited by ${escapeHtml(noteEntry.editedBy || "")} · ${formatDateTime(noteEntry.editedAt)}</div>` : ""}
+                  ${noteEntry.editedAt ? `<div class="dd-followup-meta">Edited by ${escapeHtml(noteEntry.editedBy || "")} · ${formatDateFromMs(noteEntry.editedAt)}</div>` : ""}
                 </div>
                 <button class="dd-followup-icon-btn" data-action="edit-escalation-note" data-id="${it.id}" data-issue="${issue.id}" data-stage="${s + 1}" data-note="${escapeHtml(noteEntry.note)}" title="Edit this note">✎</button>
               </div>
@@ -6354,14 +6371,14 @@ function renderIncidentDetail(it) {
               // action (facilitated call, or SH/SM contact for the
               // shsm-only issues) instead of either of those.
               if (issue.stage === 3) {
-                return `<div class="dd-issue-instruction">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "LST or SH/SM Enforced Facilitated Call"}</div>`;
+                return `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "LST or SH/SM Enforced Facilitated Call"}</div>`;
               }
-              return `<div class="dd-issue-instruction">${cfg.parentFrom <= issue.stage ? "FT Contact Parents" : "FT Remind Student"}</div>`;
+              return `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${cfg.parentFrom <= issue.stage ? "FT Contact Parents" : "FT Remind Student"}</div>`;
             })()}
             ${cfg.instructions ? (issue.stage === 1
-              ? `<div class="dd-issue-instruction">${escapeHtml(cfg.instructions[0] || "")}</div>`
+              ? `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${escapeHtml(cfg.instructions[0] || "")}</div>`
               : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`) : ""}
-            ${cfg.note ? `<div class="dd-issue-instruction">${escapeHtml(cfg.note)}</div>` : ""}
+            ${cfg.note ? `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${escapeHtml(cfg.note)}</div>` : ""}
             <div class="dd-issue-actions">
               <button class="dd-add-btn" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
               ${issue.stage < 3 ? `<button class="dd-add-btn${isEscalating ? " dd-issue-btn-selected" : ""}" style="background:#A3372B" data-action="start-escalate" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}

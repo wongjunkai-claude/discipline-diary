@@ -449,14 +449,15 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-stage-row-head .dd-issue-stage-badge { padding: 3px 6px; }
 .dd-stage-due { font-size: 12px; white-space: nowrap; }
 .dd-stage-due-group { display: inline-flex; align-items: center; gap: 4px; }
-/* Resolved/Escalate: each button tops out at a sensible width so they don't
-   stretch across a wide desktop screen; on phones they still split the row. */
-.dd-issue-actions { display: flex; gap: 6px; margin-top: 8px; }
-.dd-issue-actions .dd-add-btn { flex: 0 1 160px; }
+/* Resolved/Escalate: two equal, label-sized columns on every screen, so every
+   Resolved button is the same width whether or not Escalate sits next to it
+   (Final Warning and resolved issues only have Resolved), and the pair
+   doesn't stretch across the screen. */
+.dd-issue-actions { display: grid; grid-template-columns: repeat(2, 104px); gap: 6px; margin-top: 8px; }
+.dd-issue-actions .dd-add-btn { min-width: 0; }
 .dd-issue-note-form { max-width: 480px; }
 /* Tablet and desktop: buttons sized to their label (not stretched), note box shorter. */
 @media (min-width: 700px) {
-  .dd-issue-actions .dd-add-btn { flex: 0 0 auto; min-width: 96px; padding: 8px 16px; }
   .dd-issue-note-form { max-width: 360px; }
   /* Save / Apply / Sign in: sized to the label instead of the full width. */
   .dd-btn-primary { width: fit-content; min-width: 140px; padding: 10px 24px; }
@@ -846,6 +847,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 
 /* One-line text that shrinks to fit (see fitOneLine in app.js). */
 [data-fit] { white-space: nowrap; overflow: hidden; min-width: 0; }
+[data-fit].dd-fit-wrapped { white-space: normal; overflow: visible; }
 .dd-room-name { display: block; }
 .dd-settings-menu-label { display: block; flex: 1; margin-right: 8px; }
 .dd-fit-line { max-width: 100%; }
