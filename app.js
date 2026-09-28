@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.28.0";
+const APP_VERSION = "3.28.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1510,7 +1510,17 @@ function startListening() {
   );
   unsubHolidays = onSnapshot(
     doc(db, "holidays", "singapore"),
-    (snap) => { if (snap.exists()) { state.holidays = snap.data(); render(); } },
+    (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const raw = data.publicHolidayEntries || [];
+      const clean = dedupePublicHolidayEntries(raw);
+      state.holidays = { ...data, publicHolidayEntries: clean };
+      render();
+      if (clean.length < raw.length && state.isAdmin) {
+        setDoc(doc(db, "holidays", "singapore"), { publicHolidayEntries: clean }, { merge: true }).catch(() => {});
+      }
+    },
     () => {}
   );
   onSnapshot(
@@ -1532,6 +1542,38 @@ function startListening() {
 
 // Both background holiday jobs write to the shared calendar, which only
 // admins and the owner may change — so they only run for them.
+// ---- Public holiday duplicates ----
+// The same holiday can arrive from two places (the data.gov.sg fetch and
+// "Load known public holidays") with names that differ only in punctuation,
+// e.g. "New Year’s Day" vs "New Year's Day", or as one 2-day range vs two
+// single days. Names are compared ignoring case, spacing and apostrophe
+// style, and a holiday counts as already listed if every date it covers is
+// already covered by an entry of the same name.
+function normHolidayName(n) {
+  return String(n || "").replace(/[\u2018\u2019\u02BC`´]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+}
+function holidayDates(e) {
+  const out = [];
+  for (let d = e.startDate; d && d <= (e.endDate || e.startDate) && out.length < 40; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+// Every date already covered by any entry (any name).
+function coveredHolidayDates(entries) {
+  const set = new Set();
+  (entries || []).forEach((e) => holidayDates(e).forEach((d) => set.add(d)));
+  return set;
+}
+// The list with repeats removed (first one kept).
+function dedupePublicHolidayEntries(entries) {
+  const seen = new Set(); // "date|name"
+  return (entries || []).filter((e) => {
+    const name = normHolidayName(e.name);
+    const keys = holidayDates(e).map((d) => `${d}|${name}`);
+    if (keys.length && keys.every((k) => seen.has(k))) return false;
+    keys.forEach((k) => seen.add(k));
+    return true;
+  });
+}
 async function ensureHolidaysSeeded() {
   if (!state.isAdmin) return;
   try {
@@ -1596,7 +1638,7 @@ async function syncPublicHolidaysFromDataGovSg() {
     // Merge named entries in additively — never overwrite a date the
     // user has already corrected or renamed by hand.
     const existingEntries = state.holidays?.publicHolidayEntries || [];
-    const existingDates = new Set(existingEntries.map((e) => e.startDate));
+    const existingDates = coveredHolidayDates(existingEntries);
     const newEntries = [...named.entries()]
       .filter(([d]) => !existingDates.has(d))
       .map(([d, name]) => ({ id: uid(), name, startDate: d, endDate: d }));
@@ -8315,8 +8357,9 @@ function attachMainListeners() {
   if (loadKnownBtn) loadKnownBtn.addEventListener("click", async () => {
     if (!state.isAdmin) return;
     const existing = state.holidays?.publicHolidayEntries || [];
-    const already = new Set(existing.map((e) => `${e.name}|${e.startDate}`));
-    const toAdd = KNOWN_PUBLIC_HOLIDAYS.filter((h) => !already.has(`${h.name}|${h.startDate}`)).map((h) => ({ ...h, id: uid() }));
+    // Skip any holiday whose dates are already listed (under any spelling).
+    const covered = coveredHolidayDates(existing);
+    const toAdd = KNOWN_PUBLIC_HOLIDAYS.filter((h) => !holidayDates(h).every((d) => covered.has(d))).map((h) => ({ ...h, id: uid() }));
     if (toAdd.length === 0) return;
     try { await setDoc(doc(db, "holidays", "singapore"), { publicHolidayEntries: [...existing, ...toAdd] }, { merge: true }); }
     catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
