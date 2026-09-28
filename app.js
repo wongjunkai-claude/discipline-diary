@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.26.1";
+const APP_VERSION = "3.28.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1530,7 +1530,10 @@ function startListening() {
   );
 }
 
+// Both background holiday jobs write to the shared calendar, which only
+// admins and the owner may change — so they only run for them.
 async function ensureHolidaysSeeded() {
+  if (!state.isAdmin) return;
   try {
     const snap = await getDoc(doc(db, "holidays", "singapore"));
     if (!snap.exists()) await setDoc(doc(db, "holidays", "singapore"), DEFAULT_HOLIDAYS_2026);
@@ -1546,6 +1549,7 @@ const SG_HOLIDAYS_DATASET_URL = "https://data.gov.sg/api/action/datastore_search
 // next year's list, and only fetch if we don't already have next
 // year's dates on file.
 async function checkAnnualPublicHolidayFetch() {
+  if (!state.isAdmin) return;
   const today = todayISO();
   const currentYear = parseInt(today.slice(0, 4), 10);
   if (today < `${currentYear}-07-31`) return;
@@ -3308,7 +3312,7 @@ function renderPostponePicker() {
     </div>`;
   const isField = pp.mode === "field";
   const [y, mo] = pp.month.split("-").map(Number);
-  const lead = new Date(y, mo - 1, 1).getDay();
+  const lead = (new Date(y, mo - 1, 1).getDay() + 6) % 7; // Monday-first
   const daysIn = new Date(y, mo, 0).getDate();
   const today = todayISO();
   const cells = [];
@@ -3333,7 +3337,7 @@ function renderPostponePicker() {
           <button type="button" class="dd-pp-navbtn" data-pp="next" title="Next month">›</button>
         </div>
         <div class="dd-pp-grid">
-          ${["S", "M", "T", "W", "T", "F", "S"].map((w) => `<span class="dd-pp-wd">${w}</span>`).join("")}
+          ${["M", "T", "W", "T", "F", "S", "S"].map((w) => `<span class="dd-pp-wd">${w}</span>`).join("")}
           ${cells.join("")}
         </div>
         <div class="dd-pp-legend">
@@ -5144,6 +5148,7 @@ function renderAnnualReportPages(year) {
   const p6 = renderTrendAnalysis(year);
   return [p1, p2, p3, p4, p5, p6].map((h, i) => page(i + 1, h)).join("");
 }
+const ADMIN_ONLY_NOTE = `<div class="dd-readonly-note">View only. Only admins and the owner can change this.</div>`;
 function renderSettingsSection() {
   // Every back button sits in the same kind of row as the report's
   // "← Years" toolbar, so back buttons and titles line up page to page.
@@ -5177,21 +5182,23 @@ function renderSettingsSection() {
   } else if (state.settingsView === "classesForYear") {
     const year = new Date().getFullYear();
     const draft = state._classDraft || classOptionsForCurrentYear();
+    const canEdit = !!state.isAdmin;
     body = `
       ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Classes For ${year}</div>
+      ${canEdit ? "" : ADMIN_ONLY_NOTE}
       <div class="dd-mono-muted" style="font-size:12px;margin-bottom:12px">
-        Only ticked classes will show up in the class dropdown when logging an entry this year. Untick any that don't exist this year (e.g. after re-streaming); tick any new ones.
+        Only ticked classes will show up in the class dropdown when logging an entry this year.${canEdit ? " Untick any that don't exist this year (e.g. after re-streaming); tick any new ones." : ""}
       </div>
       <div class="dd-issue-grid">
         ${CLASS_OPTIONS.map((c) => `
-          <label class="dd-checkbox-pill" style="display:flex">
-            <input type="checkbox" class="dd-class-year-cb" value="${c}" ${draft.includes(c) ? "checked" : ""} />
+          <label class="dd-checkbox-pill${canEdit ? "" : " dd-readonly"}" style="display:flex">
+            <input type="checkbox" class="dd-class-year-cb" value="${c}" ${draft.includes(c) ? "checked" : ""} ${canEdit ? "" : "disabled"} />
             <span>${c}</span>
           </label>`).join("")}
       </div>
       ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
-      <button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : `Save for ${year}`}</button>`;
+      ${canEdit ? `<button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : `Save for ${year}`}</button>` : ""}`;
   } else if (state.settingsView === "holidays") {
     const year = state.holidaySettingsYear || new Date().getFullYear();
     const moe = computeMoeCalendar(year);
@@ -5200,33 +5207,36 @@ function renderSettingsSection() {
       .map((e) => ({ ...e, startDate: e.startDate || e.date, endDate: e.endDate || e.date }))
       .filter((e) => e.startDate && e.startDate.startsWith(String(year)))
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    // Admins and the owner can add, change and remove; everyone else sees
+    // the same list with no edit controls.
+    const canEdit = !!state.isAdmin;
     const sectionHead = (label, addAction) => `
       <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px">
         <div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:0">${label}</div>
-        ${addAction ? `<button type="button" class="dd-settings-add-btn" data-action="${addAction}">+</button>` : ""}
+        ${addAction && canEdit ? `<button type="button" class="dd-settings-add-btn" data-action="${addAction}">+</button>` : ""}
       </div>`;
+    const calIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>`;
     const listRow = (title, sub, editAction, editData, deleteAction, deleteId) => `
       <div class="dd-settings-list-row">
-        <button type="button" class="dd-date-icon-btn" data-action="${editAction}" ${editData || ""} title="Adjust">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
-        </button>
+        ${canEdit ? `<button type="button" class="dd-date-icon-btn" data-action="${editAction}" ${editData || ""} title="Adjust">${calIcon}</button>` : `<div class="dd-date-icon-btn dd-readonly" aria-hidden="true">${calIcon}</div>`}
         <div style="flex:1;min-width:0">
           <div class="dd-sans" style="font-size:14px">${escapeHtml(title)}</div>
           <div class="dd-mono-muted" style="font-size:12px">${sub}</div>
         </div>
-        ${deleteAction ? `<button class="dd-followup-icon-btn" data-action="${deleteAction}" data-id="${deleteId}" title="Remove">✕</button>` : ""}
+        ${deleteAction && canEdit ? `<button class="dd-followup-icon-btn" data-action="${deleteAction}" data-id="${deleteId}" title="Remove">✕</button>` : ""}
       </div>`;
     const rangeKeys = ["march", "june", "sep", "yearEnd"];
     const singleDayKeys = ["youthDay", "teachersDay", "childrensDay", "nationalDayInLieu"];
     body = `
       ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Setting Holidays/School Closure/HBL Days</div>
+      ${canEdit ? "" : ADMIN_ONLY_NOTE}
       <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:6px">
         <button type="button" class="dd-circle-btn" data-action="holidays-prev-year" title="Previous year" aria-label="Previous year">‹</button>
         <div class="dd-sans" style="font-size:16px;font-weight:600;min-width:48px;text-align:center">${year}</div>
         <button type="button" class="dd-circle-btn" data-action="holidays-next-year" title="Next year" aria-label="Next year">›</button>
       </div>
-      ${year !== new Date().getFullYear() ? `<div class="dd-mono-muted" style="font-size:12px;text-align:center;margin-bottom:8px">Viewing ${year} — everything below (and anything you add) applies to that year.</div>` : ""}
+      ${year !== new Date().getFullYear() ? `<div class="dd-mono-muted" style="font-size:12px;text-align:center;margin-bottom:8px">Viewing ${year} — everything below${canEdit ? " (and anything you add)" : ""} applies to that year.</div>` : ""}
 
       ${sectionHead("Public Holidays", "open-add-public-holiday")}
       ${phEntries.length === 0 ? `<div class="dd-dash-empty">None added yet.</div>` : phEntries.map((e) => listRow(
@@ -5234,7 +5244,7 @@ function renderSettingsSection() {
         "edit-public-holiday", `data-id="${e.id}"`,
         "request-delete-public-holiday", e.id
       )).join("")}
-      <button type="button" class="dd-back-link" id="btn-load-known-holidays" style="margin-top:8px">Load known public holidays (2026 &amp; 2027)</button>
+      ${canEdit ? `<button type="button" class="dd-back-link" id="btn-load-known-holidays" style="margin-top:8px">Load known public holidays (2026 &amp; 2027)</button>` : ""}
 
       ${sectionHead("School Holidays", "open-add-school-holiday")}
       ${moe.ranges.map((r, i) => listRow(r.label, formatDateOrRange(r.start, r.end), "edit-school-holiday", `data-key="${rangeKeys[i]}" data-range="true" data-label="${escapeHtml(r.label)}" data-start="${r.start}" data-end="${r.end}"`, null, null)).join("")}
@@ -5366,7 +5376,6 @@ function renderSettingsSection() {
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
         ${menuRow("Authorised Teachers List", "settings-open-access")}
         ${menuRow("Student Links", "settings-open-links")}
-        ${menuRow("Recently Deleted", "settings-open-trash")}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -5698,9 +5707,12 @@ function isSchoolHolidayOnly(iso) {
   return extraHolidays.some((e) => iso >= e.startDate && iso <= e.endDate);
 }
 function isHolidayNotWeekend(iso) { return isSchoolHolidayOnly(iso) && !isWeekend(iso); }
+// Calendars start the week on Monday: how many blank cells come before a
+// date in its first row (Mon = 0 … Sun = 6).
+function mondayFirstOffset(iso) { return (weekdayOf(iso) + 6) % 7; }
 function renderMiniMonth(monthKeyStr, incl, range) {
   const [y, m] = monthKeyStr.split("-").map(Number);
-  const firstDow = weekdayOf(`${monthKeyStr}-01`);
+  const firstDow = mondayFirstOffset(`${monthKeyStr}-01`);
   const daysInMonth = new Date(y, m, 0).getDate();
   const today = todayISO();
   const cells = [];
@@ -5738,7 +5750,7 @@ function renderMiniMonth(monthKeyStr, incl, range) {
   return `
     <div class="dd-mini-month">
       <div class="dd-mini-month-title">${range && range.withYear ? monthLabelFromKey(monthKeyStr) : monthLabelFromKey(monthKeyStr).split(" ")[0]}</div>
-      <div class="dd-mini-weekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+      <div class="dd-mini-weekdays"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
       <div class="dd-mini-grid">${cells.join("")}</div>
     </div>`;
 }
@@ -5777,7 +5789,7 @@ function renderDayTypeLegend() {
 function renderMonthCalendar(monthKeyStr, incl) {
   const [y, m] = monthKeyStr.split("-").map(Number);
   const daily = computeDailyCountsForMonth(monthKeyStr);
-  const firstDow = weekdayOf(`${monthKeyStr}-01`);
+  const firstDow = mondayFirstOffset(`${monthKeyStr}-01`);
   const daysInMonth = new Date(y, m, 0).getDate();
   const totals = { discipline: 0, suspension: 0, timeOut: 0, parentMeeting: 0 };
   Object.values(daily).forEach((c) => { totals.discipline += c.discipline; totals.parentMeeting += c.parentMeeting; });
@@ -5799,7 +5811,7 @@ function renderMonthCalendar(monthKeyStr, incl) {
       <div class="dd-cal-nav-label">${monthLabelFromKey(monthKeyStr)}</div>
       <button type="button" class="dd-cal-nav-btn" data-action="cal-next-month">›</button>
     </div>
-    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    <div class="dd-cal-weekdays"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>
     <div class="dd-cal-grid">${cells.join("")}</div>
     ${renderDayDetail(state.selectedCalendarDay, incl)}
     ${renderCalLegend(incl)}
@@ -5890,14 +5902,14 @@ function renderCustomView(incl) {
   const totals = rangeStyleTotals(from, to);
   if (layout === "month") {
     const cells = [];
-    for (let i = 0; i < weekdayOf(from); i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
+    for (let i = 0; i < mondayFirstOffset(from); i++) cells.push(`<div class="dd-cal-cell dd-cal-cell-empty"></div>`);
     const crossesMonth = monthKey(from) !== monthKey(to);
     datesInRange(from, to).forEach((iso, i) => {
       const tag = crossesMonth && (i === 0 || iso.endsWith("-01")) ? monthLabelFromKey(monthKey(iso)).split(" ")[0].slice(0, 3) : "";
       cells.push(renderMonthCell(iso, computeCountsForDate(iso), incl, tag));
     });
     return `${renderTallyGrid(cats, totals)}${nav}
-    <div class="dd-cal-weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+    <div class="dd-cal-weekdays"><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div></div>
     <div class="dd-cal-grid">${cells.join("")}</div>${footer}`;
   }
   const months = monthKeysInRange(monthKey(from), monthKey(to));
@@ -6376,7 +6388,7 @@ function renderDashboardSection() {
       ${renderNav()}
       <div class="dd-main">
         ${!state.classConfig?.classesByYear?.[String(new Date().getFullYear())] ? `
-        <div class="dd-error" style="margin-bottom:12px" data-action="goto-classes-for-year">Classes for ${new Date().getFullYear()} haven't been reviewed yet — <button type="button" class="dd-back-link" data-action="goto-classes-for-year" style="text-decoration:underline">tap here to set them up</button>.</div>` : ""}
+        ${state.isAdmin ? `<div class="dd-error" style="margin-bottom:12px" data-action="goto-classes-for-year">Classes for ${new Date().getFullYear()} haven't been reviewed yet — <button type="button" class="dd-back-link" data-action="goto-classes-for-year" style="text-decoration:underline">tap here to set them up</button>.</div>` : `<div class="dd-error" style="margin-bottom:12px">Classes for ${new Date().getFullYear()} haven't been reviewed yet — ask an admin or the owner to set them up.</div>`}` : ""}
         ${renderNewEntryRow()}
 
         ${renderGroomingFollowUpList()}
@@ -8301,6 +8313,7 @@ function attachMainListeners() {
 
   const loadKnownBtn = document.getElementById("btn-load-known-holidays");
   if (loadKnownBtn) loadKnownBtn.addEventListener("click", async () => {
+    if (!state.isAdmin) return;
     const existing = state.holidays?.publicHolidayEntries || [];
     const already = new Set(existing.map((e) => `${e.name}|${e.startDate}`));
     const toAdd = KNOWN_PUBLIC_HOLIDAYS.filter((h) => !already.has(`${h.name}|${h.startDate}`)).map((h) => ({ ...h, id: uid() }));
@@ -8501,6 +8514,7 @@ function attachMainListeners() {
     }));
   const saveClassBtn = document.getElementById("btn-save-class-config");
   if (saveClassBtn) saveClassBtn.addEventListener("click", async () => {
+    if (!state.isAdmin) return;
     const year = String(new Date().getFullYear());
     const classes = (state._classDraft || []).slice();
     state.saveError = false;

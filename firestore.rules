@@ -110,11 +110,11 @@ service cloud.firestore {
       allow delete: if false;
     }
     // Shared Singapore holiday calendar (public holidays + school holiday
-    // blocks) used to auto-schedule multi-day suspensions. Any signed-in
-    // teacher can read/update it — there's nothing sensitive here, and it
-    // needs to be editable each year when MOE/MOM publish new dates.
+    // blocks) used to auto-schedule multi-day suspensions. Every teacher
+    // can read it; only admins and the Owner can change it.
     match /holidays/{docId} {
-      allow read, write: if isMoeUser();
+      allow read: if isMoeUser();
+      allow write: if isAdmin();
     }
 
     // App settings (class lists, school closure days, calendar overrides…).
@@ -124,9 +124,12 @@ service cloud.firestore {
     // here would grant every authorized teacher write access to
     // settings/owner, letting anyone make themselves Owner and then manage
     // admins, regardless of the stricter rule directly below.
+    // Every teacher can read these; only admins and the Owner can change
+    // them (Classes For The Year, school closure / HBL days, school
+    // calendar changes).
     match /settings/{docId} {
       allow read: if isMoeUser();
-      allow write: if isMoeUser() && docId != 'owner';
+      allow write: if isAdmin() && docId != 'owner';
     }
     // The day-to-day Owner pointer (see the access-control note above).
     // Any signed-in authorized user can read who the current Owner is, but

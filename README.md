@@ -258,9 +258,12 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   closure days (`holidays/singapore`, `settings/schoolCalendarOverrides`,
   `settings/schoolClosureDays`). Used to skip non-school days when setting
   deadlines and suspension dates.
+- These two pages are **view-only for normal teachers**: only admins and
+  the Owner can change them. The app hides the edit controls (with a "View
+  only" note), and `firestore.rules` enforces it (`holidays/*` and
+  `settings/*` writes need `isAdmin()`). The automatic holiday set-up and
+  the yearly public-holiday fetch also only run for admins/the Owner.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
-- **Recently Deleted:** every deleted entry, with a Restore button (see
-  "Deleting and restoring entries" below).
 
 ## Backups
 
@@ -273,8 +276,8 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   of the app.
   - This snapshot always reflects the CURRENT live data, so a deleted
     record drops out of it within ~1.5s — it's a way to recover from a bad
-    edit or a lost connection, not from a delete. Use Recently Deleted for
-    that (below).
+    edit or a lost connection, not from a delete. The trash copies (below)
+    cover that.
 - **Manual:** the download icon (top right) saves everything as a `.json`
   file. Do this before any big clean-up.
 - The rules never let the app delete backups.
@@ -287,11 +290,11 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   deleting itself hasn't changed. That trash copy is independent of both
   the rolling backup above (which drops the record right away) and the
   5-second in-app "Undo" toast (in-memory only, gone on reload).
-- **Settings → Recently Deleted** lists every trash copy (restored ones
-  marked as such) with a Restore button, which recreates the record with
-  its original id and marks the trash copy `restoredAt` rather than
-  removing it — the rules only let Admins/Owner actually delete a
-  `deletedItems` doc, mirroring `studentLinks`.
+- There is no Recently Deleted page in Settings any more (removed in
+  3.28.0), but every trash copy is still saved. To recover one, find it in
+  the Firebase console under `deletedItems` and recreate the record from
+  it. (The old Restore code, `restoreDeletedItem()`, is still in app.js.)
+  The rules only let Admins/Owner delete a `deletedItems` doc.
 - There's no automatic purge — trash accumulates indefinitely. Deliberate
   for now: better an ever-growing list than a real deletion silently
   losing a record.
