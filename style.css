@@ -978,24 +978,34 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 .dd-mini-out { cursor: default; opacity: 0.3; }
 .dd-custom-hint { font-size: 11px; line-height: 1.45; margin: 10px 0 12px; }
 .dd-trend-lines-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 8px 4px 2px; }
-.dd-trend-lines { display: flex; align-items: flex-start; }
-.dd-trend-scroll { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
-.dd-trend-axis { flex: 0 0 30px; border-left: 1px solid #C9C4B4; }
+.dd-trend-lines { display: flex; align-items: flex-start; position: relative; }
+.dd-trend-scroll { flex: 1; min-width: 0; overflow: hidden; }
+/* pan-y: a vertical swipe still scrolls the page; a sideways drag reads months. */
+.dd-trend-scroll svg { touch-action: pan-y; cursor: crosshair; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.dd-trend-axis { flex: 0 0 30px; border-right: 1px solid #C9C4B4; }
+/* The tap-to-read card, floating inside the graph beside the month line. */
+.dd-trend-card { position: absolute; z-index: 2; background: rgba(255, 255, 255, 0.96); border: 1px solid #C9C4B4; border-radius: 6px; box-shadow: 0 2px 8px rgba(27, 42, 65, 0.12); padding: 6px 8px; pointer-events: none; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; white-space: nowrap; }
+.dd-trend-card[hidden] { display: none; }
+.dd-trend-card-title { font-size: 12px; font-weight: 700; color: #1B2A41; margin-bottom: 3px; }
+.dd-trend-card-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #4A4536; line-height: 1.55; }
+.dd-trend-card-row .dd-legend-line { width: 12px; height: 3px; }
+.dd-trend-card-label { flex: 1; }
+.dd-trend-card-num { font-weight: 700; color: #1B2A41; min-width: 1.4em; text-align: right; margin-left: 8px; }
 .dd-trend-axis svg { display: block; }
 .dd-trend-lines-svg { display: block; }
-.dd-trend-lines-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+/* Two rows: Grooming / Parent Meet / Time Out, then the two suspensions.
+   Both rows shrink to one shared size if needed so each stays on one line. */
+.dd-trend-lines-legend { display: flex; flex-direction: column; gap: 6px; }
+.dd-trend-lines-legend-row { display: flex; flex-wrap: nowrap; gap: 0 1.15em; font-size: 12px; white-space: nowrap; overflow: hidden; min-width: 0; }
+.dd-trend-lines-legend-row .dd-cal-legend-item { font-size: inherit; gap: 0.5em; }
+.dd-trend-lines-legend-row .dd-legend-line { width: 1.3em; height: 0.25em; }
 .dd-legend-line { display: inline-block; width: 16px; height: 3px; border-radius: 2px; flex-shrink: 0; }
 .dd-trend-lines-note { font-size: 11px; line-height: 1.45; margin-top: 8px; }
 /* Term 1–4 / All / Custom: widths follow the labels, so the short "All"
    leaves room for "Custom". */
 .dd-range-pills-fit .dd-range-pill { flex: 1 1 auto; }
-/* Trend graph: fade the side that has more months to swipe to. */
-.dd-trend-scroll.dd-more-left { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
-.dd-trend-scroll.dd-more-right { -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px); mask-image: linear-gradient(to left, transparent 0, #000 28px); }
-.dd-trend-scroll.dd-more-left.dd-more-right { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
-
-/* Annual Summary trend legend on tablet and desktop: the same size as the
-   chart's month labels (8 units of the chart's 320-unit width). */
+/* Tablet and desktop have room for all five on one line. */
 @media (min-width: 700px) {
-  .dd-trend-legend { font-size: 2.5cqi; }
+  .dd-trend-lines-legend { flex-direction: row; flex-wrap: wrap; gap: 6px 14px; }
+  .dd-trend-lines-legend-row { display: contents; }
 }

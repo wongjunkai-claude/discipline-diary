@@ -176,12 +176,16 @@ Pills: Day / Week / Month / Year, then Term 1–4 / All / Custom.
 - **All** runs from the earliest entry to today, drawn like a stock chart:
   one line each for Grooming, Parent Meet, Time Out, In-School Suspension
   and Out-of-School Suspension, one point per month
-  (`drawTrendLineCharts()`). Months with entries show their number; 0s are
-  left blank. Month names run along the bottom, with the year under the
-  first month and under each January. The value axis stays fixed on the
-  right while the months scroll sideways (opening at the latest). The
-  Show… pills switch lines off; Suspension switches both suspension
-  lines. A suspension with both kinds of days counts on both lines.
+  (`drawTrendLineCharts()`). The value axis is on the left and the whole
+  range always fits the width (no scrolling); when months are close
+  together only every 2nd / 3rd / 6th month is named, or just each January
+  for very long ranges, with the year under the first month and each
+  January. No numbers are printed on the graph: tapping or dragging across
+  it snaps a line to the nearest month and shows a card inside the graph
+  with that month's count per line (tap the same month or off the graph
+  to hide it). The Show… pills switch lines off; Suspension switches both
+  suspension lines. A suspension with both kinds of days counts on both
+  lines. On phones the legend is two rows (suspensions on the second).
 
 ## Students' Watchlist
 

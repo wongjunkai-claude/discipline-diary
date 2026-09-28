@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.25.0";
+const APP_VERSION = "3.26.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -5959,26 +5959,33 @@ function renderTrendView(incl, from, to, title) {
       <div class="dd-trend-lines" data-from="${from}" data-to="${to}"></div>
     </div>
     <div class="dd-cal-legend dd-trend-lines-legend">
-      ${lines.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}
+      ${[lines.filter((l) => l.cat !== "suspension"), lines.filter((l) => l.cat === "suspension")].filter((row) => row.length).map((row) => `
+      <div class="dd-trend-lines-legend-row" data-fit="trend-legend">${row.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}</div>`).join("")}
     </div>
-    <div class="dd-mono-muted dd-trend-lines-note">One point per month. Each entry is counted once, on the date it starts.</div>` : ""}`;
+    <div class="dd-mono-muted dd-trend-lines-note">One point per month. Tap or drag across the graph to see each month's numbers. Each entry is counted once, on the date it starts.</div>` : ""}`;
 }
 // Drawn after the page is on screen, so the graph can be sized to the
 // space it actually has. Styled like a stock chart: thin lines, the value
-// axis fixed on the right, and the months scrolling sideways (starting at
-// the latest) when there are too many to fit. Each month with entries
-// shows its number; months with none show nothing.
+// axis fixed on the left, and the whole range always fitted to the width
+// (no scrolling). When months get too close together for every name to
+// fit, only every 2nd / 3rd / 6th month is named, and with very long
+// ranges only each January (with its year).
+// Numbers aren't printed on the graph (they collide once months are close
+// together). Instead, as in a stock app, tapping or dragging across it
+// snaps a vertical line to the nearest month and shows a small card, inside
+// the graph, with that month's count for each line. Tapping the same month
+// again, or anywhere off the graph, hides it.
 function drawTrendLineCharts() {
   document.querySelectorAll(".dd-trend-lines").forEach((host) => {
     const rows = computeTrendSeries(trendBuckets(host.dataset.from, host.dataset.to));
     const lines = TREND_LINES.filter((l) => chartIncl()[l.cat]);
     const axisW = 30;
-    host.innerHTML = `<div class="dd-trend-scroll"></div><div class="dd-trend-axis"></div>`;
-    const scroller = host.querySelector(".dd-trend-scroll"), axisBox = host.querySelector(".dd-trend-axis");
+    host.innerHTML = `<div class="dd-trend-axis"></div><div class="dd-trend-scroll"></div><div class="dd-trend-card" hidden></div>`;
+    const plotBox = host.querySelector(".dd-trend-scroll"), axisBox = host.querySelector(".dd-trend-axis"), card = host.querySelector(".dd-trend-card");
     const avail = Math.max(200, host.clientWidth - axisW);
-    const H = 250, padT = 30, padB = 34, padL = 14, padR = 10, minGap = 30;
+    const H = 250, padT = 18, padB = 34, padL = 12, padR = 12;
     const n = rows.length;
-    const plotW = Math.max(avail - padL - padR, (n - 1) * minGap);
+    const plotW = avail - padL - padR;
     const W = plotW + padL + padR, plotH = H - padT - padB;
     const maxV = Math.max(1, ...rows.flatMap((r) => lines.map((l) => r[l.key])));
     const axisMax = niceAxisMax(maxV);
@@ -5990,45 +5997,70 @@ function drawTrendLineCharts() {
     // A faint divider where each new year starts.
     const yearLines = rows.map((r, i) => (i > 0 && r.month === 1 ? `<line x1="${x(i) - (x(i) - x(i - 1)) / 2}" y1="${padT - 8}" x2="${x(i) - (x(i) - x(i - 1)) / 2}" y2="${padT + plotH}" stroke="#C9C4B4" stroke-width="1" stroke-dasharray="3 3"></line>` : "")).join("");
     // "Jan" with the year under it, on the first month and on every January.
-    const xLabels = rows.map((r, i) => `
+    // A month name needs about 24px; name fewer months when they're closer.
+    const gap = n > 1 ? plotW / (n - 1) : plotW;
+    const step = [1, 2, 3, 6, 12].find((k) => gap * k >= 24) || 12;
+    const onStep = (r) => (r.month - 1) % step === 0; // step 12 → January only
+    // The first month is named even off-step, unless it would crowd the next named one.
+    const nextNamed = rows.findIndex((r, i) => i > 0 && onStep(r));
+    const showAt = (r, i) => (i === 0 ? nextNamed < 0 || nextNamed * gap >= 24 : onStep(r));
+    const xLabels = rows.map((r, i) => (showAt(r, i) ? `
       <text x="${x(i)}" y="${padT + plotH + 14}" text-anchor="middle" font-size="9.5" ${font} fill="#6B6652">${MONTH_ABBR[r.month - 1]}</text>
-      ${i === 0 || r.month === 1 ? `<text x="${x(i)}" y="${padT + plotH + 27}" text-anchor="middle" font-size="9.5" font-weight="600" ${font} fill="#1B2A41">${r.year}</text>` : ""}`).join("");
+      ${i === 0 || r.month === 1 ? `<text x="${x(i)}" y="${padT + plotH + 27}" text-anchor="middle" font-size="9.5" font-weight="600" ${font} fill="#1B2A41">${r.year}</text>` : ""}` : "")).join("");
+    const dotR = gap < 8 ? 1.6 : 2.3;
     const paths = lines.map((l) => `
       ${n > 1 ? `<polyline points="${rows.map((r, i) => `${x(i)},${y(r[l.key])}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
-      ${rows.map((r, i) => (r[l.key] > 0 || n === 1 ? `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="2.3" fill="${l.color}" data-line="${l.key}"></circle>` : "")).join("")}`).join("");
-    // Numbers sit just above their point; where lines meet they stack
-    // upward so none covers another. Only nudged down if a stack would
-    // run off the top.
-    const G = 12;
-    const numbers = rows.map((r, i) => {
-      const labs = lines.filter((l) => r[l.key] > 0).map((l) => ({ l, v: r[l.key], pos: y(r[l.key]) - 6 })).sort((a, b) => b.pos - a.pos);
-      for (let k = 1; k < labs.length; k++) if (labs[k].pos > labs[k - 1].pos - G) labs[k].pos = labs[k - 1].pos - G;
-      const top = 10;
-      if (labs.length && labs[labs.length - 1].pos < top) {
-        labs[labs.length - 1].pos = top;
-        for (let k = labs.length - 2; k >= 0; k--) if (labs[k].pos < labs[k + 1].pos + G) labs[k].pos = labs[k + 1].pos + G;
-      }
-      return labs.map((lb) => `<text x="${x(i)}" y="${lb.pos}" text-anchor="middle" font-size="10.5" font-weight="700" ${font} fill="${lb.l.color}" stroke="#FBFAF6" stroke-width="3" paint-order="stroke" data-line="${lb.l.key}">${lb.v}</text>`).join("");
-    }).join("");
-    scroller.innerHTML = `<svg class="dd-trend-lines-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${yearLines}${xLabels}${paths}${numbers}</svg>`;
-    axisBox.innerHTML = `<svg width="${axisW}" height="${H}" viewBox="0 0 ${axisW} ${H}">${ticks.map((t) => `<text x="6" y="${y(t) + 3.5}" font-size="10" ${font} fill="#8A8571">${t}</text>`).join("")}</svg>`;
-    // Open at the latest month that has entries (not an empty future
-    // stretch at the end of a Custom range), with that month at the right.
-    if (W > avail) {
-      let last = -1;
-      rows.forEach((r, i) => { if (lines.some((l) => r[l.key] > 0)) last = i; });
-      scroller.scrollLeft = last < 0 ? W : Math.max(0, Math.min(W - avail, x(last) + 24 - avail));
-    }
-    // A faded edge on whichever side has more months to swipe to.
-    const edges = () => {
-      const max = scroller.scrollWidth - scroller.clientWidth;
-      scroller.classList.toggle("dd-more-left", scroller.scrollLeft > 2);
-      scroller.classList.toggle("dd-more-right", scroller.scrollLeft < max - 2);
+      ${rows.map((r, i) => (r[l.key] > 0 || n === 1 ? `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="${dotR}" fill="${l.color}" data-line="${l.key}"></circle>` : "")).join("")}`).join("");
+    plotBox.innerHTML = `<svg class="dd-trend-lines-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${yearLines}${xLabels}${paths}<g class="dd-trend-cursor"></g></svg>`;
+    axisBox.innerHTML = `<svg width="${axisW}" height="${H}" viewBox="0 0 ${axisW} ${H}">${ticks.map((t) => `<text x="${axisW - 6}" y="${y(t) + 3.5}" text-anchor="end" font-size="10" ${font} fill="#8A8571">${t}</text>`).join("")}</svg>`;
+
+    // ---- tap / drag to read a month ----
+    const svg = plotBox.querySelector("svg"), cursor = svg.querySelector(".dd-trend-cursor");
+    let shown = -1;
+    const hide = () => { shown = -1; cursor.innerHTML = ""; card.hidden = true; };
+    const show = (i) => {
+      shown = i;
+      const r = rows[i];
+      cursor.innerHTML = `<line x1="${x(i)}" y1="${padT - 8}" x2="${x(i)}" y2="${padT + plotH}" stroke="#1B2A41" stroke-width="1" stroke-opacity="0.55"></line>` +
+        lines.map((l) => `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="4" fill="#fff" stroke="${l.color}" stroke-width="2"></circle>`).join("");
+      card.innerHTML = `<div class="dd-trend-card-title">${MONTH_ABBR[r.month - 1]} ${r.year}</div>` +
+        lines.map((l) => `<div class="dd-trend-card-row" data-line="${l.key}"><span class="dd-legend-line" style="background:${l.color}"></span><span class="dd-trend-card-label">${l.label}</span><span class="dd-trend-card-num">${r[l.key]}</span></div>`).join("");
+      card.hidden = false;
+      // Beside the line, on the side with more room, kept inside the graph.
+      const lineX = axisW + x(i), cw = card.offsetWidth, boxW = host.clientWidth;
+      let left = x(i) > W / 2 ? lineX - cw - 10 : lineX + 10;
+      left = Math.max(axisW + 2, Math.min(boxW - cw - 2, left));
+      card.style.left = `${left}px`;
+      card.style.top = `${padT - 6}px`;
     };
-    edges();
-    scroller.addEventListener("scroll", edges, { passive: true });
+    const nearest = (ev) => {
+      const b = svg.getBoundingClientRect();
+      const px = ((ev.clientX - b.left) / b.width) * W;
+      return n === 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round(((px - padL) / plotW) * (n - 1))));
+    };
+    // Press: show that month (or, pressing the month already showing,
+    // hide it on release unless the finger then drags to another month).
+    let dragging = false, toggleOff = false;
+    svg.addEventListener("pointerdown", (ev) => {
+      dragging = true;
+      const i = nearest(ev);
+      toggleOff = i === shown;
+      if (!toggleOff) show(i);
+    });
+    svg.addEventListener("pointermove", (ev) => {
+      if (!dragging) return;
+      const i = nearest(ev);
+      if (i !== shown) { toggleOff = false; show(i); }
+    });
+    svg.addEventListener("pointerup", () => { if (dragging && toggleOff) hide(); dragging = false; toggleOff = false; });
+    svg.addEventListener("pointercancel", () => { dragging = false; toggleOff = false; });
+    host._hideTrendCard = hide;
   });
 }
+// Tapping anywhere off a trend graph hides its card.
+document.addEventListener("pointerdown", (ev) => {
+  document.querySelectorAll(".dd-trend-lines").forEach((host) => { if (!host.contains(ev.target) && host._hideTrendCard) host._hideTrendCard(); });
+}, true);
 let trendResizeBound = false;
 function bindTrendResize() {
   if (trendResizeBound) return;
