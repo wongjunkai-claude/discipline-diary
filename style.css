@@ -626,7 +626,10 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 /* Annual Summary toolbar: "← Years" on the left, Print and Export PDF
    (icon + label, one line each) on the right. */
 .dd-report-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dd-report-actions { display: flex; align-items: center; gap: 12px; }
+/* The Print / Export PDF buttons take no height of their own, so this row
+   is exactly as tall as a plain "← Settings" row: "← Years" and the page
+   title sit in the same place as on the Annual Summary Reports list. */
+.dd-report-actions { display: flex; align-items: center; gap: 12px; height: 0; }
 .dd-print-btn:disabled { opacity: 0.5; cursor: default; }
 /* Trend analysis + Recommendations text. */
 .dd-ta-panel { background: #F7F5EE; border: 1px solid #E4E1D4; padding: 12px; margin-bottom: 4px; }
@@ -676,25 +679,26 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
   .dd-modal { max-height: calc(88vh / 1.25); }
   .dd-app, .dd-center { min-height: calc(100vh / 1.25); }
 }
-/* Big desktop screens: everything is zoomed up. Widths and pop-up heights
+/* Big desktop screens: everything is zoomed up (1.2 / 1.4 / 1.6 — set to
+   match how the app looked at 60% browser zoom on a Mac laptop). Widths and pop-up heights
    are divided by the zoom so they still fit the window. */
 @media (min-width: 1300px) {
-  .dd-header-inner, .dd-main { max-width: 800px; }
-  body { zoom: 1.5; }
-  .dd-modal { max-height: calc(88vh / 1.5); }
-  .dd-app, .dd-center { min-height: calc(100vh / 1.5); }
+  .dd-header-inner, .dd-main { max-width: 850px; }
+  body { zoom: 1.2; }
+  .dd-modal { max-height: calc(88vh / 1.2); }
+  .dd-app, .dd-center { min-height: calc(100vh / 1.2); }
 }
 @media (min-width: 1700px) {
   .dd-header-inner, .dd-main { max-width: 857px; }
-  body { zoom: 1.75; }
-  .dd-modal { max-height: calc(88vh / 1.75); }
-  .dd-app, .dd-center { min-height: calc(100vh / 1.75); }
+  body { zoom: 1.4; }
+  .dd-modal { max-height: calc(88vh / 1.4); }
+  .dd-app, .dd-center { min-height: calc(100vh / 1.4); }
 }
 @media (min-width: 2000px) {
   .dd-header-inner, .dd-main { max-width: 850px; }
-  body { zoom: 2; }
-  .dd-modal { max-height: calc(88vh / 2); }
-  .dd-app, .dd-center { min-height: calc(100vh / 2); }
+  body { zoom: 1.6; }
+  .dd-modal { max-height: calc(88vh / 1.6); }
+  .dd-app, .dd-center { min-height: calc(100vh / 1.6); }
 }
 
 .dd-area-chart-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px; }
@@ -985,3 +989,13 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 /* Term 1–4 / All / Custom: widths follow the labels, so the short "All"
    leaves room for "Custom". */
 .dd-range-pills-fit .dd-range-pill { flex: 1 1 auto; }
+/* Trend graph: fade the side that has more months to swipe to. */
+.dd-trend-scroll.dd-more-left { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
+.dd-trend-scroll.dd-more-right { -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px); mask-image: linear-gradient(to left, transparent 0, #000 28px); }
+.dd-trend-scroll.dd-more-left.dd-more-right { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
+
+/* Annual Summary trend legend on tablet and desktop: the same size as the
+   chart's month labels (8 units of the chart's 320-unit width). */
+@media (min-width: 700px) {
+  .dd-trend-legend { font-size: 2.5cqi; }
+}

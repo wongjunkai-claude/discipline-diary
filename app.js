@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.24.1";
+const APP_VERSION = "3.25.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -5145,7 +5145,10 @@ function renderAnnualReportPages(year) {
   return [p1, p2, p3, p4, p5, p6].map((h, i) => page(i + 1, h)).join("");
 }
 function renderSettingsSection() {
+  // Every back button sits in the same kind of row as the report's
+  // "← Years" toolbar, so back buttons and titles line up page to page.
   const backBtn = (label, action) => `<button type="button" class="dd-back-link" data-action="${action}">← ${label}</button>`;
+  const backRow = (label, action) => `<div class="dd-report-toolbar">${backBtn(label, action)}</div>`;
   let body;
   if (state.settingsView === "yearReport" && state.settingsSelectedYear) {
     const year = state.settingsSelectedYear;
@@ -5162,20 +5165,20 @@ function renderSettingsSection() {
   } else if (state.settingsView === "yearList") {
     const years = availableReportYears();
     body = `
-      ${backBtn("Settings", "settings-back-to-menu")}
+      ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Annual Summary Reports</div>
       <div class="dd-settings-menu-group">
         ${years.map((y) => `<button type="button" class="dd-settings-menu-row" data-action="settings-open-year" data-year="${y}"><span>${y}</span><span class="dd-settings-chevron">›</span></button>`).join("")}
       </div>`;
   } else if (state.settingsView === "studentLinks") {
     body = `
-      ${backBtn("Settings", "settings-back-to-menu")}
+      ${backRow("Settings", "settings-back-to-menu")}
       ${renderStudentLinksSettings()}`;
   } else if (state.settingsView === "classesForYear") {
     const year = new Date().getFullYear();
     const draft = state._classDraft || classOptionsForCurrentYear();
     body = `
-      ${backBtn("Settings", "settings-back-to-menu")}
+      ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Classes For ${year}</div>
       <div class="dd-mono-muted" style="font-size:12px;margin-bottom:12px">
         Only ticked classes will show up in the class dropdown when logging an entry this year. Untick any that don't exist this year (e.g. after re-streaming); tick any new ones.
@@ -5216,7 +5219,7 @@ function renderSettingsSection() {
     const rangeKeys = ["march", "june", "sep", "yearEnd"];
     const singleDayKeys = ["youthDay", "teachersDay", "childrensDay", "nationalDayInLieu"];
     body = `
-      ${backBtn("Settings", "settings-back-to-menu")}
+      ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Setting Holidays/School Closure/HBL Days</div>
       <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:6px">
         <button type="button" class="dd-circle-btn" data-action="holidays-prev-year" title="Previous year" aria-label="Previous year">‹</button>
@@ -5302,7 +5305,7 @@ function renderSettingsSection() {
       </div>`;
     };
     body = `
-      ${backBtn("Settings", "settings-back-to-menu")}
+      ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Authorised Teachers List</div>
 
       <div class="dd-contact-list">${members.map(memberRow).join("")}</div>
@@ -5344,7 +5347,7 @@ function renderSettingsSection() {
       </div>`;
     };
     body = `
-      ${backBtn("Settings", "settings-back-to-menu")}
+      ${backRow("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Recently Deleted</div>
       ${items.length === 0
         ? `<div class="dd-mono-muted" style="font-size:13px">Nothing's been deleted yet.</div>`
@@ -6009,7 +6012,21 @@ function drawTrendLineCharts() {
     }).join("");
     scroller.innerHTML = `<svg class="dd-trend-lines-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${yearLines}${xLabels}${paths}${numbers}</svg>`;
     axisBox.innerHTML = `<svg width="${axisW}" height="${H}" viewBox="0 0 ${axisW} ${H}">${ticks.map((t) => `<text x="6" y="${y(t) + 3.5}" font-size="10" ${font} fill="#8A8571">${t}</text>`).join("")}</svg>`;
-    if (W > avail) scroller.scrollLeft = W;
+    // Open at the latest month that has entries (not an empty future
+    // stretch at the end of a Custom range), with that month at the right.
+    if (W > avail) {
+      let last = -1;
+      rows.forEach((r, i) => { if (lines.some((l) => r[l.key] > 0)) last = i; });
+      scroller.scrollLeft = last < 0 ? W : Math.max(0, Math.min(W - avail, x(last) + 24 - avail));
+    }
+    // A faded edge on whichever side has more months to swipe to.
+    const edges = () => {
+      const max = scroller.scrollWidth - scroller.clientWidth;
+      scroller.classList.toggle("dd-more-left", scroller.scrollLeft > 2);
+      scroller.classList.toggle("dd-more-right", scroller.scrollLeft < max - 2);
+    };
+    edges();
+    scroller.addEventListener("scroll", edges, { passive: true });
   });
 }
 let trendResizeBound = false;
@@ -7003,7 +7020,7 @@ function renderIncidentDetail(it) {
             </div>
             ${isEscalating ? `
             <div class="dd-followup-form dd-issue-note-form" style="margin-top:8px">
-              <input class="dd-input" data-action="escalate-note-input" data-issue="${issue.id}" placeholder="What's the follow-up so far? (required)" value="${escapeHtml(state.escalateNoteDraft[issue.id] || "")}" />
+              <input class="dd-input" data-action="escalate-note-input" data-issue="${issue.id}" placeholder="Follow-Up Notes" value="${escapeHtml(state.escalateNoteDraft[issue.id] || "")}" />
               <button class="dd-add-btn" data-action="confirm-escalate" title="Confirm and escalate">✓</button>
             </div>
             ${state.escalateNoteError === issue.id ? `<div class="dd-error" style="margin-top:2px">Enter a follow-up note before escalating.</div>` : ""}
