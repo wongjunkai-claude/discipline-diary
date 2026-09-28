@@ -74,11 +74,14 @@ audit trail (every create, edit and status change, with who and when).
   opens the note input, tapping it again (while selected) backs out without
   escalating. Resolved is a toggle too: tap to resolve, tap the (still
   shown, selected) Resolved button again to un-resolve — so there's no
-  separate Undo control for either. Each completed stage stays visible
-  (read-only) above the current one, showing its note and who logged it;
+  separate Undo control for either. Each issue is one card with its stages
+  nested inside it (label and due date on one line). Issues open collapsed,
+  showing only the latest stage with its Resolved/Escalate controls (the
+  follow-up note box works there too); expanding shows the earlier stages
+  above it, oldest first, each with its note and who logged it;
   the note itself can be edited later via its pencil icon, which logs
   "Edited by <name>" under the original "Logged by" line. The most recently
-  completed stage's pencil also offers "Unescalate", which reverses that
+  completed stage's pencil also offers "Remove Follow Up", which reverses that
   one step (drops its note and the stage transition, restoring the earlier
   stage as active again) — only while the issue isn't resolved, and only
   for that one most-recent step, not stages further back. Also links to

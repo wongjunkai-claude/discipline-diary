@@ -439,8 +439,30 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-pm-status-pill-sm { font-size: 9px; padding: 3px 7px; }
 .dd-pm-others-input { margin-top: 6px; }
 
-.dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; background: #FBFAF6; }
-.dd-issue-card-completed { background: #F2EFE6; }
+.dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px; background: #FBFAF6; }
+/* One card per grooming issue: name + collapse toggle on top, then its
+   stages nested below as a timeline (earlier ones only when expanded). */
+.dd-issue-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dd-stage-row { border-left: 2px solid #C9C4B4; padding-left: 8px; margin-top: 10px; }
+.dd-stage-row-current { border-left-color: #1B2A41; }
+.dd-stage-row-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.dd-stage-row-head .dd-issue-stage-badge { padding: 3px 6px; }
+.dd-stage-due { font-size: 12px; white-space: nowrap; }
+.dd-stage-due-group { display: inline-flex; align-items: center; gap: 4px; }
+/* Resolved/Escalate: each button tops out at a sensible width so they don't
+   stretch across a wide desktop screen; on phones they still split the row. */
+.dd-issue-actions { display: flex; gap: 6px; margin-top: 8px; }
+.dd-issue-actions .dd-add-btn { flex: 0 1 160px; }
+.dd-issue-note-form { max-width: 480px; }
+/* Tablet and desktop: buttons sized to their label (not stretched), note box shorter. */
+@media (min-width: 700px) {
+  .dd-issue-actions .dd-add-btn { flex: 0 0 auto; min-width: 96px; padding: 8px 16px; }
+  .dd-issue-note-form { max-width: 360px; }
+  /* Save / Apply / Sign in: sized to the label instead of the full width. */
+  .dd-btn-primary { width: fit-content; min-width: 140px; padding: 10px 24px; }
+  #btn-google-signin { margin-left: auto; margin-right: auto; }
+}
+.dd-stage-row-head.dd-issue-due-row { margin-top: 0; }
 /* Resolved/Escalate act as toggle buttons (tap again to undo) — this marks
    the pressed/selected state so it reads differently from a plain tap target. */
 .dd-issue-btn-selected { outline: 2px solid #1B2A41; outline-offset: 2px; }
@@ -597,9 +619,22 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
      even with the zoom scaling below they stayed proportionally tiny.
      These bring them in line with a normal desktop's 13-16px range;
      zoom still scales further on top of this at wider breakpoints. */
+}
+/* Calendar day numbers at tablet width and up (see comment above). */
+@media (min-width: 700px) {
   .dd-mini-daynum { font-size: 11px; }
   .dd-cal-daynum { font-size: 15px; }
   .dd-cal-weekday-label { font-size: 12px; }
+}
+/* Tablets (and small laptop windows): between phone and big-desktop widths,
+   everything is enlarged 1.25x so text and tap targets aren't phone-sized on
+   a much bigger screen. The min-height keeps phones turned sideways (wide but
+   short) on the normal phone size. Pop-up heights are divided by the zoom
+   so they still fit the window, same as the desktop sizes below. */
+@media (min-width: 700px) and (max-width: 1299px) and (min-height: 600px) {
+  body { zoom: 1.25; }
+  .dd-modal { max-height: calc(88vh / 1.25); }
+  .dd-app, .dd-center { min-height: calc(100vh / 1.25); }
 }
 /* Big desktop screens: everything is zoomed up. Widths and pop-up heights
    are divided by the zoom so they still fit the window. */
@@ -607,16 +642,19 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
   .dd-header-inner, .dd-main { max-width: 800px; }
   body { zoom: 1.5; }
   .dd-modal { max-height: calc(88vh / 1.5); }
+  .dd-app, .dd-center { min-height: calc(100vh / 1.5); }
 }
 @media (min-width: 1700px) {
   .dd-header-inner, .dd-main { max-width: 857px; }
   body { zoom: 1.75; }
   .dd-modal { max-height: calc(88vh / 1.75); }
+  .dd-app, .dd-center { min-height: calc(100vh / 1.75); }
 }
 @media (min-width: 2000px) {
   .dd-header-inner, .dd-main { max-width: 850px; }
   body { zoom: 2; }
   .dd-modal { max-height: calc(88vh / 2); }
+  .dd-app, .dd-center { min-height: calc(100vh / 2); }
 }
 
 .dd-area-chart-wrap { background: #FBFAF6; border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px; }

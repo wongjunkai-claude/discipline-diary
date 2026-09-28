@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.20.0";
+const APP_VERSION = "3.22.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1000,7 +1000,9 @@ function renderMemberActionModal() {
   const t = state.memberActionTarget;
   if (!t) return "";
   const isAdminTier = t.tier === "ADMIN";
-  const who = t.name || t.email;
+  // A teacher who hasn't signed in yet has no name on record — say so
+  // rather than repeating their email (which is shown on the next line).
+  const who = t.name || "Pending User Onboarding";
   const rows = [{ label: "Remove User", action: "member-remove-user", danger: true }];
   if (state.isOwner) {
     rows.push(isAdminTier
@@ -1011,8 +1013,8 @@ function renderMemberActionModal() {
   return `
     <div class="dd-modal-backdrop" id="member-action-backdrop">
       <div class="dd-modal" style="max-width:320px">
-        <div class="dd-modal-title" style="font-size:17px;margin-bottom:2px">${escapeHtml(who)}</div>
-        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:16px">${escapeHtml(t.email)}</div>
+        <div class="dd-modal-title" style="font-size:17px;margin-bottom:2px;overflow-wrap:anywhere">${escapeHtml(who)}</div>
+        <div class="dd-mono-muted" style="font-size:12px;margin-bottom:16px;overflow-wrap:anywhere">${escapeHtml(t.email)}</div>
         <div style="display:flex;flex-direction:column;gap:8px">
           ${rows.map((r) => `<button type="button" class="dd-add-btn" style="${r.danger ? "background:#A3372B" : "background:#1B2A41"}" data-action="${r.action}" data-id="${escapeHtml(t.email)}" data-name="${escapeHtml(t.name || "")}">${r.label}</button>`).join("")}
           <button type="button" class="dd-add-btn" style="background:#8A8571" id="member-action-cancel">Cancel</button>
@@ -1205,6 +1207,9 @@ const state = {
   editingEscalationNote: null, // { entryId, issueId, stage } | null
   escalateNoteEditDraft: {}, // keyed "issueId_stage"
   escalateNoteEditError: null, // "issueId_stage" key whose edited note was empty
+  // Grooming issues open collapsed (latest stage only); an issue id set to
+  // true here shows its earlier stages and follow-up notes too.
+  issueExpanded: {},
 
   suspensions: [],
   suspLoaded: false,
@@ -6278,38 +6283,38 @@ function renderIncidentDetail(it) {
           const cfg = GROOMING_ISSUE_CONFIG[issue.type] || GROOMING_ISSUE_CONFIG.Others;
           const overdue = !issue.resolved && issue.deadline < today;
           const isEscalating = state.escalatingIssue && state.escalatingIssue.issueId === issue.id;
-          // Every stage this issue has already passed through (escalated
-          // past) gets its own read-only card, oldest first, showing the
-          // due date it had and the follow-up note that was written to
-          // move it on — stacked above the current/active card below. Each
-          // note has its own pencil to fix a typo later; the stage
-          // transition itself isn't editable, only the note text.
-          const completedCards = [];
-          for (let s = 1; s < issue.stage; s++) {
+          // One card per issue, with its stages nested inside as a timeline.
+          // Collapsed (the default) shows only the latest stage — its label,
+          // due date and Resolved/Escalate controls, including the note box
+          // after Escalate — so a teacher can update it without scrolling
+          // past earlier follow-ups. Expanding adds the completed stages
+          // above it, oldest first, each with its note and who logged it.
+          const hasHistory = issue.stage > 1;
+          const issueOpen = hasHistory && !!state.issueExpanded[issue.id];
+          const completedRows = [];
+          if (issueOpen) for (let s = 1; s < issue.stage; s++) {
             const dueThen = issueStageDueDate(issue, s);
             const noteEntry = issueEscalationNote(issue, s + 1);
             const editKey = `${issue.id}_${s + 1}`;
             const isEditingNote = state.editingEscalationNote && state.editingEscalationNote.issueId === issue.id && state.editingEscalationNote.stage === s + 1;
-            // Only the most recently completed stage can be walked back —
-            // reaching it through the same pencil used to fix the note,
-            // rather than a separate control, since editing this note IS
-            // the only reason to open this stage back up.
+            // Only the most recent follow-up can be removed (which puts the
+            // issue back at that stage), reached through the same pencil
+            // used to fix the note rather than a separate control.
             const canUnescalate = (s + 1 === issue.stage) && !issue.resolved;
-            completedCards.push(`
-            <div class="dd-issue-card dd-issue-card-completed">
-              <div class="dd-issue-card-head">
-                <div class="dd-issue-card-label">${escapeHtml(groomingIssueLabel(issue))}</div>
+            completedRows.push(`
+            <div class="dd-stage-row">
+              <div class="dd-stage-row-head">
                 <span class="dd-issue-stage-badge">${WARNING_STAGE_LABEL[s]}</span>
+                ${dueThen ? `<span class="dd-mono-muted dd-stage-due">Due ${formatDate(dueThen)}</span>` : ""}
               </div>
-              ${dueThen ? `<div class="dd-mono-muted" style="font-size:12px">Due ${formatDate(dueThen)}</div>` : ""}
               ${noteEntry ? (isEditingNote ? `
-              <div class="dd-followup-form" style="margin-top:6px">
+              <div class="dd-followup-form dd-issue-note-form" style="margin-top:6px">
                 <input class="dd-input" data-action="escalate-note-edit-input" data-key="${editKey}" value="${escapeHtml(state.escalateNoteEditDraft[editKey] ?? noteEntry.note)}" />
                 <button class="dd-add-btn" data-action="confirm-escalation-note-edit" title="Save">✓</button>
               </div>
               ${state.escalateNoteEditError === editKey ? `<div class="dd-error" style="margin-top:2px">The note can't be empty.</div>` : ""}
               <button class="dd-back-link" style="margin-top:6px" data-action="cancel-escalation-note-edit">Cancel</button>
-              ${canUnescalate ? `<button class="dd-back-link" style="margin-top:6px;margin-left:12px;color:#A3372B" data-action="unescalate-issue" data-id="${it.id}" data-issue="${issue.id}">Unescalate — back to ${WARNING_STAGE_LABEL[s]}</button>` : ""}
+              ${canUnescalate ? `<button class="dd-back-link" style="margin-top:6px;margin-left:12px;color:#A3372B" data-action="unescalate-issue" data-id="${it.id}" data-issue="${issue.id}">Remove Follow Up</button>` : ""}
               ` : `
               <div style="display:flex;align-items:flex-start;gap:6px;margin-top:6px">
                 <div style="flex:1;min-width:0">
@@ -6322,21 +6327,24 @@ function renderIncidentDetail(it) {
               `) : ""}
             </div>`);
           }
-          return completedCards.join("") + `
+          return `
           <div class="dd-issue-card">
-            <div class="dd-issue-card-head">
+            <div class="dd-issue-card-top">
               <div class="dd-issue-card-label">${escapeHtml(groomingIssueLabel(issue))}</div>
-              ${issue.resolved
-                ? `<span class="dd-issue-stage-badge dd-issue-resolved">Resolved</span>`
-                : `<span class="dd-issue-stage-badge ${overdue ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[issue.stage]}</span>`}
+              ${hasHistory ? `<button class="dd-expand-toggle" data-action="toggle-issue-expanded" data-issue="${issue.id}" title="${issueOpen ? "Hide earlier follow-ups" : "Show earlier follow-ups"}">${issueOpen ? "▲" : "▼"}</button>` : ""}
             </div>
+            ${completedRows.join("")}
+            <div class="dd-stage-row dd-stage-row-current">
             ${!issue.resolved ? `
-            <div class="dd-issue-due-row">
-              <div class="dd-date-icon-btn" title="Change this issue's deadline">
-                <input type="date" class="dd-input dd-issue-override-input" data-id="${it.id}" data-issue="${issue.id}" value="${issue.deadline}" />
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
-              </div>
-              <span class="dd-mono-muted" style="font-size:12px">Due ${formatDate(issue.deadline)}${overdue ? " — overdue" : ""}</span>
+            <div class="dd-issue-due-row dd-stage-row-head">
+              <span class="dd-issue-stage-badge ${overdue ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[issue.stage]}</span>
+              <span class="dd-stage-due-group">
+                <span class="dd-mono-muted dd-stage-due">Due ${formatDate(issue.deadline)}${overdue ? " — overdue" : ""}</span>
+                <div class="dd-date-icon-btn" title="Change this issue's deadline">
+                  <input type="date" class="dd-input dd-issue-override-input" data-id="${it.id}" data-issue="${issue.id}" value="${issue.deadline}" />
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M8 3v4M16 3v4M3 10h18"></path></svg>
+                </div>
+              </span>
             </div>
             ${(() => {
               // Every non-final stage always shows exactly one FT-facing
@@ -6354,23 +6362,27 @@ function renderIncidentDetail(it) {
               ? `<div class="dd-issue-instruction">${escapeHtml(cfg.instructions[0] || "")}</div>`
               : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`) : ""}
             ${cfg.note ? `<div class="dd-issue-instruction">${escapeHtml(cfg.note)}</div>` : ""}
-            <div style="display:flex;gap:6px;margin-top:8px">
-              <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
-              ${issue.stage < 3 ? `<button class="dd-add-btn${isEscalating ? " dd-issue-btn-selected" : ""}" style="flex:1;background:#A3372B" data-action="start-escalate" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
+            <div class="dd-issue-actions">
+              <button class="dd-add-btn" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
+              ${issue.stage < 3 ? `<button class="dd-add-btn${isEscalating ? " dd-issue-btn-selected" : ""}" style="background:#A3372B" data-action="start-escalate" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
             </div>
             ${isEscalating ? `
-            <div class="dd-followup-form" style="margin-top:8px">
+            <div class="dd-followup-form dd-issue-note-form" style="margin-top:8px">
               <input class="dd-input" data-action="escalate-note-input" data-issue="${issue.id}" placeholder="What's the follow-up so far? (required)" value="${escapeHtml(state.escalateNoteDraft[issue.id] || "")}" />
               <button class="dd-add-btn" data-action="confirm-escalate" title="Confirm and escalate">✓</button>
             </div>
             ${state.escalateNoteError === issue.id ? `<div class="dd-error" style="margin-top:2px">Enter a follow-up note before escalating.</div>` : ""}
             ` : ""}
             ` : `
-            <div style="margin-top:8px">
+            <div class="dd-stage-row-head">
+              <span class="dd-issue-stage-badge dd-issue-resolved">Resolved</span>
+              <span class="dd-mono-muted" style="font-size:12px">${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</span>
+            </div>
+            <div class="dd-issue-actions">
               <button class="dd-add-btn dd-issue-btn-selected" data-action="unresolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
             </div>
-            <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
             `}
+            </div>
           </div>`;
         }).join("")}
       </div>`}
@@ -7911,6 +7923,8 @@ function attachGroomingListeners() {
     el.addEventListener("click", () => cancelEditEscalationNote()));
   document.querySelectorAll('[data-action="unescalate-issue"]').forEach((el) =>
     el.addEventListener("click", () => unescalateIssueFromEdit(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll('[data-action="toggle-issue-expanded"]').forEach((el) =>
+    el.addEventListener("click", () => { state.issueExpanded[el.dataset.issue] = !state.issueExpanded[el.dataset.issue]; render(); }));
   // The shared new-entry row and the Suspension/Time Out/Parent Meet modals
   // it can pop up on this tab are wired once, centrally, in
   // attachMainListeners — see the comment there.
