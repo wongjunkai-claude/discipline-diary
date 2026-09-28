@@ -1,4 +1,4 @@
-const CACHE = "discipline-diary-v253";
+const CACHE = "discipline-diary-v254";
 const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
   "./fonts/geist-400.woff2", "./fonts/geist-500.woff2", "./fonts/geist-600.woff2", "./fonts/geist-700.woff2", "./fonts/geist-800.woff2",
   "./lib/html2canvas.min.js", "./lib/jspdf.umd.min.js"];

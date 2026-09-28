@@ -984,13 +984,13 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 .dd-trend-scroll svg { touch-action: pan-y; cursor: crosshair; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 .dd-trend-axis { flex: 0 0 30px; border-right: 1px solid #C9C4B4; }
 /* The tap-to-read card, floating inside the graph beside the month line. */
-.dd-trend-card { position: absolute; z-index: 2; background: rgba(255, 255, 255, 0.96); border: 1px solid #C9C4B4; border-radius: 6px; box-shadow: 0 2px 8px rgba(27, 42, 65, 0.12); padding: 6px 8px; pointer-events: none; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; white-space: nowrap; }
+.dd-trend-card { position: absolute; z-index: 2; background: rgba(255, 255, 255, 0.96); border: 1px solid #C9C4B4; border-radius: 6px; box-shadow: 0 1px 5px rgba(27, 42, 65, 0.12); padding: 3px 6px 4px; border-radius: 5px; pointer-events: none; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; white-space: nowrap; }
 .dd-trend-card[hidden] { display: none; }
-.dd-trend-card-title { font-size: 12px; font-weight: 700; color: #1B2A41; margin-bottom: 3px; }
-.dd-trend-card-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #4A4536; line-height: 1.55; }
-.dd-trend-card-row .dd-legend-line { width: 12px; height: 3px; }
+.dd-trend-card-title { font-size: 10px; font-weight: 700; color: #1B2A41; margin-bottom: 1px; }
+.dd-trend-card-row { display: flex; align-items: center; gap: 4px; font-size: 9px; color: #4A4536; line-height: 1.4; }
+.dd-trend-card-row .dd-legend-line { width: 8px; height: 2px; }
 .dd-trend-card-label { flex: 1; }
-.dd-trend-card-num { font-weight: 700; color: #1B2A41; min-width: 1.4em; text-align: right; margin-left: 8px; }
+.dd-trend-card-num { font-weight: 700; color: #1B2A41; min-width: 1.4em; text-align: right; margin-left: 6px; }
 .dd-trend-axis svg { display: block; }
 .dd-trend-lines-svg { display: block; }
 /* Two rows: Grooming / Parent Meet / Time Out, then the two suspensions.

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.26.0";
+const APP_VERSION = "3.26.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -5915,8 +5915,8 @@ const TREND_LINES = [
   { key: "discipline", cat: "discipline", label: "Grooming", color: CHART_COLORS.discipline },
   { key: "parentMeeting", cat: "parentMeeting", label: "Parent Meet", color: CHART_COLORS.parentMeeting },
   { key: "timeOut", cat: "timeOut", label: "Time Out", color: CHART_COLORS.timeOut },
-  { key: "iss", cat: "suspension", label: "In-School Suspension", color: CHART_COLORS.suspension },
-  { key: "oss", cat: "suspension", label: "Out-of-School Suspension", color: OSS_DOT_COLOR },
+  { key: "iss", cat: "suspension", label: "In-School Suspension", cardLabel: "In-School Susp.", color: CHART_COLORS.suspension },
+  { key: "oss", cat: "suspension", label: "Out-of-School Suspension", cardLabel: "Out-of-School Susp.", color: OSS_DOT_COLOR },
 ];
 // One point per month, trimmed to the range at both ends.
 function trendBuckets(from, to) {
@@ -6024,7 +6024,7 @@ function drawTrendLineCharts() {
       cursor.innerHTML = `<line x1="${x(i)}" y1="${padT - 8}" x2="${x(i)}" y2="${padT + plotH}" stroke="#1B2A41" stroke-width="1" stroke-opacity="0.55"></line>` +
         lines.map((l) => `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="4" fill="#fff" stroke="${l.color}" stroke-width="2"></circle>`).join("");
       card.innerHTML = `<div class="dd-trend-card-title">${MONTH_ABBR[r.month - 1]} ${r.year}</div>` +
-        lines.map((l) => `<div class="dd-trend-card-row" data-line="${l.key}"><span class="dd-legend-line" style="background:${l.color}"></span><span class="dd-trend-card-label">${l.label}</span><span class="dd-trend-card-num">${r[l.key]}</span></div>`).join("");
+        lines.map((l) => `<div class="dd-trend-card-row" data-line="${l.key}"><span class="dd-legend-line" style="background:${l.color}"></span><span class="dd-trend-card-label">${l.cardLabel || l.label}</span><span class="dd-trend-card-num">${r[l.key]}</span></div>`).join("");
       card.hidden = false;
       // Beside the line, on the side with more room, kept inside the graph.
       const lineX = axisW + x(i), cw = card.offsetWidth, boxW = host.clientWidth;
