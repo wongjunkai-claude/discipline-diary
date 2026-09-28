@@ -120,11 +120,9 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
   width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0;
 }
 .dd-followup-icon-btn:hover { color: #1B2A41; border-color: #8A8571; }
-.dd-followup-edit-row { display: flex; gap: 6px; align-items: center; }
-.dd-followup-edit-input { flex: 1; }
 
 .dd-followup-form { display: flex; gap: 8px; }
-.dd-followup-input { flex: 1; }
+.dd-followup-form .dd-input { flex: 1; }
 .dd-add-btn { background: #1B2A41; color: #fff; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; padding: 8px 14px; border: none; border-radius: 3px; cursor: pointer; flex-shrink: 0; }
 
 .dd-history-toggle { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #8A8571; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; background: none; border: none; cursor: pointer; text-decoration: underline dotted; margin-top: 16px; padding: 0; }
@@ -442,6 +440,10 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-pm-others-input { margin-top: 6px; }
 
 .dd-issue-card { border: 1px solid #E4E1D4; border-radius: 4px; padding: 10px 12px; background: #FBFAF6; }
+.dd-issue-card-completed { background: #F2EFE6; }
+/* Resolved/Escalate act as toggle buttons (tap again to undo) — this marks
+   the pressed/selected state so it reads differently from a plain tap target. */
+.dd-issue-btn-selected { outline: 2px solid #1B2A41; outline-offset: 2px; }
 .dd-issue-card-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .dd-issue-card-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 14px; color: #1B2A41; }
 .dd-issue-stage-badge { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #F2EFE6; color: #B8863B; flex-shrink: 0; }

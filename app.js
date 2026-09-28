@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.14.1";
+const APP_VERSION = "3.20.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -50,8 +50,19 @@ async function logToSheet(record) {
 // called after every change (create, edit, status change, follow-up,
 // delete/restore) so the Sheet always reflects the record's current state,
 // with all follow-ups accumulated into one cell rather than one row each.
-function formatFollowUpsForSheet(followUps) {
-  return (followUps || []).map((fu) => `${formatDate(fu.date)}: ${fu.note}`).join("\n");
+// Escalation follow-up notes (one per issue, written when moving it to the
+// next warning stage) accumulated across every issue in the entry, in
+// chronological order — this is what the Sheet's follow-ups column now
+// reflects, replacing the old free-form thread.
+function formatFollowUpsForSheet(issues) {
+  if (!Array.isArray(issues)) return "";
+  const lines = [];
+  issues.forEach((issue) => {
+    (issue.history || []).forEach((h) => {
+      if (h.note) lines.push(`${formatDate(h.at)} (${groomingIssueLabel(issue)} → ${WARNING_STAGE_LABEL[h.stage]}): ${h.note} — ${h.by || ""}`);
+    });
+  });
+  return lines.join("\n");
 }
 function formatScheduleForSheet(days) {
   return (days || []).slice().sort((a, b) => a.date.localeCompare(b.date))
@@ -69,7 +80,7 @@ function syncIncidentToSheet(it) {
     studentName: it.studentName, studentClass: it.studentClass, date: it.date,
     issue: issueSummary, actionTaken: it.actionTaken || "",
     status: (it.deleted ? "Removed — " : "") + statusText,
-    followUpsText: formatFollowUpsForSheet(it.followUps),
+    followUpsText: formatFollowUpsForSheet(it.issues),
     loggedBy: it.loggedBy,
   });
 }
@@ -1143,6 +1154,7 @@ const state = {
   undoToast: null,
   studentViewName: null,
   studentViewClass: null,
+  studentViewYear: null, // year of the specific record that was tapped, so linking starts from the right year
   studentViewFromSection: "dashboard",
   studentViewOpenYears: {}, // past years opened in the student view
   studentLinks: {}, // studentLinks/{id}: confirmed same-student links across years
@@ -1180,9 +1192,19 @@ const state = {
   // tapped, cleared when the menu is dismissed or an action is chosen
   // (choosing one hands off to the existing Yes/No confirmation modal).
   memberActionTarget: null,
-  followDraft: {},
-  editingFollowUpId: null,
-  followEditDraft: {},
+  // Escalating a grooming issue now requires writing a follow-up note first
+  // (item 13's redesign) — this holds which issue is mid-way through that
+  // (its Resolve/Escalate buttons swap for a note input + tick), the
+  // in-progress note text, and whether an empty-note error should show.
+  escalatingIssue: null, // { entryId, issueId } | null
+  escalateNoteDraft: {},
+  escalateNoteError: null, // issueId whose note was empty when confirmed
+  // Editing an already-written escalation note (a completed stage's note,
+  // reached via its pencil icon) — keyed separately from the above so
+  // editing an old note doesn't interfere with escalating the current one.
+  editingEscalationNote: null, // { entryId, issueId, stage } | null
+  escalateNoteEditDraft: {}, // keyed "issueId_stage"
+  escalateNoteEditError: null, // "issueId_stage" key whose edited note was empty
 
   suspensions: [],
   suspLoaded: false,
@@ -1208,6 +1230,7 @@ const state = {
   chartIncludeTimeOut: true,
 
   parentMeetings: [],
+  deletedItems: [], // trash copies of deleted log records — see trashRecord/restoreDeletedItem
   pmLoaded: false,
   pmTab: "All", // 'All' | 'This Week' | 'Upcoming' | 'Completed' | 'Deleted'
   pmQuery: "",
@@ -1230,6 +1253,7 @@ let unsubSuspensions = null;
 let unsubTimeOuts = null;
 let unsubHolidays = null;
 let unsubParentMeetings = null;
+let unsubDeletedItems = null;
 let unsubUsers = null;
 let unsubAdmins = null;
 let unsubAuthorized = null;
@@ -1452,6 +1476,17 @@ function startListening() {
     },
     (err) => { if (!handleRealtimePermissionError(err)) { state.pmLoaded = true; render(); } }
   );
+  // Trash copies of deleted discipline-log records (see trashRecord/
+  // restoreDeletedItem) — kept independent of the live collections and the
+  // rolling backup snapshot, so a delete stays recoverable even after the
+  // 5-second undo toast is gone and even once the backup has rewritten
+  // itself without that record.
+  if (unsubDeletedItems) unsubDeletedItems();
+  unsubDeletedItems = onSnapshot(
+    collection(db, "deletedItems"),
+    (snap) => { state.deletedItems = snap.docs.map((d) => ({ id: d.id, ...d.data() })); render(); },
+    (err) => { console.warn("deletedItems listener failed:", err); state.deletedItems = state.deletedItems || []; }
+  );
   ensureHolidaysSeeded();
   checkAnnualPublicHolidayFetch();
   // Same-student links. Denied until the updated rules are published —
@@ -1562,6 +1597,7 @@ async function syncPublicHolidaysFromDataGovSg() {
 // Only parts whose content actually changed are rewritten. If a write
 // fails, state.backupError shows a warning bar instead of failing silently.
 const BACKUP_CHUNK_BYTES = 700000;
+const TRASH_TYPE_LABEL = { incidents: "Grooming", suspensions: "Suspension", timeOuts: "Time Out", parentMeetings: "Parent Meet" };
 const BACKUP_COLLECTIONS = [
   { key: "incidents", dateField: "date" },
   { key: "suspensions", dateField: "startDate" },
@@ -1715,20 +1751,41 @@ function incidentSummaryLabel(it) {
   return it.issue || "";
 }
 // Resolve one issue within an entry (can happen mid-countdown, any stage).
+// The Resolved button stays visible afterwards in a pressed/selected state,
+// so tapping it again un-resolves — see unresolveGroomingIssue below.
 function resolveGroomingIssue(entryId, issueId) {
   const entry = state.incidents.find((i) => i.id === entryId);
   if (!entry) return;
   const issue = (entry.issues || []).find((x) => x.id === issueId);
   if (!issue) return;
+  const before = JSON.parse(JSON.stringify(entry.issues));
   issue.resolved = true;
   issue.resolvedAt = todayISO();
   issue.history.push({ stage: issue.stage, action: "Resolved", at: todayISO(), by: teacherName() });
-  saveIncidentIssueUpdate(entry);
+  saveIncidentIssueUpdate(entry, before);
+}
+// Tapping the (now pressed) Resolved button again un-resolves the issue,
+// putting it back at its current stage exactly as it was — this is the
+// Resolved button acting as its own undo, so there's no separate Undo
+// control for it.
+function unresolveGroomingIssue(entryId, issueId) {
+  const entry = state.incidents.find((i) => i.id === entryId);
+  if (!entry) return;
+  const issue = (entry.issues || []).find((x) => x.id === issueId);
+  if (!issue || !issue.resolved) return;
+  const before = JSON.parse(JSON.stringify(entry.issues));
+  issue.resolved = false;
+  issue.resolvedAt = null;
+  if (issue.history[issue.history.length - 1]?.action === "Resolved") issue.history.pop();
+  saveIncidentIssueUpdate(entry, before);
 }
 // Escalate one issue to the next warning stage (or, if already at Final,
 // re-issue Final with a fresh deadline — SH/SM keeps calling until it's
-// resolved, there's no stage beyond Final).
-function escalateGroomingIssue(entryId, issueId) {
+// resolved, there's no stage beyond Final). Escalating always carries a
+// follow-up note (required — the UI won't call this without one) explaining
+// what happened at the stage being left; it's stored on the transition
+// entry itself so the now-completed stage can show it read-only.
+function escalateGroomingIssue(entryId, issueId, note) {
   const entry = state.incidents.find((i) => i.id === entryId);
   if (!entry) return;
   const issue = (entry.issues || []).find((x) => x.id === issueId);
@@ -1736,12 +1793,26 @@ function escalateGroomingIssue(entryId, issueId) {
   const cfg = GROOMING_ISSUE_CONFIG[issue.type] || GROOMING_ISSUE_CONFIG.Others;
   const today = todayISO();
   const nextStage = Math.min(issue.stage + 1, 3);
+  const before = JSON.parse(JSON.stringify(entry.issues));
   issue.stage = nextStage;
   issue.deadline = computeGroomingDeadline(cfg, nextStage, today, classLevel(entry.studentClass));
   issue.overriddenBy = null;
   if (cfg.parentFrom <= nextStage) issue.parentContacted = true;
-  issue.history.push({ stage: nextStage, deadline: issue.deadline, action: `${WARNING_STAGE_LABEL[nextStage]} issued`, at: today });
-  saveIncidentIssueUpdate(entry);
+  issue.history.push({ stage: nextStage, deadline: issue.deadline, action: `${WARNING_STAGE_LABEL[nextStage]} issued`, at: today, note: (note || "").trim(), by: teacherName() });
+  saveIncidentIssueUpdate(entry, before);
+}
+// The due date a stage actually had while it was active: the deadline on
+// the last history entry logged for that stage (an override made while at
+// that stage moves this forward, same as it always did for the current one).
+function issueStageDueDate(issue, stage) {
+  const entries = (issue.history || []).filter((h) => h.stage === stage && h.deadline);
+  return entries.length ? entries[entries.length - 1].deadline : null;
+}
+// The follow-up note written when escalating INTO a stage (i.e. explaining
+// why the stage before it was left) — undefined if there isn't one (stage 1
+// was never escalated into, and older entries predate this feature).
+function issueEscalationNote(issue, intoStage) {
+  return (issue.history || []).find((h) => h.stage === intoStage && /Warning issued/.test(h.action) && h.note) || null;
 }
 // A student/parent can propose their own date instead of the computed
 // deadline — this fully replaces it, no limit on how many times.
@@ -1750,25 +1821,47 @@ function overrideGroomingIssueDeadline(entryId, issueId, newDate) {
   if (!entry) return;
   const issue = (entry.issues || []).find((x) => x.id === issueId);
   if (!issue) return;
+  const before = JSON.parse(JSON.stringify(entry.issues));
   issue.deadline = newDate;
   issue.history.push({ stage: issue.stage, deadline: newDate, action: `Deadline moved to ${formatDate(newDate)}`, at: todayISO() });
-  saveIncidentIssueUpdate(entry);
+  saveIncidentIssueUpdate(entry, before);
 }
-// Reverts an issue to the state it was in before its most recent logged
-// action (resolve, escalate, or a deadline change) — in case something
-// was tapped by mistake.
-function undoGroomingIssueAction(entryId, issueId) {
+// Edits the follow-up note written when escalating into a stage (the note
+// shown on that now-completed stage's read-only card) — the stage
+// transition itself (which stage, its deadline) isn't editable, only the
+// note text, and the edit is logged as "Edited by <name>" under the
+// original "Logged by" line.
+function editEscalationNote(entryId, issueId, intoStage, newNote) {
   const entry = state.incidents.find((i) => i.id === entryId);
   if (!entry) return;
   const issue = (entry.issues || []).find((x) => x.id === issueId);
-  if (!issue || issue.history.length < 2) return;
-  issue.history.pop();
-  const prev = issue.history[issue.history.length - 1];
-  issue.stage = prev.stage;
-  issue.deadline = prev.deadline || issue.deadline;
-  issue.resolved = false;
-  issue.resolvedAt = null;
-  saveIncidentIssueUpdate(entry);
+  if (!issue) return;
+  const target = issue.history.find((h) => h.stage === intoStage && /Warning issued/.test(h.action));
+  if (!target) return;
+  const before = JSON.parse(JSON.stringify(entry.issues));
+  target.note = (newNote || "").trim();
+  target.editedAt = Date.now();
+  target.editedBy = teacherName();
+  saveIncidentIssueUpdate(entry, before);
+}
+// Reverses the most recent escalation — reached from the same pencil used
+// to edit that stage's note, not a separate control. Only walks back one
+// step (to the stage right before the current one), and only while the
+// issue isn't resolved; drops the note along with the stage transition
+// itself, restoring the earlier stage's own due date.
+function unescalateGroomingIssue(entryId, issueId) {
+  const entry = state.incidents.find((i) => i.id === entryId);
+  if (!entry) return;
+  const issue = (entry.issues || []).find((x) => x.id === issueId);
+  if (!issue || issue.resolved || issue.stage <= 1) return;
+  const before = JSON.parse(JSON.stringify(entry.issues));
+  const prevStage = issue.stage - 1;
+  for (let i = issue.history.length - 1; i >= 0; i--) {
+    if (issue.history[i].stage === issue.stage && /Warning issued/.test(issue.history[i].action)) { issue.history.splice(i, 1); break; }
+  }
+  issue.stage = prevStage;
+  issue.deadline = issueStageDueDate(issue, prevStage) || issue.deadline;
+  saveIncidentIssueUpdate(entry, before);
 }
 // An entry is only "Resolved" once every issue inside it is resolved.
 function groomingEntryResolved(entry) {
@@ -1809,12 +1902,22 @@ function computeGroomingFollowUpBuckets() {
   Object.values(buckets).forEach((list) => list.sort((a, b) => a.deadline.localeCompare(b.deadline)));
   return buckets;
 }
-async function saveIncidentIssueUpdate(entry) {
+// Resolve/Escalate/override-deadline/undo all mutate `entry.issues` in
+// place, optimistically, before this save even starts — so the card
+// already shows "Resolved", the next stage, etc. If the write then fails,
+// showing the error banner alone isn't enough: without also putting
+// `entry.issues` back the way it was, the card keeps showing the change as
+// if it had gone through, and only a reload would reveal it never saved.
+// `issuesBefore` is that pre-mutation snapshot, restored on failure.
+async function saveIncidentIssueUpdate(entry, issuesBefore) {
   state.saving = true; render();
   try {
     await updateDoc(doc(db, "incidents", entry.id), { issues: entry.issues });
     syncIncidentToSheet(entry);
-  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  } catch (err) {
+    state.saveError = true; state.saveErrorDetail = err?.message || String(err);
+    if (issuesBefore) entry.issues = issuesBefore;
+  }
   finally { state.saving = false; render(); }
 }
 function findRelatedRecords(studentName) {
@@ -1849,7 +1952,7 @@ async function createIncidentDocForStudent(name, studentClass, date, selectedIss
     loggedBy: teacherName(), loggedByUid: auth.currentUser?.uid || null, createdAt: now,
     history: [{ id: uid(), type: "created", detail: `Entry created — ${issueSummary}`, by: teacherName(), at: now }],
   });
-  syncIncidentToSheet({ id: docRef.id, studentName: name, studentClass, date, issue: issueSummary, actionTaken: "", status: "Monitoring", followUps: [], loggedBy: teacherName(), deleted: false });
+  syncIncidentToSheet({ id: docRef.id, studentName: name, studentClass, date, issue: issueSummary, actionTaken: "", status: "Monitoring", loggedBy: teacherName(), deleted: false });
   return { docRef, issueSummary };
 }
 async function submitNewIncident() {
@@ -1925,10 +2028,18 @@ async function submitNewIncident() {
         } catch (err) { /* non-fatal */ }
       }
       // Same issue(s), no auto-linking, for every additional student in
-      // the batch — one bad row shouldn't block the rest.
+      // the batch — one bad row shouldn't block the rest, but a row that
+      // fails needs to be SEEN failing rather than silently dropped, since
+      // the teacher has no other way to notice that student never got an
+      // entry.
+      const failedExtraStudents = [];
       for (const s of extraStudents) {
         try { await createIncidentDocForStudent(s.name, s.studentClass, date, selectedIssues, d.othersText, Date.now()); }
-        catch (err) { /* non-fatal */ }
+        catch (err) { failedExtraStudents.push(s.name); }
+      }
+      if (failedExtraStudents.length) {
+        state.saveError = true;
+        state.saveErrorDetail = `Saved for ${studentName}, but couldn't save for ${failedExtraStudents.join(", ")} — log ${failedExtraStudents.length === 1 ? "them" : "those"} separately.`;
       }
       state.showNewForm = false;
       state._newIncidentDraft = null;
@@ -1952,66 +2063,65 @@ async function submitNewIncident() {
   }
   await doSave();
 }
-async function addFollowUp(id) {
-  const note = (state.followDraft[id] || "").trim();
-  if (!note) return;
-  const now = Date.now();
-  const it = state.incidents.find((i) => i.id === id);
-  const newFu = { id: uid(), date: todayISO(), note, by: teacherName() };
-  try {
-    await updateDoc(doc(db, "incidents", id), {
-      followUps: arrayUnion(newFu),
-      history: arrayUnion({ id: uid(), type: "followup", detail: `Follow-up added: "${note}"`, by: teacherName(), at: now }),
-    });
-    state.followDraft[id] = "";
-    if (it) syncIncidentToSheet({ ...it, followUps: [...(it.followUps || []), newFu] });
-    render();
-  } catch (err) { state.saveError = true; render(); }
-}
-function openEditFollowUp(incidentId, followUpId) {
-  const it = state.incidents.find((i) => i.id === incidentId);
-  const fu = it?.followUps?.find((f) => f.id === followUpId);
-  if (!fu) return;
-  state.editingFollowUpId = followUpId;
-  state.followEditDraft = { [followUpId]: fu.note };
+// Tapping Escalate no longer escalates immediately — it toggles into a
+// "selected" state that swaps that issue's Escalate button + Resolved
+// button for a note input + tick, so the follow-up note is captured as
+// part of the escalation itself (item 13). Tapping the (now selected)
+// Escalate button again backs out, discarding the draft note — this is the
+// button acting as its own cancel, so there's no separate Cancel control.
+function startEscalateIssue(entryId, issueId) {
+  if (state.escalatingIssue && state.escalatingIssue.issueId === issueId) {
+    delete state.escalateNoteDraft[issueId];
+    state.escalatingIssue = null;
+    state.escalateNoteError = null;
+  } else {
+    state.escalatingIssue = { entryId, issueId };
+    state.escalateNoteError = null;
+  }
   render();
 }
-function cancelEditFollowUp() {
-  state.editingFollowUpId = null;
+function confirmEscalateIssue() {
+  const target = state.escalatingIssue;
+  if (!target) return;
+  const note = (state.escalateNoteDraft[target.issueId] || "").trim();
+  if (!note) { state.escalateNoteError = target.issueId; render(); return; }
+  escalateGroomingIssue(target.entryId, target.issueId, note);
+  delete state.escalateNoteDraft[target.issueId];
+  state.escalatingIssue = null;
+  state.escalateNoteError = null;
   render();
 }
-async function submitEditFollowUp(incidentId, followUpId) {
-  const it = state.incidents.find((i) => i.id === incidentId);
-  const fu = it?.followUps?.find((f) => f.id === followUpId);
-  if (!it || !fu) return;
-  const newNote = (state.followEditDraft[followUpId] || "").trim();
-  if (!newNote) return;
-  if (newNote === fu.note) { state.editingFollowUpId = null; render(); return; }
-  const updatedFollowUps = it.followUps.map((f) => f.id === followUpId ? { ...f, note: newNote, editedAt: Date.now(), editedBy: teacherName() } : f);
-  const now = Date.now();
-  try {
-    await updateDoc(doc(db, "incidents", incidentId), {
-      followUps: updatedFollowUps,
-      history: arrayUnion({ id: uid(), type: "followup-edited", detail: `Follow-up edited — changed from "${fu.note}" to "${newNote}"`, by: teacherName(), at: now }),
-    });
-    syncIncidentToSheet({ ...it, followUps: updatedFollowUps });
-    state.editingFollowUpId = null;
-  } catch (err) { state.saveError = true; } finally { render(); }
+// Editing a completed stage's follow-up note — its own small note-input +
+// tick flow, separate from the escalating-issue state above (a teacher
+// could in principle be escalating the current stage while also fixing a
+// typo in an older stage's note).
+function startEditEscalationNote(entryId, issueId, stage, currentNote) {
+  state.editingEscalationNote = { entryId, issueId, stage };
+  state.escalateNoteEditDraft[`${issueId}_${stage}`] = currentNote || "";
+  state.escalateNoteEditError = null;
+  render();
 }
-async function deleteFollowUp(incidentId, followUpId) {
-  const it = state.incidents.find((i) => i.id === incidentId);
-  const fu = it?.followUps?.find((f) => f.id === followUpId);
-  if (!it || !fu) return;
-  if (!confirm(`Remove this follow-up note?\n\n"${fu.note}"`)) return;
-  const updatedFollowUps = it.followUps.filter((f) => f.id !== followUpId);
-  const now = Date.now();
-  try {
-    await updateDoc(doc(db, "incidents", incidentId), {
-      followUps: updatedFollowUps,
-      history: arrayUnion({ id: uid(), type: "followup-removed", detail: `Follow-up removed — "${fu.note}"`, by: teacherName(), at: now }),
-    });
-    syncIncidentToSheet({ ...it, followUps: updatedFollowUps });
-  } catch (err) { state.saveError = true; } finally { render(); }
+function cancelEditEscalationNote() {
+  state.editingEscalationNote = null;
+  state.escalateNoteEditError = null;
+  render();
+}
+function confirmEditEscalationNote() {
+  const target = state.editingEscalationNote;
+  if (!target) return;
+  const key = `${target.issueId}_${target.stage}`;
+  const note = (state.escalateNoteEditDraft[key] || "").trim();
+  if (!note) { state.escalateNoteEditError = key; render(); return; }
+  editEscalationNote(target.entryId, target.issueId, target.stage, note);
+  state.editingEscalationNote = null;
+  state.escalateNoteEditError = null;
+  render();
+}
+function unescalateIssueFromEdit(entryId, issueId) {
+  unescalateGroomingIssue(entryId, issueId);
+  state.editingEscalationNote = null;
+  state.escalateNoteEditError = null;
+  render();
 }
 // After a permanent delete, briefly offer to undo it — this captures the
 // full document data right before deletion so "undo" can recreate the
@@ -2045,13 +2155,70 @@ async function undoLastDelete() {
     else if (t.collectionName === "suspensions") syncSuspensionToSheet(restored);
     else if (t.collectionName === "timeOuts") syncTimeOutToSheet(restored);
     else if (t.collectionName === "parentMeetings") syncParentMeetingToSheet(restored);
+    // The trash copy (see trashRecord) is now stale — mark it restored so
+    // "Recently Deleted" doesn't also offer to restore something that's
+    // already back.
+    markTrashRestored(t.collectionName, t.id).catch(() => {});
   }
   catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  render();
+}
+// Writes a full copy of a record to the deletedItems trash collection just
+// before it's deleted. This is independent of both the 5-second undo toast
+// (in-memory, gone on reload) and the rolling backup snapshot (rewritten
+// from live data ~1.5s after any change, so a deleted record drops out of
+// it immediately) — it's the only copy that survives past those two.
+async function trashRecord(collectionName, id, entry) {
+  const { id: _drop, ...data } = entry;
+  try {
+    await setDoc(doc(db, "deletedItems", `${collectionName}_${id}`), {
+      collectionName, docId: id, data,
+      deletedAt: Date.now(), deletedBy: teacherName(),
+      restoredAt: null,
+    });
+  } catch (e) {
+    // deletedItems is a new collection — until firestore.rules is
+    // republished, writes to it are denied. Deleting must still work as
+    // it always has rather than being blocked on that redeploy, so this
+    // failure is swallowed (not re-thrown): the record just won't be
+    // recoverable from Settings → Recently Deleted until the rules land.
+    console.warn("trashRecord failed (firestore.rules for deletedItems not yet published?):", e);
+  }
+}
+// Marks a trash copy restored (rather than deleting it — Firestore rules
+// only let Admins/Owner delete deletedItems docs) once its record is back
+// in its live collection, whether that happened via the 5-second undo
+// toast or via "Recently Deleted" itself.
+async function markTrashRestored(collectionName, id) {
+  await updateDoc(doc(db, "deletedItems", `${collectionName}_${id}`), {
+    restoredAt: Date.now(), restoredBy: teacherName(),
+  });
+}
+// Restores a record from Settings → Recently Deleted, any time after the
+// 5-second undo toast has gone — recreates the original document (with its
+// original id, so anything that still refers to it keeps working) and
+// marks the trash copy restored.
+async function restoreDeletedItem(trashId) {
+  const item = (state.deletedItems || []).find((d) => d.id === trashId);
+  if (!item || item.restoredAt) return;
+  state.trashRestoringId = trashId;
+  render();
+  try {
+    await setDoc(doc(db, item.collectionName, item.docId), item.data);
+    await markTrashRestored(item.collectionName, item.docId);
+    const restored = { ...item.data, id: item.docId, deleted: false };
+    if (item.collectionName === "incidents") syncIncidentToSheet(restored);
+    else if (item.collectionName === "suspensions") syncSuspensionToSheet(restored);
+    else if (item.collectionName === "timeOuts") syncTimeOutToSheet(restored);
+    else if (item.collectionName === "parentMeetings") syncParentMeetingToSheet(restored);
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  state.trashRestoringId = null;
   render();
 }
 async function deleteIncident(id) {
   const entry = state.incidents.find((i) => i.id === id);
   try {
+    if (entry) await trashRecord("incidents", id, entry);
     await deleteDoc(doc(db, "incidents", id));
     if (entry) {
       const { id: _drop, ...data } = entry;
@@ -2242,6 +2409,24 @@ function locationOccupancyForDate(dateISO, excludeSuspensionId) {
     return { location: loc, occupants: occupants[loc], capacity, remaining: capacity - occupants[loc].length };
   });
 }
+// Re-checks every in-school day's booked location still has room, the same
+// way a tagged Parent Meet's room/time is re-checked at save (slotError) —
+// the picker only guards against picking a full room at the moment it's
+// picked, so a room filled by someone else afterwards, or a form left open
+// for a while, went to save unchecked. `excludeSuspensionId` is this
+// suspension's own id when editing (so its own existing days don't
+// self-block), or null for a new one.
+function issRoomBookingError(issDates, issVenues, excludeSuspensionId) {
+  for (const dt of issDates) {
+    const venue = issVenues[dt];
+    if (!venue) continue;
+    const row = locationOccupancyForDate(dt, excludeSuspensionId).find((o) => o.location === venue);
+    if (row && row.remaining <= 0) {
+      return `${venue} is now full on ${formatDate(dt)} (booked by ${row.occupants.join(", ")}) — pick another location or day.`;
+    }
+  }
+  return "";
+}
 
 async function submitNewSuspension(e) {
   e.preventDefault();
@@ -2262,6 +2447,12 @@ async function submitNewSuspension(e) {
   }
   if (!d.issDates.every((dt) => d.issVenues[dt])) {
     state.suspFormError = `Book a location for all ${d.issDays} in-school day${d.issDays === 1 ? "" : "s"} before saving (${d.issDates.filter((dt) => d.issVenues[dt]).length} booked so far).`;
+    render();
+    return;
+  }
+  const issRoomErr = issRoomBookingError(d.issDates, d.issVenues, null);
+  if (issRoomErr) {
+    state.suspFormError = issRoomErr;
     render();
     return;
   }
@@ -2290,6 +2481,16 @@ async function submitNewSuspension(e) {
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
 
   const doSave = async () => {
+    // A duplicate-booking confirm dialog can sit open for a while before the
+    // teacher answers it, so the room/slot check done above (right after
+    // typing) can be stale by the time this actually runs. Re-check against
+    // the latest bookings right before saving, not just before the prompt.
+    const finalIssErr = issRoomBookingError(d.issDates, d.issVenues, null);
+    if (finalIssErr) { state.saveError = true; state.saveErrorDetail = finalIssErr; render(); return; }
+    if (d.tagPm) {
+      const finalPmErr = slotError("susp-pm", true);
+      if (finalPmErr) { state.saveError = true; state.saveErrorDetail = finalPmErr; render(); return; }
+    }
     state.saveError = false;
     state.saving = true;
     render();
@@ -2314,7 +2515,15 @@ async function submitNewSuspension(e) {
           });
           await updateDoc(doc(db, "suspensions", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
           syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, time: d.pmTime, endTime: d.pmEndTime, location: d.pmLocation, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
-        } catch (err) { /* non-fatal — suspension already saved */ }
+        } catch (err) {
+          // The suspension itself is already saved, so this doesn't roll
+          // that back or re-throw — but silently swallowing it left the
+          // teacher believing the tagged meeting was logged when it
+          // wasn't. Surface it as a save error (shown once the form below
+          // closes) so they know to log the parent meeting separately.
+          state.saveError = true;
+          state.saveErrorDetail = `Suspension saved, but the tagged parent meeting couldn't be saved — log it separately. (${err?.message || String(err)})`;
+        }
       }
       state.showNewSuspForm = false;
       state._suspDraft = null;
@@ -2332,6 +2541,7 @@ async function submitNewSuspension(e) {
 async function deleteSuspension(id) {
   const entry = state.suspensions.find((i) => i.id === id);
   try {
+    if (entry) await trashRecord("suspensions", id, entry);
     await deleteDoc(doc(db, "suspensions", id));
     if (entry) {
       const { id: _drop, ...data } = entry;
@@ -2385,6 +2595,12 @@ async function submitEditSuspension(e) {
     render();
     return;
   }
+  const issRoomErr = issRoomBookingError(d.issDates, d.issVenues, id);
+  if (issRoomErr) {
+    state.suspFormError = issRoomErr;
+    render();
+    return;
+  }
   state.suspFormError = "";
   const ossEntries = d.ossDates.map((date) => ({ date, type: "OSS" }));
   const issEntries = d.issDates.map((date) => ({
@@ -2403,6 +2619,11 @@ async function submitEditSuspension(e) {
   if (changes.length === 0) { state.editingSuspensionId = null; state._suspDraft = null; render(); return; }
 
   const doSave = async () => {
+    // Re-check the booked room(s) right before saving — a duplicate-booking
+    // prompt (below) can sit open for a while before it's answered, and the
+    // check done above can be stale by then.
+    const finalIssErr = issRoomBookingError(d.issDates, d.issVenues, id);
+    if (finalIssErr) { state.saveError = true; state.saveErrorDetail = finalIssErr; render(); return; }
     const now = Date.now();
     state.saveError = false;
     state.saving = true;
@@ -2415,7 +2636,7 @@ async function submitEditSuspension(e) {
       syncSuspensionToSheet({ ...s, ...updated });
       state.editingSuspensionId = null;
       state._suspDraft = null;
-    } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
 
   // Only worth flagging when the edit actually moves who/when this
@@ -2514,6 +2735,13 @@ async function submitNewTimeOut(e) {
   const days = [...ossEntries, ...issEntries].sort((a, b) => a.date.localeCompare(b.date));
 
   const doSave = async () => {
+    // Same reasoning as Suspension: the duplicate-booking prompt below can
+    // be left open a while, so re-check the tagged meeting's room right
+    // before saving rather than trusting the earlier check.
+    if (d.tagPm) {
+      const finalPmErr = slotError("to-pm", true);
+      if (finalPmErr) { state.saveError = true; state.saveErrorDetail = finalPmErr; render(); return; }
+    }
     state.saveError = false;
     state.saving = true;
     render();
@@ -2538,7 +2766,13 @@ async function submitNewTimeOut(e) {
           });
           await updateDoc(doc(db, "timeOuts", docRef.id), { linkedPmIds: arrayUnion(pmRef.id) });
           syncParentMeetingToSheet({ id: pmRef.id, studentName, studentClass, date: d.startDate, time: d.pmTime, endTime: d.pmEndTime, location: d.pmLocation, attendees: d.pmAttendees, othersText: d.pmOthersText || "", reason: pmReasonData.reason, loggedBy: teacherName(), deleted: false });
-        } catch (err) { /* non-fatal — time out already saved */ }
+        } catch (err) {
+          // The time out itself is already saved — this doesn't roll that
+          // back — but silently swallowing it left the teacher believing
+          // the tagged meeting was logged when it wasn't.
+          state.saveError = true;
+          state.saveErrorDetail = `Time out saved, but the tagged parent meeting couldn't be saved — log it separately. (${err?.message || String(err)})`;
+        }
       }
       state.showNewToForm = false;
       state._toDraft = null;
@@ -2556,6 +2790,7 @@ async function submitNewTimeOut(e) {
 async function deleteTimeOut(id) {
   const entry = state.timeOuts.find((i) => i.id === id);
   try {
+    if (entry) await trashRecord("timeOuts", id, entry);
     await deleteDoc(doc(db, "timeOuts", id));
     if (entry) {
       const { id: _drop, ...data } = entry;
@@ -2646,7 +2881,7 @@ async function submitEditTimeOut(e) {
       syncTimeOutToSheet({ ...t, ...updated });
       state.editingTimeOutId = null;
       state._toDraft = null;
-    } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
 
   const identityChanged = studentName !== t.studentName || studentClass !== t.studentClass || oldDaysKey !== newDaysKey;
@@ -2706,6 +2941,11 @@ async function submitNewParentMeeting(e) {
   state.pmFormError = "";
 
   const doSave = async () => {
+    // The duplicate-meeting prompt below can sit open for a while before
+    // it's answered, so re-check the room/slot right before saving — the
+    // check done above (right after typing) can be stale by then.
+    const finalSlotErr = pmStatus === "Scheduled" ? slotError("pm", true) : postponedTo ? postponedDraftError(dd, null) : "";
+    if (finalSlotErr) { state.saveError = true; state.saveErrorDetail = finalSlotErr; render(); return; }
     state.saveError = false;
     state.saving = true;
     render();
@@ -2800,6 +3040,11 @@ async function submitEditParentMeeting(e) {
   if (changes.length === 0) { state.editingPmId = null; state._pmDraft = null; render(); return; }
 
   const doSave = async () => {
+    // Same reasoning as the other logs: the duplicate-meeting prompt below
+    // can sit open a while, so re-check the room/slot right before saving.
+    const finalSlotErr = updated.pmStatus === "Scheduled" ? slotError("pm", updated.date >= todayISO())
+      : updated.postponedTo ? postponedDraftError(dd, id) : "";
+    if (finalSlotErr) { state.saveError = true; state.saveErrorDetail = finalSlotErr; render(); return; }
     const now = Date.now();
     state.saveError = false;
     state.saving = true;
@@ -2812,7 +3057,7 @@ async function submitEditParentMeeting(e) {
       syncParentMeetingToSheet({ ...m, ...updated });
       state.editingPmId = null;
       state._pmDraft = null;
-    } catch (err) { state.saveError = true; } finally { state.saving = false; render(); }
+    } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); } finally { state.saving = false; render(); }
   };
 
   // Only worth flagging when the edit actually moves who/when this
@@ -3180,6 +3425,7 @@ function handlePostponePickerTap(e) {
 async function deleteParentMeeting(id) {
   const entry = state.parentMeetings.find((i) => i.id === id);
   try {
+    if (entry) await trashRecord("parentMeetings", id, entry);
     await deleteDoc(doc(db, "parentMeetings", id));
     if (entry) {
       const { id: _drop, ...data } = entry;
@@ -4556,7 +4802,7 @@ function renderSettingsSection() {
       ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
       <button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : `Save for ${year}`}</button>`;
   } else if (state.settingsView === "holidays") {
-    const year = new Date().getFullYear();
+    const year = state.holidaySettingsYear || new Date().getFullYear();
     const moe = computeMoeCalendar(year);
     const phEntries = (state.holidays?.publicHolidayEntries || []).filter((e) => e.startDate.startsWith(String(year))).sort((a, b) => a.startDate.localeCompare(b.startDate));
     const closureEntries = (state.schoolClosureDays?.entries || [])
@@ -4584,6 +4830,12 @@ function renderSettingsSection() {
     body = `
       ${backBtn("Settings", "settings-back-to-menu")}
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Setting Holidays/School Closure/HBL Days</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:6px">
+        <button type="button" class="dd-circle-btn" data-action="holidays-prev-year" title="Previous year" aria-label="Previous year">‹</button>
+        <div class="dd-sans" style="font-size:16px;font-weight:600;min-width:48px;text-align:center">${year}</div>
+        <button type="button" class="dd-circle-btn" data-action="holidays-next-year" title="Next year" aria-label="Next year">›</button>
+      </div>
+      ${year !== new Date().getFullYear() ? `<div class="dd-mono-muted" style="font-size:12px;text-align:center;margin-bottom:8px">Viewing ${year} — everything below (and anything you add) applies to that year.</div>` : ""}
 
       ${sectionHead("Public Holidays", "open-add-public-holiday")}
       ${phEntries.length === 0 ? `<div class="dd-dash-empty">None added yet.</div>` : phEntries.map((e) => listRow(
@@ -4686,6 +4938,30 @@ function renderSettingsSection() {
       </div>` : ""}
       ${ownerWasTransferred ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:10px">${escapeHtml(OWNER_EMAIL)} remains a permanent fallback and can always regain access if needed — it can only be changed by editing the app's code.</div>` : ""}
       ${state.accessFormError ? `<div class="dd-error" style="margin-top:14px;padding:10px 12px;border:1px solid #A3372B;border-radius:6px;background:#A3372B11" id="access-form-error">${escapeHtml(state.accessFormError)}</div>` : ""}`;
+  } else if (state.settingsView === "trash") {
+    const items = (state.deletedItems || []).slice().sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+    const row = (it) => {
+      const label = TRASH_TYPE_LABEL[it.collectionName] || it.collectionName;
+      const who = it.data?.studentName || "Unknown student";
+      const cls = it.data?.studentClass ? `, ${it.data.studentClass}` : "";
+      const when = it.deletedAt ? new Date(it.deletedAt).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
+      const restoring = state.trashRestoringId === it.id;
+      return `
+      <div class="dd-contact-row">
+        <div class="dd-contact-body">
+          <div class="dd-contact-name">${escapeHtml(who)}${cls} — ${escapeHtml(label)}</div>
+          <div class="dd-contact-sub">${it.restoredAt ? `Restored ${escapeHtml(new Date(it.restoredAt).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))}` : `Deleted ${escapeHtml(when)}${it.deletedBy ? ` by ${escapeHtml(it.deletedBy)}` : ""}`}</div>
+        </div>
+        ${it.restoredAt ? "" : `<button type="button" class="dd-back-link" data-action="restore-deleted-item" data-id="${it.id}" ${restoring ? "disabled" : ""} style="white-space:nowrap">${restoring ? "Restoring…" : "Restore"}</button>`}
+      </div>`;
+    };
+    body = `
+      ${backBtn("Settings", "settings-back-to-menu")}
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Recently Deleted</div>
+      ${items.length === 0
+        ? `<div class="dd-mono-muted" style="font-size:13px">Nothing's been deleted yet.</div>`
+        : `<div class="dd-contact-list">${items.map(row).join("")}</div>`}
+      ${state.saveError ? `<div class="dd-error" style="margin-top:14px;padding:10px 12px;border:1px solid #A3372B;border-radius:6px;background:#A3372B11">${escapeHtml(state.saveErrorDetail || "Couldn't restore that entry.")}</div>` : ""}`;
   } else {
     const year = new Date().getFullYear();
     const needsReview = !state.classConfig?.classesByYear?.[String(year)];
@@ -4699,6 +4975,7 @@ function renderSettingsSection() {
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
         ${menuRow("Authorised Teachers List", "settings-open-access")}
         ${menuRow("Student Links", "settings-open-links")}
+        ${menuRow("Recently Deleted", "settings-open-trash")}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -5316,7 +5593,7 @@ function renderPendingPmDates() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         ${list.map((m) => `
         <div class="dd-followup-row-item dd-pending-pm-row">
-          <span class="dd-sans dd-card-student-link" style="font-size:14px;font-weight:600" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(truncateName(m.studentName))}</span>
+          <span class="dd-sans dd-card-student-link" style="font-size:14px;font-weight:600" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}" data-year="${(m.date || "").slice(0, 4)}">${escapeHtml(truncateName(m.studentName))}</span>
           ${m.studentClass ? `<div class="dd-mono-muted" style="font-size:11px;margin-top:1px">${escapeHtml(m.studentClass)}</div>` : ""}
           <div class="dd-pending-pm-grid">
             <div class="dd-field-label">Original meeting</div>
@@ -5446,7 +5723,7 @@ function renderDashboardSection() {
               if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
               return `
               <div style="border-bottom:1px solid #E4E1D4;padding-bottom:8px">
-                <div class="dd-sans dd-card-student-link" style="font-size:14px" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
+                <div class="dd-sans dd-card-student-link" style="font-size:14px" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}" data-year="${new Date().getFullYear()}">${escapeHtml(truncateName(t.name))}${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}</div>
                 ${stats.map((s) => `<div class="dd-mono-muted" style="font-size:12px;margin-top:2px">${s}</div>`).join("")}
               </div>`;
             }).join("")}
@@ -5647,10 +5924,18 @@ function pendingLinkQuestion(year, name, cls, all = allStudentRecords()) {
 // plus any confirmed class change), then earlier years only along confirmed
 // links. Also returns the next unanswered question and the answers given
 // (for undo).
-function studentRecordsByYear(name, cls) {
+function studentRecordsByYear(name, cls, yearHint) {
   const all = allStudentRecords();
-  const exactYears = all.filter((x) => studentKey(x.r.studentName, x.r.studentClass) === studentKey(name, cls)).map((x) => x.year);
-  let id = { year: exactYears.length ? Math.max(...exactYears) : new Date().getFullYear(), name, cls };
+  // The record that was tapped already knows its own year — use that so a
+  // common name reused in the same class label in a later, unrelated year
+  // doesn't get pulled into this student's identity. Only guess (via the
+  // newest exact name+class match) when no year was passed in.
+  let startYear = yearHint;
+  if (!startYear) {
+    const exactYears = all.filter((x) => studentKey(x.r.studentName, x.r.studentClass) === studentKey(name, cls)).map((x) => x.year);
+    startYear = exactYears.length ? Math.max(...exactYears) : new Date().getFullYear();
+  }
+  let id = { year: startYear, name, cls };
   const byYear = new Map();
   const classesByYear = new Map();
   const addGroup = (y, n, c) => {
@@ -5754,7 +6039,7 @@ function renderStudentLinksSettings() {
     return `
         <div class="dd-link-row">
           <div class="dd-link-row-top">
-            <span class="dd-card-student-link dd-link-row-name" data-action="view-student" data-name="${escapeHtml(d.name)}" data-class="${escapeHtml(viewCls || "")}">${escapeHtml(d.name)}</span>
+            <span class="dd-card-student-link dd-link-row-name" data-action="view-student" data-name="${escapeHtml(d.name)}" data-class="${escapeHtml(viewCls || "")}" data-year="${d.year || ""}">${escapeHtml(d.name)}</span>
             ${canEdit ? `
             <span class="dd-link-row-icons">
               <button type="button" class="dd-link-icon" data-link-change="${escapeHtml(id)}" title="Change answer" aria-label="Change answer">${ICON_PENCIL}</button>
@@ -5885,7 +6170,7 @@ function renderLinkPromptModal() {
 function renderStudentView() {
   const name = state.studentViewName || "";
   const cls = state.studentViewClass || "";
-  const { byYear, classesByYear, question, answered } = studentRecordsByYear(name, cls);
+  const { byYear, classesByYear, question, answered } = studentRecordsByYear(name, cls, state.studentViewYear);
   const thisYear = new Date().getFullYear();
   const empty = { grooming: [], susp: [], to: [], pm: [] };
   const cur = byYear.get(thisYear) || empty;
@@ -5957,7 +6242,6 @@ function renderIncidentDetail(it) {
   const resolved = isLegacy ? it.status === "Resolved" : groomingEntryResolved(it);
   const dotColor = resolved ? STATUS_DOT.completed : STATUS_DOT.ongoing;
   const summaryLabel = isLegacy ? (it.issue || "") : issues.map((x) => groomingIssueLabel(x)).join(", ");
-  const followUps = it.followUps || [];
   const history = it.history || [];
   const linkedSusp = (it.linkedSuspensionIds || []).map((id) => state.suspensions.find((x) => x.id === id)).filter(Boolean);
   const linkedTo = (it.linkedTimeOutIds || []).map((id) => state.timeOuts.find((x) => x.id === id)).filter(Boolean);
@@ -5968,7 +6252,7 @@ function renderIncidentDetail(it) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(it.studentName)}" data-class="${escapeHtml(it.studentClass || "")}">${escapeHtml(it.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(it.studentName)}" data-class="${escapeHtml(it.studentClass || "")}" data-year="${(it.date || "").slice(0, 4)}">${escapeHtml(it.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${formatDate(it.date)}${it.studentClass ? ` · ${escapeHtml(it.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(it.loggedBy)}</div>
           ${isLegacy ? `<div class="dd-card-summary-issue">${escapeHtml(summaryLabel)} (legacy entry)</div>` : ""}
@@ -5993,8 +6277,52 @@ function renderIncidentDetail(it) {
         ${issues.map((issue) => {
           const cfg = GROOMING_ISSUE_CONFIG[issue.type] || GROOMING_ISSUE_CONFIG.Others;
           const overdue = !issue.resolved && issue.deadline < today;
-          const canUndo = issue.history.length > 1;
-          return `
+          const isEscalating = state.escalatingIssue && state.escalatingIssue.issueId === issue.id;
+          // Every stage this issue has already passed through (escalated
+          // past) gets its own read-only card, oldest first, showing the
+          // due date it had and the follow-up note that was written to
+          // move it on — stacked above the current/active card below. Each
+          // note has its own pencil to fix a typo later; the stage
+          // transition itself isn't editable, only the note text.
+          const completedCards = [];
+          for (let s = 1; s < issue.stage; s++) {
+            const dueThen = issueStageDueDate(issue, s);
+            const noteEntry = issueEscalationNote(issue, s + 1);
+            const editKey = `${issue.id}_${s + 1}`;
+            const isEditingNote = state.editingEscalationNote && state.editingEscalationNote.issueId === issue.id && state.editingEscalationNote.stage === s + 1;
+            // Only the most recently completed stage can be walked back —
+            // reaching it through the same pencil used to fix the note,
+            // rather than a separate control, since editing this note IS
+            // the only reason to open this stage back up.
+            const canUnescalate = (s + 1 === issue.stage) && !issue.resolved;
+            completedCards.push(`
+            <div class="dd-issue-card dd-issue-card-completed">
+              <div class="dd-issue-card-head">
+                <div class="dd-issue-card-label">${escapeHtml(groomingIssueLabel(issue))}</div>
+                <span class="dd-issue-stage-badge">${WARNING_STAGE_LABEL[s]}</span>
+              </div>
+              ${dueThen ? `<div class="dd-mono-muted" style="font-size:12px">Due ${formatDate(dueThen)}</div>` : ""}
+              ${noteEntry ? (isEditingNote ? `
+              <div class="dd-followup-form" style="margin-top:6px">
+                <input class="dd-input" data-action="escalate-note-edit-input" data-key="${editKey}" value="${escapeHtml(state.escalateNoteEditDraft[editKey] ?? noteEntry.note)}" />
+                <button class="dd-add-btn" data-action="confirm-escalation-note-edit" title="Save">✓</button>
+              </div>
+              ${state.escalateNoteEditError === editKey ? `<div class="dd-error" style="margin-top:2px">The note can't be empty.</div>` : ""}
+              <button class="dd-back-link" style="margin-top:6px" data-action="cancel-escalation-note-edit">Cancel</button>
+              ${canUnescalate ? `<button class="dd-back-link" style="margin-top:6px;margin-left:12px;color:#A3372B" data-action="unescalate-issue" data-id="${it.id}" data-issue="${issue.id}">Unescalate — back to ${WARNING_STAGE_LABEL[s]}</button>` : ""}
+              ` : `
+              <div style="display:flex;align-items:flex-start;gap:6px;margin-top:6px">
+                <div style="flex:1;min-width:0">
+                  <div class="dd-followup-note">${escapeHtml(noteEntry.note)}</div>
+                  <div class="dd-followup-meta">Logged by ${escapeHtml(noteEntry.by || "")} · ${formatDate(noteEntry.at)}</div>
+                  ${noteEntry.editedAt ? `<div class="dd-followup-meta">Edited by ${escapeHtml(noteEntry.editedBy || "")} · ${formatDateTime(noteEntry.editedAt)}</div>` : ""}
+                </div>
+                <button class="dd-followup-icon-btn" data-action="edit-escalation-note" data-id="${it.id}" data-issue="${issue.id}" data-stage="${s + 1}" data-note="${escapeHtml(noteEntry.note)}" title="Edit this note">✎</button>
+              </div>
+              `) : ""}
+            </div>`);
+          }
+          return completedCards.join("") + `
           <div class="dd-issue-card">
             <div class="dd-issue-card-head">
               <div class="dd-issue-card-label">${escapeHtml(groomingIssueLabel(issue))}</div>
@@ -6028,46 +6356,24 @@ function renderIncidentDetail(it) {
             ${cfg.note ? `<div class="dd-issue-instruction">${escapeHtml(cfg.note)}</div>` : ""}
             <div style="display:flex;gap:6px;margin-top:8px">
               <button class="dd-add-btn" style="flex:1" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
-              ${issue.stage < 3 ? `<button class="dd-add-btn" style="flex:1;background:#A3372B" data-action="escalate-issue" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
+              ${issue.stage < 3 ? `<button class="dd-add-btn${isEscalating ? " dd-issue-btn-selected" : ""}" style="flex:1;background:#A3372B" data-action="start-escalate" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
             </div>
-            ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
+            ${isEscalating ? `
+            <div class="dd-followup-form" style="margin-top:8px">
+              <input class="dd-input" data-action="escalate-note-input" data-issue="${issue.id}" placeholder="What's the follow-up so far? (required)" value="${escapeHtml(state.escalateNoteDraft[issue.id] || "")}" />
+              <button class="dd-add-btn" data-action="confirm-escalate" title="Confirm and escalate">✓</button>
+            </div>
+            ${state.escalateNoteError === issue.id ? `<div class="dd-error" style="margin-top:2px">Enter a follow-up note before escalating.</div>` : ""}
+            ` : ""}
             ` : `
-            <div class="dd-mono-muted" style="font-size:11px;margin-top:2px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
-            ${canUndo ? `<button class="dd-back-link" style="margin-top:6px" data-action="undo-issue-action" data-id="${it.id}" data-issue="${issue.id}">↺ Undo</button>` : ""}
+            <div style="margin-top:8px">
+              <button class="dd-add-btn dd-issue-btn-selected" data-action="unresolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
+            </div>
+            <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">Resolved ${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</div>
             `}
           </div>`;
         }).join("")}
       </div>`}
-      <div class="dd-mono-muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px">Follow-up thread</div>
-      <div class="dd-followups">
-        ${followUps.length === 0 ? `<div class="dd-sans" style="font-size:14px;color:#8A8571">No follow-ups logged yet.</div>` : followUps.map((fu) => {
-          if (state.editingFollowUpId === fu.id) {
-            return `<div class="dd-followup">
-              <div class="dd-followup-edit-row">
-                <input class="dd-input dd-followup-edit-input" data-incident="${it.id}" data-fu="${fu.id}" value="${escapeHtml(state.followEditDraft[fu.id] ?? fu.note)}" />
-                <button class="dd-add-btn" data-action="save-followup-edit" data-incident="${it.id}" data-fu="${fu.id}">Save</button>
-                <button class="dd-followup-icon-btn" data-action="cancel-followup-edit" title="Cancel">✕</button>
-              </div>
-            </div>`;
-          }
-          return `<div class="dd-followup">
-            <div class="dd-followup-row">
-              <div style="flex:1;min-width:0">
-                <div class="dd-followup-note">${escapeHtml(fu.note)}</div>
-                <div class="dd-followup-meta">${formatDate(fu.date)} · ${escapeHtml(fu.by)}${fu.editedAt ? ` · edited ${formatDateTime(fu.editedAt)}` : ""}</div>
-              </div>
-              <div style="display:flex;gap:4px;flex-shrink:0">
-                <button class="dd-followup-icon-btn" data-action="edit-followup" data-incident="${it.id}" data-fu="${fu.id}" title="Edit">✎</button>
-                <button class="dd-followup-icon-btn" data-action="delete-followup" data-incident="${it.id}" data-fu="${fu.id}" title="Remove">✕</button>
-              </div>
-            </div>
-          </div>`;
-        }).join("")}
-      </div>
-      <div class="dd-followup-form">
-        <input class="dd-input dd-followup-input" data-action="follow-input" data-id="${it.id}" placeholder="Add a follow-up note…" value="${escapeHtml(state.followDraft[it.id] || "")}" />
-        <button class="dd-add-btn" data-action="add-followup" data-id="${it.id}">Add</button>
-      </div>
       <button class="dd-history-toggle" data-action="toggle-history" data-id="${it.id}">${state.historyOpen[it.id] ? "Hide audit trail" : "Show audit trail"}</button>
       ${state.historyOpen[it.id] ? `<div class="dd-history">${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -6298,7 +6604,7 @@ function renderSuspensionDetail(s) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(s.studentName)}" data-class="${escapeHtml(s.studentClass || "")}">${escapeHtml(s.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(s.studentName)}" data-class="${escapeHtml(s.studentClass || "")}" data-year="${(s.startDate || "").slice(0, 4)}">${escapeHtml(s.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${s.startDate ? formatDate(s.startDate) : ""}${s.studentClass ? ` · ${escapeHtml(s.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(s.loggedBy)}</div>
         </div>
@@ -6625,7 +6931,7 @@ function renderTimeOutDetail(t) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.studentName)}" data-class="${escapeHtml(t.studentClass || "")}">${escapeHtml(t.studentName)}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.studentName)}" data-class="${escapeHtml(t.studentClass || "")}" data-year="${(t.startDate || "").slice(0, 4)}">${escapeHtml(t.studentName)}</div>
           <div class="dd-card-meta dd-card-meta-primary">${t.startDate ? formatDate(t.startDate) : ""}${t.studentClass ? ` · ${escapeHtml(t.studentClass)}` : ""}</div>
           <div class="dd-card-meta">logged by ${escapeHtml(t.loggedBy)}</div>
         </div>
@@ -6961,7 +7267,7 @@ function renderParentMeetingDetail(m) {
     <div class="dd-detail-card">
       <div class="dd-detail-head">
         <div style="min-width:0">
-          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}">${escapeHtml(m.studentName)}${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
+          <div class="dd-card-student dd-card-student-link" data-action="view-student" data-name="${escapeHtml(m.studentName)}" data-class="${escapeHtml(m.studentClass || "")}" data-year="${(pmDate(m) || m.date || "").slice(0, 4)}">${escapeHtml(m.studentName)}${(m.pmStatus === "Cancelled" || m.pmStatus === "Postponed") ? ` <span class="dd-issue-stage-badge" style="background:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}22;color:${PM_MEETING_STATUS_STYLE[m.pmStatus].ink}">${PM_MEETING_STATUS_STYLE[m.pmStatus].label}</span>` : ""}</div>
           <div class="dd-card-meta dd-card-meta-primary">${isPmRescheduled(m) ? `<s>${formatDate(m.date)}</s> → ${formatDate(m.postponedTo)}` : formatDate(m.date)}${m.studentClass ? ` · ${escapeHtml(m.studentClass)}` : ""}</div>
           ${(() => { const sl = isPmRescheduled(m) ? pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation) : m.pmStatus === "Scheduled" || !m.pmStatus ? pmSlotLabel(m.time, m.endTime, m.location) : ""; return sl ? `<div class="dd-card-meta dd-card-meta-primary">${escapeHtml(sl)}</div>` : ""; })()}
           <div class="dd-card-meta">logged by ${escapeHtml(m.loggedBy)}</div>
@@ -7068,6 +7374,7 @@ function attachMainListeners() {
       state.studentViewFromSection = state.section;
       state.studentViewName = el.dataset.name;
       state.studentViewClass = el.dataset.class || "";
+      state.studentViewYear = el.dataset.year ? parseInt(el.dataset.year, 10) : null;
       state.studentViewOpenYears = {};
       state.section = "studentView";
       window.scrollTo(0, 0);
@@ -7178,10 +7485,19 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
 
   document.querySelectorAll('[data-action="settings-open-holidays"]').forEach((el) =>
-    el.addEventListener("click", () => { state.settingsView = "holidays"; state.saveError = false; render(); }));
+    el.addEventListener("click", () => { state.settingsView = "holidays"; state.holidaySettingsYear = new Date().getFullYear(); state.saveError = false; render(); }));
+  document.querySelectorAll('[data-action="holidays-prev-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state.holidaySettingsYear = (state.holidaySettingsYear || new Date().getFullYear()) - 1; state.saveError = false; render(); }));
+  document.querySelectorAll('[data-action="holidays-next-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state.holidaySettingsYear = (state.holidaySettingsYear || new Date().getFullYear()) + 1; state.saveError = false; render(); }));
 
   document.querySelectorAll('[data-action="settings-open-access"]').forEach((el) =>
     el.addEventListener("click", () => { state.accessFormError = ""; state.settingsView = "manageAccess"; render(); }));
+
+  document.querySelectorAll('[data-action="settings-open-trash"]').forEach((el) =>
+    el.addEventListener("click", () => { state.saveError = false; state.settingsView = "trash"; render(); }));
+  document.querySelectorAll('[data-action="restore-deleted-item"]').forEach((el) =>
+    el.addEventListener("click", () => { if (!state.trashRestoringId) restoreDeletedItem(el.dataset.id); }));
 
   // Authorised Teachers List "⋮" menu: tapping a row's button opens the
   // action-picker modal; every option in that modal just hands off to the
@@ -7277,9 +7593,17 @@ function attachMainListeners() {
     catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); render(); }
   });
 
+  // A new entry defaults to today's date when adding for the current year,
+  // or Jan 1 of whichever year the Holidays page is viewing otherwise —
+  // so adding one while looking at next year doesn't quietly default into
+  // this year and need a manual date correction every time.
+  const defaultHolidayDate = () => {
+    const y = state.holidaySettingsYear || new Date().getFullYear();
+    return y === new Date().getFullYear() ? todayISO() : `${y}-01-01`;
+  };
   // -- Public Holidays --
   document.querySelectorAll('[data-action="open-add-public-holiday"]').forEach((el) =>
-    el.addEventListener("click", () => { state._publicHolidayDraft = { id: null, name: "", startDate: todayISO(), endDate: todayISO() }; state.saveError = false; render(); }));
+    el.addEventListener("click", () => { state._publicHolidayDraft = { id: null, name: "", startDate: defaultHolidayDate(), endDate: defaultHolidayDate() }; state.saveError = false; render(); }));
   document.querySelectorAll('[data-action="edit-public-holiday"]').forEach((el) =>
     el.addEventListener("click", () => {
       const entry = (state.holidays?.publicHolidayEntries || []).find((e) => e.id === el.dataset.id);
@@ -7297,10 +7621,10 @@ function attachMainListeners() {
     }));
 
   document.querySelectorAll('[data-action="open-add-school-holiday"]').forEach((el) =>
-    el.addEventListener("click", () => { state._extraSchoolHolidayDraft = { id: null, name: "", startDate: todayISO(), endDate: todayISO() }; state.saveError = false; render(); }));
+    el.addEventListener("click", () => { state._extraSchoolHolidayDraft = { id: null, name: "", startDate: defaultHolidayDate(), endDate: defaultHolidayDate() }; state.saveError = false; render(); }));
   document.querySelectorAll('[data-action="edit-extra-school-holiday"]').forEach((el) =>
     el.addEventListener("click", () => {
-      const year = new Date().getFullYear();
+      const year = state.holidaySettingsYear || new Date().getFullYear();
       const entry = (state.schoolCalendarOverrides?.[year]?.extraHolidays || []).find((e) => e.id === el.dataset.id);
       if (entry) { state._extraSchoolHolidayDraft = { ...entry }; state.saveError = false; render(); }
     }));
@@ -7309,7 +7633,7 @@ function attachMainListeners() {
 
   // -- School Closure / HBL Days --
   document.querySelectorAll('[data-action="open-add-closure-day"]').forEach((el) =>
-    el.addEventListener("click", () => { state._closureModalDraft = { id: null, type: "closure", startDate: todayISO(), endDate: todayISO(), levels: [1, 2, 3, 4, 5, 6] }; state.saveError = false; render(); }));
+    el.addEventListener("click", () => { state._closureModalDraft = { id: null, type: "closure", startDate: defaultHolidayDate(), endDate: defaultHolidayDate(), levels: [1, 2, 3, 4, 5, 6] }; state.saveError = false; render(); }));
   document.querySelectorAll('[data-action="edit-closure-day"]').forEach((el) =>
     el.addEventListener("click", () => {
       const entry = (state.schoolClosureDays?.entries || []).find((e) => e.id === el.dataset.id);
@@ -7494,12 +7818,31 @@ function attachMainListeners() {
   else if (state.section === "log") attachGroomingListeners();
   else if (state.section === "dashboard") attachDashboardListeners();
   else if (state.section === "studentView") { attachGroomingListeners(); attachSuspListeners(); attachTimeOutListeners(); attachPmListeners(); }
+
+  // The shared "+ Grooming / + Suspension / + Time Out / + Parent Meet" row,
+  // and the Suspension/Time Out/Parent Meet modals it can pop up, are
+  // rendered on every log tab and on the student cross-log view — but must
+  // only be wired up ONCE per render. The branch above can call more than
+  // one of the attach*Listeners functions (studentView calls all four), and
+  // each of those used to wire these shared bits up itself; with four
+  // functions all doing that in studentView, a modal ended up attached four
+  // times over, so each of its buttons (e.g. the Cancelled/Postponed status
+  // pills, room-booking toggle, and the Save button) fired four times per
+  // tap — an even number of toggle-taps net to no visible change, and a
+  // Save wrote its history/Sheet-sync four times. Centralizing the call
+  // here, after the section dispatch, keeps it to one attachment no matter
+  // how many of those functions just ran.
+  if (["log", "suspensions", "timeOuts", "parentMeetings", "studentView"].includes(state.section)) {
+    attachNewEntryRowListeners();
+    attachSuspFormModalListeners();
+    attachTimeOutFormModalListeners();
+    attachPmFormModalListeners();
+  }
 }
 
-// Grooming Log page — filter pills, search, follow-up thread, audit
-// trail, and the per-issue resolve/escalate/override/undo actions.
+// Grooming Log page — filter pills, search, audit trail, and the per-issue
+// resolve/escalate (with its required follow-up note)/override/undo actions.
 function attachGroomingListeners() {
-  attachNewEntryRowListeners();
   document.querySelectorAll('[data-action="set-discipline-filter"]').forEach((el) =>
     el.addEventListener("click", () => { state.disciplineFilter = el.dataset.filter; render(); }));
 
@@ -7541,20 +7884,6 @@ function attachGroomingListeners() {
     if (ns) { ns.focus(); ns.setSelectionRange(cursor, cursor); }
   }, 300));
 
-  document.querySelectorAll('[data-action="follow-input"]').forEach((el) =>
-    el.addEventListener("input", () => { state.followDraft[el.dataset.id] = el.value; }));
-  document.querySelectorAll('[data-action="add-followup"]').forEach((el) =>
-    el.addEventListener("click", () => addFollowUp(el.dataset.id)));
-  document.querySelectorAll('[data-action="edit-followup"]').forEach((el) =>
-    el.addEventListener("click", () => openEditFollowUp(el.dataset.incident, el.dataset.fu)));
-  document.querySelectorAll('[data-action="cancel-followup-edit"]').forEach((el) =>
-    el.addEventListener("click", () => cancelEditFollowUp()));
-  document.querySelectorAll('[data-action="save-followup-edit"]').forEach((el) =>
-    el.addEventListener("click", () => submitEditFollowUp(el.dataset.incident, el.dataset.fu)));
-  document.querySelectorAll('[data-action="delete-followup"]').forEach((el) =>
-    el.addEventListener("click", () => deleteFollowUp(el.dataset.incident, el.dataset.fu)));
-  document.querySelectorAll(".dd-followup-edit-input").forEach((el) =>
-    el.addEventListener("input", () => { state.followEditDraft[el.dataset.fu] = el.value; }));
   document.querySelectorAll('[data-action="toggle-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
   document.querySelectorAll('[data-action="delete-incident"]').forEach((el) =>
@@ -7562,19 +7891,29 @@ function attachGroomingListeners() {
 
   document.querySelectorAll('[data-action="resolve-issue"]').forEach((el) =>
     el.addEventListener("click", () => resolveGroomingIssue(el.dataset.id, el.dataset.issue)));
-  document.querySelectorAll('[data-action="escalate-issue"]').forEach((el) =>
-    el.addEventListener("click", () => escalateGroomingIssue(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll('[data-action="unresolve-issue"]').forEach((el) =>
+    el.addEventListener("click", () => unresolveGroomingIssue(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll('[data-action="start-escalate"]').forEach((el) =>
+    el.addEventListener("click", () => startEscalateIssue(el.dataset.id, el.dataset.issue)));
+  document.querySelectorAll('[data-action="escalate-note-input"]').forEach((el) =>
+    el.addEventListener("input", () => { state.escalateNoteDraft[el.dataset.issue] = el.value; }));
+  document.querySelectorAll('[data-action="confirm-escalate"]').forEach((el) =>
+    el.addEventListener("click", () => confirmEscalateIssue()));
   document.querySelectorAll(".dd-issue-override-input").forEach((el) =>
     el.addEventListener("change", () => { if (el.value) overrideGroomingIssueDeadline(el.dataset.id, el.dataset.issue, el.value); }));
-  document.querySelectorAll('[data-action="undo-issue-action"]').forEach((el) =>
-    el.addEventListener("click", () => undoGroomingIssueAction(el.dataset.id, el.dataset.issue)));
-
-  // The shared "+ Suspension / + Time Out / + Parent Meet" buttons can pop
-  // their form up on this tab too, so those forms' own listeners need
-  // wiring here as well, not just on their own tabs.
-  attachSuspFormModalListeners();
-  attachTimeOutFormModalListeners();
-  attachPmFormModalListeners();
+  document.querySelectorAll('[data-action="edit-escalation-note"]').forEach((el) =>
+    el.addEventListener("click", () => startEditEscalationNote(el.dataset.id, el.dataset.issue, parseInt(el.dataset.stage, 10), el.dataset.note)));
+  document.querySelectorAll('[data-action="escalate-note-edit-input"]').forEach((el) =>
+    el.addEventListener("input", () => { state.escalateNoteEditDraft[el.dataset.key] = el.value; }));
+  document.querySelectorAll('[data-action="confirm-escalation-note-edit"]').forEach((el) =>
+    el.addEventListener("click", () => confirmEditEscalationNote()));
+  document.querySelectorAll('[data-action="cancel-escalation-note-edit"]').forEach((el) =>
+    el.addEventListener("click", () => cancelEditEscalationNote()));
+  document.querySelectorAll('[data-action="unescalate-issue"]').forEach((el) =>
+    el.addEventListener("click", () => unescalateIssueFromEdit(el.dataset.id, el.dataset.issue)));
+  // The shared new-entry row and the Suspension/Time Out/Parent Meet modals
+  // it can pop up on this tab are wired once, centrally, in
+  // attachMainListeners — see the comment there.
 }
 
 // Wires up the "+ Grooming / + Suspension / + Time Out / + Parent Meet"
@@ -7699,7 +8038,6 @@ function attachDashboardListeners() {
 
 
 function attachSuspListeners() {
-  attachNewEntryRowListeners();
   document.querySelectorAll('[data-action="set-susp-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.suspTab = el.dataset.tab; render(); }));
 
@@ -7719,12 +8057,9 @@ function attachSuspListeners() {
     el.addEventListener("click", () => { openEditSuspension(el.dataset.id); state.showNewSuspForm = false; }));
   document.querySelectorAll('[data-action="toggle-susp-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
-
-  attachSuspFormModalListeners();
-  // The shared "+ Grooming / + Time Out / + Parent Meet" buttons can pop
-  // their form up on this tab too.
-  attachTimeOutFormModalListeners();
-  attachPmFormModalListeners();
+  // The shared new-entry row and the Suspension/Time Out/Parent Meet modals
+  // it can pop up on this tab are wired once, centrally, in
+  // attachMainListeners — see the comment there.
 }
 
 // Shared between the Suspension Log page (editing) and the Dashboard's
@@ -7768,7 +8103,6 @@ function attachSuspFormModalListeners() {
 }
 
 function attachTimeOutListeners() {
-  attachNewEntryRowListeners();
   document.querySelectorAll('[data-action="set-to-tab"]').forEach((el) =>
     el.addEventListener("click", () => { state.toTab = el.dataset.tab; render(); }));
 
@@ -7788,12 +8122,9 @@ function attachTimeOutListeners() {
     el.addEventListener("click", () => { openEditTimeOut(el.dataset.id); state.showNewToForm = false; }));
   document.querySelectorAll('[data-action="toggle-to-history"]').forEach((el) =>
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
-
-  attachTimeOutFormModalListeners();
-  // The shared "+ Grooming / + Suspension / + Parent Meet" buttons can pop
-  // their form up on this tab too.
-  attachSuspFormModalListeners();
-  attachPmFormModalListeners();
+  // The shared new-entry row and the Suspension/Time Out/Parent Meet modals
+  // it can pop up on this tab are wired once, centrally, in
+  // attachMainListeners — see the comment there.
 }
 
 // Shared between the Time Out Log page (editing), the Dashboard's
@@ -7834,7 +8165,6 @@ function attachTimeOutFormModalListeners() {
 }
 
 function attachPmListeners() {
-  attachNewEntryRowListeners();
   const search = document.getElementById("pm-search-input");
   if (search) search.addEventListener("input", debounce(() => {
     if (!search.isConnected) return; // page re-rendered from elsewhere while the timer was pending
@@ -7856,12 +8186,9 @@ function attachPmListeners() {
     el.addEventListener("click", () => { state.historyOpen[el.dataset.id] = !state.historyOpen[el.dataset.id]; render(); }));
   document.querySelectorAll('[data-action="set-pm-status-quick"]').forEach((el) =>
     el.addEventListener("click", () => setPmStatusQuick(el.dataset.id, el.dataset.status)));
-
-  attachPmFormModalListeners();
-  // The shared "+ Grooming / + Suspension / + Time Out" buttons can pop
-  // their form up on this tab too.
-  attachSuspFormModalListeners();
-  attachTimeOutFormModalListeners();
+  // The shared new-entry row and the Suspension/Time Out/Parent Meet modals
+  // it can pop up on this tab are wired once, centrally, in
+  // attachMainListeners — see the comment there.
 }
 
 // Attaches listeners for the multi-select "Reason(s) for meeting"

@@ -64,9 +64,11 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/authorizedUsers/$(emailLower())));
     }
 
-    // Discipline log entries. Deletion is permanent and immediate (no
-    // soft-delete/recovery step) — a signed-in teacher can remove any
-    // entry directly.
+    // Discipline log entries. A signed-in teacher can remove any entry
+    // directly, and deletion itself is still immediate — but the app now
+    // writes a full copy to deletedItems/{trashId} (below) just before
+    // deleting, so it stays recoverable from Settings → Recently Deleted
+    // afterwards, not just via the 5-second in-app undo.
     match /incidents/{incidentId} {
       allow read, create, update, delete: if isMoeUser();
     }
@@ -84,6 +86,17 @@ service cloud.firestore {
     // Parent meeting logs — same protection.
     match /parentMeetings/{meetingId} {
       allow read, create, update, delete: if isMoeUser();
+    }
+
+    // Trash copies of deleted discipline-log records (see the comment on
+    // incidents above), keyed "{collectionName}_{docId}". Any authorised
+    // teacher can read the list and restore an entry — restoring only
+    // updates restoredAt/restoredBy, it never removes the trash doc — but
+    // only Admins/Owner can permanently purge one, same split as
+    // studentLinks below.
+    match /deletedItems/{trashId} {
+      allow read, create, update: if isMoeUser();
+      allow delete: if isAdmin();
     }
 
     // Rolling backup: "backups/index" lists the parts, one per log per year

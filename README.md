@@ -67,10 +67,24 @@ audit trail (every create, edit and status change, with who and when).
   more grooming issues (Long Hair, Uniform, …), each with its own
   1st / 2nd / Final Warning stage and deadline. Deadlines always fall on a
   school day: one that would land on a weekend, holiday or the student's
-  HBL/closure day moves to the next school day (`computeGroomingDeadline()`). Also follow-ups and links to
-  related suspensions, time outs and meetings. A few very old entries use an
-  earlier single-`issue` format; they still display, but don't count toward
-  the watchlist.
+  HBL/closure day moves to the next school day (`computeGroomingDeadline()`).
+  Escalating an issue to its next stage requires a follow-up note explaining
+  what happened at the stage being left — it's stored on that stage
+  transition in the issue's own history. Escalate is a toggle: tapping it
+  opens the note input, tapping it again (while selected) backs out without
+  escalating. Resolved is a toggle too: tap to resolve, tap the (still
+  shown, selected) Resolved button again to un-resolve — so there's no
+  separate Undo control for either. Each completed stage stays visible
+  (read-only) above the current one, showing its note and who logged it;
+  the note itself can be edited later via its pencil icon, which logs
+  "Edited by <name>" under the original "Logged by" line. The most recently
+  completed stage's pencil also offers "Unescalate", which reverses that
+  one step (drops its note and the stage transition, restoring the earlier
+  stage as active again) — only while the issue isn't resolved, and only
+  for that one most-recent step, not stages further back. Also links to
+  related suspensions, time outs and meetings. A few very old entries use
+  an earlier single-`issue` format; they still display, but don't count
+  toward the watchlist.
 - **Suspension Log** (`suspensions`): reasons (`reasons` array plus a
   combined `reason` text), `startDate`, `totalDays`, and `days` — one entry
   per day, each in-school (`ISS`, with a booked room) or out-of-school
@@ -200,6 +214,8 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   `settings/schoolClosureDays`). Used to skip non-school days when setting
   deadlines and suspension dates.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
+- **Recently Deleted:** every deleted entry, with a Restore button (see
+  "Deleting and restoring entries" below).
 
 ## Backups
 
@@ -210,9 +226,30 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   rewritten. `backups/latest` is the old single-document backup, now just a
   pointer. If a backup can't be saved, a red warning bar appears at the top
   of the app.
+  - This snapshot always reflects the CURRENT live data, so a deleted
+    record drops out of it within ~1.5s — it's a way to recover from a bad
+    edit or a lost connection, not from a delete. Use Recently Deleted for
+    that (below).
 - **Manual:** the download icon (top right) saves everything as a `.json`
   file. Do this before any big clean-up.
 - The rules never let the app delete backups.
+
+## Deleting and restoring entries
+
+- Deleting a Grooming/Suspension/Time Out/Parent Meet entry writes a full
+  copy to `deletedItems/{collection}_{id}` *before* deleting the live
+  record (`trashRecord()` in app.js), then still deletes it immediately —
+  deleting itself hasn't changed. That trash copy is independent of both
+  the rolling backup above (which drops the record right away) and the
+  5-second in-app "Undo" toast (in-memory only, gone on reload).
+- **Settings → Recently Deleted** lists every trash copy (restored ones
+  marked as such) with a Restore button, which recreates the record with
+  its original id and marks the trash copy `restoredAt` rather than
+  removing it — the rules only let Admins/Owner actually delete a
+  `deletedItems` doc, mirroring `studentLinks`.
+- There's no automatic purge — trash accumulates indefinitely. Deliberate
+  for now: better an ever-growing list than a real deletion silently
+  losing a record.
 
 ## Google Sheet sync
 
