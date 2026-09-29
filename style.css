@@ -1097,13 +1097,15 @@ html.dd-pdf-render .dd-rep-quads { grid-template-columns: 1fr 1fr; }
 .dd-rep-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: #fff; }
 .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dd-rep-cell { padding: 5px 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; overflow-wrap: anywhere; }
-.dd-rep-grid3 > .dd-rep-cell:not(:nth-child(3n+1)) { border-left: 1px solid #C9C4B4; }
-.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #C9C4B4; }
+.dd-rep-grid3 > .dd-rep-cell:not(:nth-child(3n+1)) { border-left: 1px solid #E2DED0; }
+.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #E2DED0; }
 .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(2n+1) { border-left: 0; }
 .dd-rep-cls { font-size: 10.5px; color: #8A8571; }
 .dd-rep-class { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
-.dd-rep-class-name { font-weight: 700; font-size: 13px; padding-top: 1px; }
-.dd-rep-class-break { font-size: 9.5px; line-height: 1.35; color: #6B6652; min-width: 6.6em; }
+.dd-rep-class-name { font-weight: 700; font-size: 13px; height: 13px; display: flex; align-items: center; }
+.dd-rep-class-one { align-items: center; }
+.dd-rep-class-one .dd-rep-class-name { height: auto; }
+.dd-rep-class-break { font-size: 9.5px; line-height: 13px; color: #6B6652; min-width: 6.6em; }
 .dd-rep-class-break > div { display: flex; justify-content: space-between; gap: 6px; }
 .dd-rep-class-break b { color: #1B2A41; }
 /* Most challenging levels: one row of 6 blocks, least → most. */
@@ -1134,8 +1136,8 @@ html.dd-pdf-render .dd-rt-short { display: none; }
 @media (max-width: 360px) { .dd-rt { font-size: 9.5px; } .dd-rt thead th { font-size: 8.5px; } .dd-rt th, .dd-rt td { padding: 4px 1px; } }
 
 /* Top reasons tables: reason, P1–P6, total. */
-.dd-rt-reasons th.dd-rt-reason, .dd-rt-reasons th.dd-rt-reason-h { text-align: left; padding-left: 6px; width: 30%; }
-.dd-rt-reasons th.dd-rt-reason { font-weight: 600; background: #fff; overflow-wrap: anywhere; }
+.dd-rt-reasons th.dd-rt-reason, .dd-rt-reasons th.dd-rt-reason-h { text-align: left; padding-left: 6px; width: 44%; }
+.dd-rt-reasons th.dd-rt-reason { font-weight: 600; font-size: 0.92em; background: #fff; overflow-wrap: normal; word-break: normal; }
 .dd-rt-reasons .dd-rt-zero { color: #C9C4B4; }
 .dd-rt-reasons thead th:last-child, .dd-rt-reasons td.dd-rt-tot { width: 12%; }
 .dd-rep-cell { font-size: 11.5px; }
@@ -1149,7 +1151,7 @@ html.dd-pdf-render .dd-rt-short { display: none; }
 .dd-rep-cell-pad.dd-pad-p { display: block; }
 @media (min-width: 700px) {
   .dd-rep-grid3, .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .dd-rep-grid3 > .dd-rep-cell, .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #C9C4B4; }
+  .dd-rep-grid3 > .dd-rep-cell, .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #E2DED0; }
   .dd-rep-grid3 > .dd-rep-cell:nth-child(6n+1), .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(6n+1) { border-left: 0; }
   .dd-rep-cell-pad.dd-pad-p { display: none; }
   .dd-rep-cell-pad.dd-pad-t { display: block; }
@@ -1161,17 +1163,25 @@ html.dd-pdf-render .dd-rt-short { display: none; }
   .dd-rep-level { padding: 5px 2px 4px; }
   .dd-rep-level-name { font-size: 10px; }
   .dd-rep-level-total { font-size: 15px; }
-  .dd-rep-level-line { font-size: 6.4px; gap: 1px; }
+  .dd-rep-level-line { font-size: 6.2px; gap: 1px; }
 }
 @media (max-width: 360px) {
   .dd-rep-levels { gap: 2px; }
-  .dd-rep-level-line { font-size: 6px; gap: 0; }
+  .dd-rep-level-line { font-size: 5.6px; gap: 0; }
 }
 
 /* PDF / print sheet: 4 columns for every grouped list (it is laid out at its
    own fixed width, so phone and screen column counts don't apply). */
 html.dd-pdf-render .dd-rep-grid3, html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell, html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #C9C4B4; }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell, html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #E2DED0; }
 html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell:nth-child(4n+1), html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
 html.dd-pdf-render .dd-rep-cell-pad.dd-pad-p, html.dd-pdf-render .dd-rep-cell-pad.dd-pad-t { display: none; }
 html.dd-pdf-render .dd-rep-cell-pad.dd-pad-f { display: block; }
+
+/* Top reasons: every row is as tall as two lines of text, text centred. */
+.dd-rt-reasons tbody th, .dd-rt-reasons tbody td { height: 2.9em; vertical-align: middle; line-height: 1.2; }
+.dd-rt-reasons thead th { line-height: 1.2; }
+/* One-line footnote under the monthly table (shrinks on phones instead of wrapping). */
+.dd-rep-note-1line { white-space: nowrap; }
+@media (max-width: 480px) { .dd-rep-note-1line { font-size: 2.2vw; } }
+html.dd-pdf-render .dd-rep-note-1line { font-size: 11px; }

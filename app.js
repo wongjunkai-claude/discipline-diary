@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.35.2";
+const APP_VERSION = "3.36.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4493,7 +4493,9 @@ function computeYearLevelRanking(year) {
     const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`) && classLevel(i.studentClass) === lvl).length;
     const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`) && classLevel(s.studentClass) === lvl).length;
     const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`) && classLevel(t.studentClass) === lvl).length;
-    return { label: `P${lvl}`, discipline, suspension, timeOut, total: discipline + suspension + timeOut };
+    // Parent meetings count towards a level's tally, as they do in the report's level blocks.
+    const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && String(pmDate(m) || "").startsWith(`${year}-`) && classLevel(m.studentClass) === lvl).length;
+    return { label: `P${lvl}`, discipline, suspension, timeOut, parentMeeting, total: discipline + suspension + timeOut + parentMeeting };
   }).sort((a, b) => b.total - a.total);
 }
 function computeYearClassRanking(year) {
@@ -4501,7 +4503,8 @@ function computeYearClassRanking(year) {
     const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`) && i.studentClass === cls).length;
     const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`) && s.studentClass === cls).length;
     const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`) && t.studentClass === cls).length;
-    return { label: cls, discipline, suspension, timeOut, total: discipline + suspension + timeOut };
+    const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && String(pmDate(m) || "").startsWith(`${year}-`) && m.studentClass === cls).length;
+    return { label: cls, discipline, suspension, timeOut, parentMeeting, total: discipline + suspension + timeOut + parentMeeting };
   }).filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
 }
 // Builds the plain-language trend paragraph for the Annual Summary
@@ -4655,6 +4658,8 @@ function computeYearInsights(year) {
   const months = computeYearMonthlyTrend(year).map((m) => ({ ...m, cases: m.discipline + m.suspension + m.timeOut }));
   const levels = computeYearLevelRanking(year);
   const classes = computeYearClassRanking(year);
+  // Levels and classes count parent meetings too, so their shares are of that combined total.
+  const rankedCases = levels.reduce((a, l) => a + l.total, 0);
   const dow = computeDayOfWeekPattern(year).filter((d) => d.day !== "Sat" && d.day !== "Sun");
   const pos = computeTermPositionPattern(year);
   const ru = computeRepeatVsUnique(year);
@@ -4699,8 +4704,8 @@ function computeYearInsights(year) {
   // Where cases concentrated
   const where = [];
   if (cases > 0) {
-    if (levels[0] && levels[0].total > 0) where.push(`${levels[0].label} had the most cases of any level (${levels[0].total}, ${pctOf(levels[0].total, cases)}% of the year).`);
-    if (classes[0]) where.push(`The most-flagged class was ${classes[0].label} (${classes[0].total}, ${pctOf(classes[0].total, cases)}%)${classes[1] ? `, followed by ${classes[1].label} (${classes[1].total})` : ""}.`);
+    if (levels[0] && levels[0].total > 0) where.push(`${levels[0].label} had the most cases of any level (${levels[0].total}, ${pctOf(levels[0].total, rankedCases)}% of the year).`);
+    if (classes[0]) where.push(`The most-flagged class was ${classes[0].label} (${classes[0].total}, ${pctOf(classes[0].total, rankedCases)}%)${classes[1] ? `, followed by ${classes[1].label} (${classes[1].total})` : ""}.`);
     const weekTotal = dow.reduce((s2, d) => s2 + d.count, 0);
     const busiestDay = dow.slice().sort((a, b) => b.count - a.count)[0];
     if (weekTotal > 0) where.push(`${busiestDay.day === "Mon" ? "Monday" : busiestDay.day === "Tue" ? "Tuesday" : busiestDay.day === "Wed" ? "Wednesday" : busiestDay.day === "Thu" ? "Thursday" : "Friday"} was the busiest school day (${pctOf(busiestDay.count, weekTotal)}% of weekday incidents).`);
@@ -4780,8 +4785,8 @@ function computeYearInsights(year) {
     const dayName = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday" }[busiestDay.day];
     recs.push(`${dayName} had ${pctOf(busiestDay.count, weekTotal)}% of weekday incidents. It may help to look at what's different on ${dayName}s — for example the timetable, PE or CCA, or recess arrangements.`);
   }
-  if (classes[0] && classes[0].total >= 5 && pctOf(classes[0].total, cases) >= 20) recs.push(`${classes[0].label} accounted for ${pctOf(classes[0].total, cases)}% of cases. Consider a class-level plan with its form teachers.`);
-  if (levels[0] && levels[0].total >= 5 && pctOf(levels[0].total, cases) >= 30) recs.push(`${levels[0].label} accounted for ${pctOf(levels[0].total, cases)}% of cases. A level-wide talk or programme may reach more students than following up case by case.`);
+  if (classes[0] && classes[0].total >= 5 && pctOf(classes[0].total, rankedCases) >= 20) recs.push(`${classes[0].label} accounted for ${pctOf(classes[0].total, rankedCases)}% of cases. Consider a class-level plan with its form teachers.`);
+  if (levels[0] && levels[0].total >= 5 && pctOf(levels[0].total, rankedCases) >= 30) recs.push(`${levels[0].label} accounted for ${pctOf(levels[0].total, rankedCases)}% of cases. A level-wide talk or programme may reach more students than following up case by case.`);
   if (busiestTerm && cases >= 5 && pctOf(busiestTerm.cases, cases) >= 40) recs.push(`${busiestTerm.label} had ${pctOf(busiestTerm.cases, cases)}% of the year's cases. Plan ahead for the same period next year.`);
   if (n.hasLastYear && casesLast > 0 && cases > casesLast && pctOf(cases - casesLast, casesLast) >= 20) recs.push(`Cases rose ${pctOf(cases - casesLast, casesLast)}% on ${year - 1}. Before planning next year, it's worth reviewing what changed between the two years (programmes, staffing or the cohort).`);
   if (!recs.length) recs.push("Nothing in this year's numbers stands out as needing a change. Keep logging consistently so next year's comparison is meaningful.");
@@ -5685,7 +5690,7 @@ function renderReportMonthlyPage(year) {
         <tbody>${shown.map((r) => `<tr><th>${r.label}</th><td>${r.discipline}</td><td>${r.suspension}</td>${TO_TYPES.map((t) => `<td class="dd-rt-to">${r.toByType[t.key] || 0}</td>`).join("")}<td class="dd-rt-tot">${rowTotal(r)}</td></tr>`).join("")}</tbody>
         <tfoot><tr><th>Total</th><td>${tot("discipline")}</td><td>${tot("suspension")}</td>${TO_TYPES.map((t) => `<td class="dd-rt-to">${totType(t.key)}</td>`).join("")}<td class="dd-rt-tot">${tot("discipline") + tot("suspension") + tot("timeOut")}</td></tr></tfoot>
       </table>
-      <div class="dd-mono-muted dd-rep-foot">Time Out types: ${TO_TYPES.map((t) => `${t.abbrev} = ${t.label.replace(/^Time Out \(|\)$/g, "")}`).join(" · ")}.</div>`;
+      <div class="dd-mono-muted dd-rep-foot dd-rep-note-1line">* Note: ${TO_TYPES.map((t) => `${t.abbrev} = ${t.label.replace(/^Time Out \(|\)$/g, "")}`).join(" · ")}.</div>`;
 }
 // ---- Page 3: day of week by term, parent meetings ----
 const TERM_SHADES = ["#B9C4D3", "#8494AB", "#4F6180", "#1B2A41"];
@@ -5720,8 +5725,7 @@ function renderReportDayOfWeek(year) {
         <thead><tr><th>Term</th>${rows.map((r) => `<th>${r.label}</th>`).join("")}<th>Total</th></tr></thead>
         <tbody>${table.map((r, ti) => `<tr><th>T${ti + 1}</th>${r.map((v) => `<td>${v}</td>`).join("")}<td class="dd-rt-tot">${rowTot(r)}</td></tr>`).join("")}</tbody>
         <tfoot><tr><th>Total</th>${rows.map((_, di) => `<td>${colTot(di)}</td>`).join("")}<td class="dd-rt-tot">${table.reduce((a, r) => a + rowTot(r), 0)}</td></tr></tfoot>
-      </table>
-      <div class="dd-mono-muted dd-rep-foot">Grooming entries, suspensions and time outs on school days in term, by the day they happened (suspensions and time outs by their first day).</div>`;
+      </table>`;
 }
 // Students by how many parent meetings they had this year (meetings that
 // went ahead, up to today; a postponed one counts on its new date).
@@ -5747,9 +5751,10 @@ function renderReportLevelBlocks(year) {
         <div class="dd-rep-level">
           <div class="dd-rep-level-name">${l.label}</div>
           <div class="dd-rep-level-total">${l.total}</div>
-          <div class="dd-rep-level-line"><span><span class="dd-rt-long">Grooming</span><span class="dd-rt-short">Groom</span></span><b>${l.discipline}</b></div>
-          <div class="dd-rep-level-line"><span><span class="dd-rt-long">Suspension</span><span class="dd-rt-short">Susp</span></span><b>${l.suspension}</b></div>
-          <div class="dd-rep-level-line"><span><span class="dd-rt-long">Time Out</span><span class="dd-rt-short">T.Out</span></span><b>${l.timeOut}</b></div>
+          <div class="dd-rep-level-line"><span>Grooming</span><b>${l.discipline}</b></div>
+          <div class="dd-rep-level-line"><span>Suspension</span><b>${l.suspension}</b></div>
+          <div class="dd-rep-level-line"><span>Time Out</span><b>${l.timeOut}</b></div>
+          <div class="dd-rep-level-line"><span>Parent Meet</span><b>${l.parentMeeting}</b></div>
         </div>`).join("")}
       </div>
       <div class="dd-rep-level-scale"><span>Least challenging</span><span>Most challenging</span></div>`;
@@ -5764,13 +5769,17 @@ function computeReportClassCounts(year) {
     return { cls, discipline, suspension, timeOut, parentMeeting, count: discipline + suspension + timeOut + parentMeeting };
   }).filter((r) => r.count > 0).sort((a, b) => b.count - a.count || a.cls.localeCompare(b.cls));
 }
-const classCell = (r) => `
-  <div class="dd-rep-class">
+const classCell = (r) => {
+  const lines = [["Grooming", r.discipline], ["Suspension", r.suspension], ["Time Out", r.timeOut], ["Parent Meet", r.parentMeeting]].filter(([, n]) => n > 0);
+  // One line: the name sits in the middle of the cell; several: it lines up with the first line.
+  return `
+  <div class="dd-rep-class${lines.length === 1 ? " dd-rep-class-one" : ""}">
     <div class="dd-rep-class-name">${escapeHtml(r.cls)}</div>
     <div class="dd-rep-class-break">
-      ${[["Grooming", r.discipline], ["Suspension", r.suspension], ["Time Out", r.timeOut], ["Parent Meet", r.parentMeeting]].filter(([, n]) => n > 0).map(([l, n]) => `<div><span>${l}</span><b>${n}</b></div>`).join("")}
+      ${lines.map(([l, n]) => `<div><span>${l}</span><b>${n}</b></div>`).join("")}
     </div>
   </div>`;
+};
 const plainCount = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // ---- Top reasons for suspension / time out, by level ----
 // One row per reason that was actually used, ranked by total. A record with
@@ -5794,7 +5803,7 @@ function renderReportReasonsTable(rows, emptyText) {
   return `
       <table class="dd-rt dd-rt-reasons">
         <thead><tr><th class="dd-rt-reason-h">Reason</th>${[1, 2, 3, 4, 5, 6].map((l) => `<th>P${l}</th>`).join("")}<th>Total</th></tr></thead>
-        <tbody>${rows.map((r) => `<tr><th class="dd-rt-reason">${escapeHtml(r.reason)}</th>${r.levels.map((v) => `<td${v ? "" : ' class="dd-rt-zero"'}>${v}</td>`).join("")}<td class="dd-rt-tot">${r.total}</td></tr>`).join("")}</tbody>
+        <tbody>${rows.map((r) => `<tr><th class="dd-rt-reason">${escapeHtml(r.reason).replace(/\//g, "/\u2060")}</th>${r.levels.map((v) => `<td${v ? "" : ' class="dd-rt-zero"'}>${v}</td>`).join("")}<td class="dd-rt-tot">${r.total}</td></tr>`).join("")}</tbody>
       </table>`;
 }
 function renderReportRecommendations(year) {

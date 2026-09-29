@@ -294,7 +294,7 @@ Nine sections, each starting on a new sheet when printed or exported
 5. Repeated vs. Unique Students · Grooming Escalation Rate · Repeat
    Suspension / Time Out Intervals.
 6. **Most Challenging Levels**: six blocks in one row (also on phones), least → most
-   challenging, each with Grooming / Suspension / Time Out · **Most
+   challenging, each with Grooming / Suspension / Time Out / Parent Meet (meetings count towards the level's number) · **Most
    Challenging Classes**: grouped by count (including parent meetings), each
    class with its breakdown beside it (only the non-zero lines).
 7. **All Suspensions / All Time-Outs This Year**: students grouped by how
