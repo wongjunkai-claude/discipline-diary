@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.30.0";
+const APP_VERSION = "3.34.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4676,7 +4676,7 @@ function computeYearInsights(year) {
 
   // Year at a glance
   sections.push({ title: "Year at a glance", paras: [
-    `${year} recorded ${plural(cases, "discipline case")}: ${plural(totals.discipline, "grooming entry", "grooming entries")}, ${plural(totals.suspension, "suspension")} and ${plural(totals.timeOut, "time out")}. ${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} held.` +
+    `${year} recorded ${plural(cases, "discipline case")}: ${plural(totals.discipline, "grooming entry", "grooming entries")}, ${plural(totals.suspension, "suspension")} and ${plural(totals.timeOut, "time out")}.` +
     (n.soFar ? ` The year is still in progress, so these are figures to date.` : "") +
     (n.hasLastYear ? ` Overall cases are ${pctChangeLabel(casesLast, cases)} on ${year - 1}${n.soFar ? " (all of last year)" : ""}.` : ""),
   ] });
@@ -4685,13 +4685,13 @@ function computeYearInsights(year) {
   const busiestTerm = terms.slice().sort((a, b) => b.cases - a.cases)[0];
   const quietestTerm = terms.slice().sort((a, b) => a.cases - b.cases)[0];
   const busiestMonth = months.slice().sort((a, b) => b.cases - a.cases)[0];
-  const unfold = [n.withinYear];
+  const unfold = [];
   if (cases > 0 && busiestTerm && busiestTerm.cases > 0) {
     unfold.push(`Of the ${terms.length === 4 ? "four" : "completed"} terms, ${busiestTerm.label} was the busiest (${plural(busiestTerm.cases, "case")}, ${pctOf(busiestTerm.cases, cases)}% of the year's cases)` +
       (quietestTerm && quietestTerm.label !== busiestTerm.label ? ` and ${quietestTerm.label} the quietest (${quietestTerm.cases}).` : ".") +
       (busiestMonth && busiestMonth.cases > 0 ? ` The single busiest month was ${busiestMonth.label} with ${plural(busiestMonth.cases, "case")}.` : ""));
   }
-  sections.push({ title: "How the year unfolded", paras: unfold });
+  if (unfold.length) sections.push({ title: "How the year unfolded", paras: unfold });
 
   // Compared with last year
   sections.push({ title: `Compared with ${year - 1}`, paras: [n.acrossYears] });
@@ -4704,11 +4704,6 @@ function computeYearInsights(year) {
     const weekTotal = dow.reduce((s2, d) => s2 + d.count, 0);
     const busiestDay = dow.slice().sort((a, b) => b.count - a.count)[0];
     if (weekTotal > 0) where.push(`${busiestDay.day === "Mon" ? "Monday" : busiestDay.day === "Tue" ? "Tuesday" : busiestDay.day === "Wed" ? "Wednesday" : busiestDay.day === "Thu" ? "Thursday" : "Friday"} was the busiest school day (${pctOf(busiestDay.count, weekTotal)}% of weekday incidents).`);
-    const posTotal = pos.Early + pos.Mid + pos.Late;
-    if (posTotal > 0) {
-      const [pk, pv] = Object.entries(pos).sort((a, b) => b[1] - a[1])[0];
-      where.push(`By position within a term, ${pctOf(pv, posTotal)}% of incidents fell in the ${pk === "Early" ? "first" : pk === "Mid" ? "middle" : "last"} third.`);
-    }
   }
   if (where.length) sections.push({ title: "Where cases concentrated", paras: [where.join(" ")] });
 
@@ -4735,8 +4730,11 @@ function computeYearInsights(year) {
   const serious = [];
   if (suspReasons.length) serious.push(`The most common reason for suspension was ${suspReasons[0].reason} (${plural(suspReasons[0].count, "suspension")})${suspReasons[1] ? `, then ${suspReasons[1].reason} (${suspReasons[1].count})` : ""}.`);
   if (toReasons.length) serious.push(`For time outs it was ${toReasons[0].reason} (${toReasons[0].count}).`);
-  if (totals.suspension > 0) serious.push(`${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} held against ${plural(totals.suspension, "suspension")} and ${plural(totals.timeOut, "time out")}.`);
   if (serious.length) sections.push({ title: "Suspensions and time outs", paras: [serious.join(" ")] });
+  if (totals.parentMeeting > 0) {
+    const pmTop = computeReportPmReasons(year)[0];
+    sections.push({ title: "Parent meetings", paras: [`${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} held${totals.suspension > 0 ? `, against ${plural(totals.suspension, "suspension")}` : ""}.${pmTop ? ` The most common reason was ${pmTop.cat} (${pmTop.count}).` : ""}`] });
+  }
 
   // Time outs by type — each type's own count and frequency.
   const toStats = computeTimeOutTypeStats(year);
@@ -4744,10 +4742,7 @@ function computeYearInsights(year) {
     const wk = Math.round(toStats.schoolWeeks);
     sections.push({
       title: "Time outs by type",
-      paras: [`Over ${plural(wk, "school week")}${n.soFar ? " so far" : ""}:`],
-      list: toStats.types.map((t) => t.count === 0
-        ? `Time out from ${t.from}: none.`
-        : `Time out from ${t.from}: ${plural(t.count, "time out")} (${plural(t.days, "day")} served) — ${howOftenLabel(t.perWeek)}; at most ${plural(t.maxSameDay, "student")} on the same day.`),
+      paras: [`Over ${plural(wk, "school week")}${n.soFar ? " so far" : ""}: ` + toStats.types.filter((t) => t.count > 0).map((t) => `from ${t.from} ${t.count} (${howOftenLabel(t.perWeek)}${t.maxSameDay >= 2 ? `, up to ${t.maxSameDay} on one day` : ""})`).join("; ") + "."],
     });
   }
 
@@ -4798,16 +4793,11 @@ function renderTrendAnalysis(year) {
   const p = (t) => `<p class="dd-sans dd-ta-p">${escapeHtml(t)}</p>`;
   const list = (items) => `<ul class="dd-ta-list">${items.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
   return `
-      ${reportSectionTitle("Trend analysis")}
+      ${reportSectionTitle("Trend Analysis")}
       <div class="dd-panel dd-ta-panel">
         ${ins.sections.map((sct) => `<div class="dd-ta-head">${escapeHtml(sct.title)}</div>${sct.paras.map(p).join("")}${sct.list ? list(sct.list) : ""}`).join("")}
         ${ins.wentWell.length ? `<div class="dd-ta-head">What went well</div>${list(ins.wentWell)}` : ""}
         ${ins.toWatch.length ? `<div class="dd-ta-head">Areas to watch</div>${list(ins.toWatch)}` : ""}
-      </div>
-      ${reportSectionTitle("Recommendations")}
-      <div class="dd-panel dd-ta-panel">
-        <ol class="dd-ta-list">${ins.recs.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ol>
-        <p class="dd-mono-muted dd-ta-note">These suggestions come from the numbers in this report. Use them alongside what staff know about each student and class.</p>
       </div>`;
 }
 
@@ -4962,6 +4952,106 @@ function computeTermPositionPattern(year) {
 // issues rather than an issue themselves, so mixing them in would
 // overstate the incident count.
 // Bands, bottom to top: grooming, suspensions, time outs.
+// ---- Annual Report line charts (same look as the dashboard graphs) ----
+// Five lines (Grooming, Parent Meet, Time Out, In-/Out-of-School
+// Suspension) on an even scale, drawn as a fixed-size SVG so it prints and
+// exports to PDF like the other report chart. No numbers on the points
+// (they'd pile up); `totals` adds one row of totals under the labels.
+// Points whose period hasn't started (`r.future`) are left off the lines.
+// Parent meetings have their own page, so these charts show the four
+// discipline lines only.
+function reportLines() { return TREND_LINES.filter((l) => l.cat !== "parentMeeting"); }
+function renderReportLineChart(rows, { totals = false } = {}) {
+  if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
+  const lines = reportLines();
+  const W = 320, padL = 24, padR = 10, padT = 10, padB = totals ? 30 : 18;
+  const plotH = 86, H = padT + plotH + padB, plotW = W - padL - padR;
+  const n = rows.length;
+  const lastPast = rows.reduce((acc, r, i) => (r.future ? acc : i), -1);
+  const maxV = Math.max(1, ...rows.slice(0, lastPast + 1).flatMap((r) => lines.map((l) => r[l.key] || 0)));
+  const tickStep = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((st) => Math.ceil(maxV / st) <= 5) || Math.ceil(maxV / 5);
+  const axisMax = Math.max(tickStep, Math.ceil(maxV / tickStep) * tickStep);
+  const ticks = Array.from({ length: axisMax / tickStep + 1 }, (_, i) => i * tickStep);
+  const x = (i) => (n === 1 ? padL + plotW / 2 : padL + 6 + (i * (plotW - 12)) / (n - 1));
+  const y = (v) => padT + plotH - (v / axisMax) * plotH;
+  const font = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
+  const grid = ticks.map((t) => `
+    <line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="1"></line>
+    <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" ${font} fill="#8A8571">${t}</text>`).join("");
+  const xLabels = rows.map((r, i) => `<text x="${x(i)}" y="${padT + plotH + 11}" text-anchor="middle" font-size="8" ${font} fill="${r.future ? "#B5B09F" : "#6B6652"}">${escapeHtml(r.label)}</text>`).join("");
+  const totalRow = totals ? `<text x="2" y="${padT + plotH + 24}" font-size="7.5" font-weight="600" ${font} fill="#8A8571">Total</text>` +
+    rows.map((r, i) => (r.future ? "" : `<text x="${x(i)}" y="${padT + plotH + 24}" text-anchor="middle" font-size="8" font-weight="700" ${font} fill="#1B2A41">${(r.discipline || 0) + (r.suspension || 0) + (r.timeOut || 0)}</text>`)).join("") : "";
+  const paths = lines.map((l) => `
+    ${lastPast > 0 ? `<polyline points="${rows.slice(0, lastPast + 1).map((r, i) => `${x(i)},${y(r[l.key] || 0)}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
+    ${rows.map((r, i) => (i <= lastPast && ((r[l.key] || 0) > 0 || lastPast === 0) ? `<circle cx="${x(i)}" cy="${y(r[l.key] || 0)}" r="1.9" fill="${l.color}"></circle>` : "")).join("")}`).join("");
+  const legendRow = (ls) => `<div class="dd-cal-legend dd-trend-legend dd-report-lines-legend">${ls.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}</div>`;
+  return `
+    <div class="dd-area-chart-wrap">
+      <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${xLabels}${totalRow}${paths}</svg>
+      <div class="dd-report-lines-legends">
+        ${legendRow(lines.filter((l) => l.cat !== "suspension"))}
+        ${legendRow(lines.filter((l) => l.cat === "suspension"))}
+      </div>
+    </div>`;
+}
+// One point per term, counted within each term's dates (as in the By term
+// table on page 1). Terms that haven't started are left off.
+function computeReportTermLines(year) {
+  const today = todayISO();
+  const terms = computeMoeCalendar(year).terms;
+  return computeTrendSeries(terms.map((t, i) => ({ start: t.start, end: t.end, label: `Term ${i + 1}` })))
+    .map((r) => ({ ...r, future: r.start > today }));
+}
+// Week 1–10 of the term, with all four terms added together — to show
+// whether the same weeks are busy every term (e.g. around exams).
+function computeReportWeekOfTermLines(year) {
+  const terms = computeMoeCalendar(year).terms;
+  const weeks = Math.max(...terms.map((t) => Math.ceil((daysBetween(t.start, t.end) + 1) / 7)));
+  const sum = Array.from({ length: weeks }, (_, w) => ({ label: `W${w + 1}`, discipline: 0, iss: 0, oss: 0, suspension: 0, timeOut: 0, parentMeeting: 0 }));
+  // Each term's own total per week (null = that week hasn't started yet),
+  // for the grid under the chart.
+  const today = todayISO();
+  const perTerm = terms.map(() => Array.from({ length: weeks }, () => null));
+  terms.forEach((t, ti) => {
+    const buckets = [];
+    for (let w = 0; w < weeks; w++) {
+      const st = addDays(t.start, w * 7);
+      if (st > t.end) break;
+      const en = addDays(st, 6) > t.end ? t.end : addDays(st, 6);
+      buckets.push({ start: st, end: en, w });
+    }
+    computeTrendSeries(buckets).forEach((r) => {
+      ["discipline", "iss", "oss", "suspension", "timeOut", "parentMeeting"].forEach((k) => { sum[r.w][k] += r[k]; });
+      if (r.start <= today) perTerm[ti][r.w] = r.discipline + r.suspension + r.timeOut;
+    });
+  });
+  sum.perTerm = perTerm;
+  return sum;
+}
+// Week × term grid under the week chart: how much each term adds to each
+// week, so one unusually bad term doesn't pass for a pattern. Darker = more.
+// "–" = that week hasn't happened yet.
+function renderReportWeekTermGrid(rows) {
+  const perTerm = rows.perTerm || [];
+  const weeks = rows.length;
+  const max = Math.max(1, ...perTerm.flat().filter((v) => v !== null));
+  const shade = (v) => {
+    if (v === null) return `class="dd-wg-na"`;
+    if (!v) return "";
+    const a = 0.1 + 0.55 * (v / max);
+    return `style="background:rgba(27,42,65,${a.toFixed(2)});${a > 0.42 ? "color:#fff;" : ""}"`;
+  };
+  const colTotal = (w) => perTerm.reduce((a, row) => a + (row[w] || 0), 0);
+  const rowTotal = (row) => row.reduce((a, v) => a + (v || 0), 0);
+  return `
+    <table class="dd-wg">
+      <thead><tr><th></th>${rows.map((r) => `<th>${r.label}</th>`).join("")}<th class="dd-wg-tot">Total</th></tr></thead>
+      <tbody>
+        ${perTerm.map((row, ti) => `<tr><th>T${ti + 1}</th>${row.map((v) => `<td ${shade(v)}>${v === null ? "–" : v}</td>`).join("")}<td class="dd-wg-tot">${row.every((v) => v === null) ? "–" : rowTotal(row)}</td></tr>`).join("")}
+      </tbody>
+      <tfoot><tr><th>Total</th>${Array.from({ length: weeks }, (_, w) => `<td>${colTotal(w)}</td>`).join("")}<td class="dd-wg-tot">${perTerm.reduce((a, row) => a + rowTotal(row), 0)}</td></tr></tfoot>
+    </table>`;
+}
 function renderStackedAreaChart(rows) {
   if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
   const totals = rows.map((r) => r.discipline + r.suspension + (r.timeOut || 0));
@@ -5008,12 +5098,9 @@ function renderStackedAreaChart(rows) {
     </div>`;
 }
 // Exact per-month figures to accompany the trend chart. Parent meetings
-// appear here as their own column — they're excluded from the chart
-// (where stacking them would overstate the incident count) but in a
-// table nothing is being summed, so showing follow-up volume alongside
-// the load is useful rather than misleading.
+// have their own page in the report, so they're not in this table.
 function renderMonthlyBreakdownTable(rows) {
-  const withData = rows.filter((r) => r.discipline + r.suspension + (r.timeOut || 0) + r.parentMeeting > 0);
+  const withData = rows.filter((r) => r.discipline + r.suspension + (r.timeOut || 0) > 0);
   if (!withData.length) return `<div class="dd-dash-empty">Nothing logged this year yet.</div>`;
   const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
   return `
@@ -5023,7 +5110,6 @@ function renderMonthlyBreakdownTable(rows) {
         <div class="dd-level-cell-term">Grooming</div>
         <div class="dd-level-cell-term">Suspension</div>
         <div class="dd-level-cell-term">Time Out</div>
-        <div class="dd-level-cell-term">Meetings</div>
       </div>
       ${withData.map((r) => `
       <div class="dd-level-row">
@@ -5031,14 +5117,12 @@ function renderMonthlyBreakdownTable(rows) {
         <div class="dd-level-cell-term">${r.discipline}</div>
         <div class="dd-level-cell-term">${r.suspension}</div>
         <div class="dd-level-cell-term">${r.timeOut || 0}</div>
-        <div class="dd-level-cell-term">${r.parentMeeting}</div>
       </div>`).join("")}
       <div class="dd-level-row dd-level-row-total">
         <div class="dd-level-cell-class">Total</div>
         <div class="dd-level-cell-term">${sum("discipline")}</div>
         <div class="dd-level-cell-term">${sum("suspension")}</div>
         <div class="dd-level-cell-term">${sum("timeOut")}</div>
-        <div class="dd-level-cell-term">${sum("parentMeeting")}</div>
       </div>
     </div>`;
 }
@@ -5121,7 +5205,8 @@ function renderDateRangeFields(idPrefix, startVal, endVal) {
 //   3. By term (chart) + By position within term + By day of week
 //   4. Repeat vs. unique students + Grooming escalation rate + repeat intervals
 //   5. Most challenging levels + classes (+ this year's suspension/time out lists)
-//   6. Trend analysis + Recommendations
+//   6. Parent meetings (by month, by term, reasons)
+//   7. Trend analysis + Recommendations
 const ICON_PRINTER = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"></path><rect x="4" y="9" width="16" height="8" rx="1.5"></rect><path d="M6 14h12v7H6z"></path></svg>`;
 const ICON_DOCUMENT = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h6"></path></svg>`;
 function reportSectionTitle(text) {
@@ -5247,10 +5332,14 @@ async function loadPdfFontCss() {
 // straight after a section heading.
 function pdfBreakUnits(group, pageH) {
   const top0 = group.getBoundingClientRect().top;
-  const unitOf = (el) => { const r = el.getBoundingClientRect(); return { top: r.top - top0, bottom: r.bottom - top0, keepWithNext: el.matches(".dd-dash-title, .dd-ta-head, .dd-report-heading") }; };
+  const unitOf = (el) => { const r = el.getBoundingClientRect(); return { top: r.top - top0, bottom: r.bottom - top0, keepWithNext: el.matches(".dd-dash-title, .dd-ta-head, .dd-report-heading, .dd-rep-group-head") }; };
   const flatten = (el) => {
     const u = unitOf(el);
     const kids = [...el.children].filter((k) => k.getBoundingClientRect().height > 0);
+    // Grouped lists always break between rows (a row of 3 shares one top and
+    // bottom, so the cut falls under the whole row), so a long list starts
+    // right after the section above it instead of jumping to a new sheet.
+    if (el.matches(".dd-rep-groups, .dd-rep-group, .dd-rep-grid3") && kids.length) return kids.flatMap(flatten);
     if (u.bottom - u.top <= pageH || !kids.length) return [u];
     return kids.flatMap((k) => (k.matches("ul, ol") ? [...k.children].flatMap(flatten) : flatten(k)));
   };
@@ -5271,7 +5360,18 @@ function pdfPageSlices(units, total, pageH) {
   if (start < total - 1) slices.push([start, total]);
   return slices;
 }
+// On tablet/desktop the whole app is enlarged with CSS zoom, which the
+// capture tool doesn't understand (it measured words slightly wrong, e.g.
+// "TIMEOUT", "In -School"). So the enlargement is switched off just for
+// the capture and put back afterwards — the PDF is laid out at its own
+// fixed width either way, so it comes out the same from any device.
 async function exportAnnualReportPdf(year) {
+  const prevZoom = document.body.style.zoom;
+  document.body.style.zoom = "1";
+  try { return await exportAnnualReportPdfInner(year); }
+  finally { document.body.style.zoom = prevZoom; }
+}
+async function exportAnnualReportPdfInner(year) {
   await loadScriptOnce("./lib/html2canvas.min.js");
   await loadScriptOnce("./lib/jspdf.umd.min.js");
   if (document.fonts && document.fonts.ready) await document.fonts.ready;
@@ -5337,47 +5437,417 @@ async function exportAnnualReportPdf(year) {
   }
   pdf.save(`Annual Summary ${year}.pdf`);
 }
+// ---- Annual Report: Parent meetings page ----
+// Meetings held per month, up to today (by the date they happen — a postponed meeting
+// counts on its new date; cancelled ones and postponed ones still waiting
+// for a date don't count), shown as vertical bars with the number on top.
+function computeReportPmMonthly(year) {
+  const today = todayISO();
+  return Array.from({ length: 12 }, (_, i) => {
+    const mk = `${year}-${String(i + 1).padStart(2, "0")}`;
+    return {
+      label: MONTH_ABBR[i],
+      count: state.parentMeetings.filter((m) => isPmCounted(m) && pmDate(m) <= today && monthKey(pmDate(m)) === mk).length,
+      future: `${mk}-01` > today,
+    };
+  });
+}
+function renderReportPmBars(rows) {
+  const W = 320, padL = 22, padR = 6, padT = 14, padB = 16, plotH = 58, H = padT + plotH + padB;
+  const plotW = W - padL - padR, n = rows.length, slot = plotW / n, barW = Math.min(16, slot * 0.6);
+  const maxV = Math.max(1, ...rows.map((r) => r.count));
+  const tickStep = [1, 2, 5, 10, 20, 25, 50, 100].find((st) => Math.ceil(maxV / st) <= 4) || Math.ceil(maxV / 4);
+  const axisMax = Math.max(tickStep, Math.ceil(maxV / tickStep) * tickStep);
+  const y = (v) => padT + plotH - (v / axisMax) * plotH;
+  const font = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
+  const ticks = Array.from({ length: axisMax / tickStep + 1 }, (_, i) => i * tickStep);
+  const color = CHART_COLORS.parentMeeting;
+  return `
+    <div class="dd-area-chart-wrap">
+      <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">
+        ${ticks.map((t) => `<line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="1"></line>
+          <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" ${font} fill="#8A8571">${t}</text>`).join("")}
+        ${rows.map((r, i) => {
+          const cx = padL + slot * (i + 0.5);
+          const bar = r.count > 0 ? `<rect x="${cx - barW / 2}" y="${y(r.count)}" width="${barW}" height="${y(0) - y(r.count)}" rx="1.5" fill="${color}"></rect>
+            <text x="${cx}" y="${y(r.count) - 3}" text-anchor="middle" font-size="8" font-weight="700" ${font} fill="#1B2A41">${r.count}</text>` : "";
+          return `${bar}<text x="${cx}" y="${padT + plotH + 11}" text-anchor="middle" font-size="8" ${font} fill="${r.future ? "#B5B09F" : "#6B6652"}">${r.label}</text>`;
+        }).join("")}
+      </svg>
+    </div>`;
+}
+// Per term (each term runs until the next one starts, so meetings in the
+// holidays count with the term before them): held, still-postponed and
+// cancelled, by the date originally booked (held ones by the date held).
+function computeReportPmByTerm(year) {
+  const terms = computeMoeCalendar(year).terms;
+  const today = todayISO();
+  return terms.map((t, i) => {
+    const start = i === 0 ? `${year}-01-01` : t.start;
+    const end = i === terms.length - 1 ? `${year}-12-31` : addDays(terms[i + 1].start, -1);
+    const inT = (d) => d && d >= start && d <= end;
+    const live = state.parentMeetings.filter((m) => !m.deleted);
+    return {
+      label: `T${i + 1}`,
+      future: t.start > today,
+      held: live.filter((m) => isPmCounted(m) && pmDate(m) <= today && inT(pmDate(m))).length, // booked for later: not held yet
+      postponed: live.filter((m) => m.pmStatus === "Postponed" && !m.postponedTo && inT(m.date)).length,
+      cancelled: live.filter((m) => m.pmStatus === "Cancelled" && inT(m.date)).length,
+    };
+  });
+}
+function renderReportPmTermTable(rows) {
+  const tot = (k) => rows.reduce((a, r) => a + r[k], 0);
+  const row = (label, h, p, c, cls = "") => `
+        <div class="dd-level-row${cls}">
+          <div class="dd-level-cell-class">${label}</div>
+          <div class="dd-level-cell-term">${h}</div><div class="dd-level-cell-term">${p}</div><div class="dd-level-cell-term">${c}</div>
+        </div>`;
+  return `
+      <div class="dd-level-breakdown" style="margin-top:10px">
+        <div class="dd-level-row dd-level-row-header">
+          <div class="dd-level-cell-class">Term</div>
+          <div class="dd-level-cell-term" style="color:${CHART_COLORS.parentMeeting}">Held</div>
+          <div class="dd-level-cell-term">Postponed*</div>
+          <div class="dd-level-cell-term">Cancelled</div>
+        </div>
+        ${rows.map((r) => (r.future ? row(r.label, "–", "–", "–") : row(r.label, r.held, r.postponed, r.cancelled))).join("")}
+        ${row("Total", tot("held"), tot("postponed"), tot("cancelled"), " dd-level-row-total")}
+      </div>
+      <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">*Postponed and still waiting for a new date. Once a new date is set, the meeting counts as held on that date. Meetings in the holidays count with the term before them.</div>`;
+}
+// Most common reasons for the year's meetings (held or not), with how
+// often the student was the victim, the offender or both.
+function computeReportPmReasons(year) {
+  const tally = {};
+  state.parentMeetings.forEach((m) => {
+    if (m.deleted || !String(pmDate(m) || m.date || "").startsWith(`${year}-`)) return;
+    const list = Array.isArray(m.reasons) && m.reasons.length
+      ? m.reasons.map((r) => ({ cat: r.category === "Others" ? "Others" : r.category, status: r.status }))
+      : String(m.reason || "").split("; ").filter(Boolean).map((x) => ({ cat: x.replace(/\s*\((Victim|Offender|Both|NA)\)$/, "").replace(/^Others\b.*/, "Others"), status: (x.match(/\((Victim|Offender|Both)\)$/) || [])[1] }));
+    list.forEach(({ cat, status }) => {
+      if (!cat) return;
+      const t = (tally[cat] = tally[cat] || { cat, count: 0, Victim: 0, Offender: 0, Both: 0 });
+      t.count++;
+      if (status && t[status] !== undefined) t[status]++;
+    });
+  });
+  return Object.values(tally).sort((a, b) => b.count - a.count);
+}
+function renderReportPmPage(year) {
+  const monthly = computeReportPmMonthly(year);
+  const reasons = computeReportPmReasons(year);
+  const maxR = Math.max(1, ...reasons.map((r) => r.count));
+  const roles = (r) => ["Victim", "Offender", "Both"].filter((k) => r[k]).map((k) => `${pmStatusWords(k)} ${r[k]}`).join(" · ");
+  return `
+      ${reportSectionTitle("Parent meetings by month")}
+      ${renderReportPmBars(monthly)}
+      ${reportSectionTitle("Parent meetings by term")}
+      ${renderReportPmTermTable(computeReportPmByTerm(year))}
+      ${reportSectionTitle("Reasons for parent meetings")}
+      ${reasons.length ? `<div class="dd-panel" style="padding:12px;margin-bottom:4px">
+        ${reasons.slice(0, 5).map((r) => `
+        <div class="dd-pm-reason">
+          <div class="dd-pm-reason-head"><span>${escapeHtml(r.cat)}</span><span class="dd-pm-reason-n">${r.count}</span></div>
+          <div class="dd-pm-reason-track"><div style="width:${Math.max(4, (r.count / maxR) * 100)}%;background:${CHART_COLORS.parentMeeting}"></div></div>
+          ${roles(r) ? `<div class="dd-mono-muted dd-pm-reason-roles">${roles(r)}</div>` : ""}
+        </div>`).join("")}
+        ${reasons.length > 5 ? `<div class="dd-mono-muted" style="font-size:11px">+ ${reasons.length - 5} other reason${reasons.length - 5 === 1 ? "" : "s"}</div>` : ""}
+      </div>` : `<div class="dd-dash-empty">No parent meetings logged this year.</div>`}`;
+}
+// ================= Annual Report building blocks (8-page layout) =================
+// Suspension is one category throughout (in-school and out-of-school
+// together). Parent Meet appears in the term graphs and in its own section.
+function reportCats() {
+  return [
+    { key: "discipline", label: "Grooming", color: CHART_COLORS.discipline },
+    { key: "suspension", label: "Suspension", color: CHART_COLORS.suspension },
+    { key: "timeOut", label: "Time Out", color: CHART_COLORS.timeOut },
+    { key: "parentMeeting", label: "Parent Meet", color: CHART_COLORS.parentMeeting },
+  ];
+}
+// Legend sized like the chart labels (see .dd-rep-legend).
+function reportLegend(items, kind = "line") {
+  return `<div class="dd-rep-legend">${items.map((it) => `<span class="dd-rep-legend-item"><span class="${kind === "line" ? "dd-rep-sw-line" : "dd-rep-sw-box"}" style="background:${it.color}"></span>${escapeHtml(it.label)}</span>`).join("")}</div>`;
+}
+function reportTicks(maxV, maxTicks = 5) {
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((st) => Math.ceil(Math.max(1, maxV) / st) <= maxTicks) || Math.ceil(maxV / maxTicks);
+  const top = Math.max(step, Math.ceil(Math.max(1, maxV) / step) * step);
+  return { top, ticks: Array.from({ length: top / step + 1 }, (_, i) => i * step) };
+}
+const REP_FONT = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
+// A small line chart (one per term on page 1). `axisTop` shares the scale
+// across the four so the terms can be compared by eye.
+function renderReportMiniLines(rows, lines, { title, axisTop, note } = {}) {
+  const W = 220, padL = 20, padR = 8, padT = 8, plotH = 78, padB = 16, H = padT + plotH + padB, plotW = W - padL - padR;
+  const n = rows.length;
+  const lastPast = rows.reduce((acc, r, i) => (r.future ? acc : i), -1);
+  const { top, ticks } = reportTicks(axisTop || Math.max(1, ...rows.flatMap((r) => lines.map((l) => r[l.key] || 0))), 4);
+  const x = (i) => (n === 1 ? padL + plotW / 2 : padL + 4 + (i * (plotW - 8)) / (n - 1));
+  const y = (v) => padT + plotH - (v / top) * plotH;
+  const grid = ticks.map((t) => `<line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="0.8"></line><text x="${padL - 4}" y="${y(t) + 3}" text-anchor="end" font-size="8" ${REP_FONT} fill="#8A8571">${t}</text>`).join("");
+  const labels = rows.map((r, i) => `<text x="${x(i)}" y="${padT + plotH + 11}" text-anchor="middle" font-size="7.5" ${REP_FONT} fill="${r.future ? "#C9C4B4" : "#6B6652"}">${escapeHtml(r.label)}</text>`).join("");
+  const paths = lines.map((l) => `
+    ${lastPast > 0 ? `<polyline points="${rows.slice(0, lastPast + 1).map((r, i) => `${x(i)},${y(r[l.key] || 0)}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
+    ${rows.map((r, i) => (i <= lastPast && ((r[l.key] || 0) > 0 || lastPast === 0) ? `<circle cx="${x(i)}" cy="${y(r[l.key] || 0)}" r="1.6" fill="${l.color}"></circle>` : "")).join("")}`).join("");
+  const empty = lastPast < 0 ? `<text x="${padL + plotW / 2}" y="${padT + plotH / 2}" text-anchor="middle" font-size="9" ${REP_FONT} fill="#8A8571">${escapeHtml(note || "Not started yet")}</text>` : "";
+  return `
+    <div class="dd-area-chart-wrap dd-rep-mini">
+      <div class="dd-rep-mini-title">${escapeHtml(title || "")}</div>
+      <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${labels}${paths}${empty}</svg>
+    </div>`;
+}
+// Vertical stacked bars with the total on top of each bar.
+function renderReportStackedBars(rows, segs, { maxTicks = 5 } = {}) {
+  const W = 320, padL = 22, padR = 6, padT = 14, plotH = 110, padB = 16, H = padT + plotH + padB, plotW = W - padL - padR;
+  const n = rows.length, slot = plotW / n, barW = Math.min(22, slot * 0.62);
+  const total = (r) => segs.reduce((a, sg) => a + (r[sg.key] || 0), 0);
+  const { top, ticks } = reportTicks(Math.max(1, ...rows.map(total)), maxTicks);
+  const y = (v) => padT + plotH - (v / top) * plotH;
+  const grid = ticks.map((t) => `<line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="1"></line><text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" ${REP_FONT} fill="#8A8571">${t}</text>`).join("");
+  const bars = rows.map((r, i) => {
+    const cx = padL + slot * (i + 0.5);
+    let acc = 0;
+    const parts = segs.map((sg) => {
+      const v = r[sg.key] || 0;
+      if (!v) return "";
+      const y1 = y(acc + v), h = y(acc) - y1; acc += v;
+      return `<rect x="${cx - barW / 2}" y="${y1}" width="${barW}" height="${h}" fill="${sg.color}"></rect>`;
+    }).join("");
+    const t = total(r);
+    return `${parts}${t > 0 ? `<text x="${cx}" y="${y(t) - 3}" text-anchor="middle" font-size="8" font-weight="700" ${REP_FONT} fill="#1B2A41">${t}</text>` : ""}
+      <text x="${cx}" y="${padT + plotH + 11}" text-anchor="middle" font-size="8" ${REP_FONT} fill="${r.future ? "#C9C4B4" : "#6B6652"}">${escapeHtml(r.label)}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${bars}</svg>`;
+}
+// Grouped list, 3 columns, row by row, with lines between the columns.
+function renderReportGroupedGrid(groups, headFn, itemFn, emptyText) {
+  if (!groups.length) return `<div class="dd-dash-empty">${escapeHtml(emptyText)}</div>`;
+  return `<div class="dd-rep-groups">${groups.map((g) => `
+    <div class="dd-rep-group">
+      <div class="dd-rep-group-head">${headFn(g.count, g.items.length)}</div>
+      <div class="dd-rep-grid3">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}</div>
+    </div>`).join("")}</div>`;
+}
+function groupByCount(list) {
+  const map = new Map();
+  list.forEach((it) => { if (!map.has(it.count)) map.set(it.count, []); map.get(it.count).push(it); });
+  return [...map.entries()].sort((a, b) => b[0] - a[0]).map(([count, items]) => ({ count, items }));
+}
+const studentCell = (r) => `<span class="dd-rep-name">${escapeHtml(truncateName(r.name))}</span>${r.cls ? ` <span class="dd-rep-cls">${escapeHtml(r.cls)}</span>` : ""}`;
+
+// ---- Page 1: weeks of each term ----
+function computeReportTermWeeks(year) {
+  const today = todayISO();
+  return computeMoeCalendar(year).terms.map((t, i) => ({
+    title: `Term ${i + 1}`,
+    rows: computeTrendSeries(trendBuckets(t.start, t.end, "weeks")).map((r) => ({ ...r, future: r.start > today })),
+  }));
+}
+function renderReportTermQuadrants(year) {
+  const terms = computeReportTermWeeks(year);
+  const cats = reportCats();
+  const top = Math.max(1, ...terms.flatMap((t) => t.rows.filter((r) => !r.future).flatMap((r) => cats.map((c) => r[c.key] || 0))));
+  return `
+    <div class="dd-rep-quads">
+      ${terms.map((t) => renderReportMiniLines(t.rows, cats, { title: t.title, axisTop: top })).join("")}
+    </div>
+    <div class="dd-rep-legend-wrap">${reportLegend(cats)}</div>`;
+}
+// ---- Page 2: monthly stacked bars + table with time out types ----
+function computeReportMonthly(year) {
+  const today = todayISO();
+  const lastMonth = String(year) === today.slice(0, 4) ? parseInt(today.slice(5, 7), 10) : 12;
+  const base = computeYearMonthlyTrend(year);
+  return base.map((m, i) => {
+    const mk = `${year}-${String(i + 1).padStart(2, "0")}`;
+    const tos = state.timeOuts.filter((t) => !t.deleted && monthKey(t.startDate) === mk);
+    return { ...m, label: MONTH_ABBR[i], future: i + 1 > lastMonth, toByType: timeOutTypeBreakdown(tos) };
+  });
+}
+function renderReportMonthlyPage(year) {
+  const rows = computeReportMonthly(year);
+  const segs = reportCats().filter((c) => c.key !== "parentMeeting");
+  const shown = rows.filter((r) => !r.future);
+  const tot = (k) => shown.reduce((a, r) => a + (r[k] || 0), 0);
+  const totType = (k) => shown.reduce((a, r) => a + (r.toByType[k] || 0), 0);
+  const rowTotal = (r) => r.discipline + r.suspension + r.timeOut;
+  return `
+      <div class="dd-area-chart-wrap">
+        ${renderReportStackedBars(rows, segs)}
+        <div class="dd-rep-legend-wrap dd-rep-legend-in">${reportLegend(segs, "box")}</div>
+      </div>
+      <table class="dd-rt">
+        <thead>
+          <tr><th rowspan="2">Month</th><th rowspan="2" style="color:${CHART_COLORS.discipline}"><span class="dd-rt-long">Grooming</span><span class="dd-rt-short">Groom</span></th><th rowspan="2" style="color:${CHART_COLORS.suspension}"><span class="dd-rt-long">Suspension</span><span class="dd-rt-short">Susp</span></th><th colspan="4" style="color:${CHART_COLORS.timeOut}">Time Out</th><th rowspan="2">Total</th></tr>
+          <tr>${TO_TYPES.map((t) => `<th class="dd-rt-sub" style="color:${CHART_COLORS.timeOut}">${t.abbrev}</th>`).join("")}</tr>
+        </thead>
+        <tbody>${shown.map((r) => `<tr><th>${r.label}</th><td>${r.discipline}</td><td>${r.suspension}</td>${TO_TYPES.map((t) => `<td class="dd-rt-to">${r.toByType[t.key] || 0}</td>`).join("")}<td class="dd-rt-tot">${rowTotal(r)}</td></tr>`).join("")}</tbody>
+        <tfoot><tr><th>Total</th><td>${tot("discipline")}</td><td>${tot("suspension")}</td>${TO_TYPES.map((t) => `<td class="dd-rt-to">${totType(t.key)}</td>`).join("")}<td class="dd-rt-tot">${tot("discipline") + tot("suspension") + tot("timeOut")}</td></tr></tfoot>
+      </table>
+      <div class="dd-mono-muted dd-rep-foot">Time Out types: ${TO_TYPES.map((t) => `${t.abbrev} = ${t.label.replace(/^Time Out \(|\)$/g, "")}`).join(" · ")}.</div>`;
+}
+// ---- Page 3: day of week by term, parent meetings ----
+const TERM_SHADES = ["#B9C4D3", "#8494AB", "#4F6180", "#1B2A41"];
+function computeReportDayByTerm(year) {
+  const terms = computeMoeCalendar(year).terms;
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const rows = days.map((d) => ({ label: d }));
+  const table = terms.map(() => [0, 0, 0, 0, 0]);
+  const add = (date) => {
+    if (!date) return;
+    const ti = terms.findIndex((t) => date >= t.start && date <= t.end);
+    const dw = weekdayOf(date);
+    if (ti < 0 || dw < 1 || dw > 5) return;
+    table[ti][dw - 1]++;
+  };
+  state.incidents.forEach((it) => { if (!it.deleted && Array.isArray(it.issues)) add(it.date); });
+  [...state.suspensions, ...state.timeOuts].forEach((x) => { if (!x.deleted) add(x.startDate); });
+  rows.forEach((r, di) => terms.forEach((_, ti) => { r[`t${ti}`] = table[ti][di]; }));
+  return { rows, table, terms };
+}
+function renderReportDayOfWeek(year) {
+  const { rows, table } = computeReportDayByTerm(year);
+  const segs = [0, 1, 2, 3].map((i) => ({ key: `t${i}`, label: `Term ${i + 1}`, color: TERM_SHADES[i] }));
+  const colTot = (di) => table.reduce((a, r) => a + r[di], 0);
+  const rowTot = (r) => r.reduce((a, v) => a + v, 0);
+  return `
+      <div class="dd-area-chart-wrap">
+        ${renderReportStackedBars(rows, segs, { maxTicks: 4 })}
+        <div class="dd-rep-legend-wrap dd-rep-legend-in">${reportLegend(segs, "box")}</div>
+      </div>
+      <table class="dd-rt">
+        <thead><tr><th>Term</th>${rows.map((r) => `<th>${r.label}</th>`).join("")}<th>Total</th></tr></thead>
+        <tbody>${table.map((r, ti) => `<tr><th>T${ti + 1}</th>${r.map((v) => `<td>${v}</td>`).join("")}<td class="dd-rt-tot">${rowTot(r)}</td></tr>`).join("")}</tbody>
+        <tfoot><tr><th>Total</th>${rows.map((_, di) => `<td>${colTot(di)}</td>`).join("")}<td class="dd-rt-tot">${table.reduce((a, r) => a + rowTot(r), 0)}</td></tr></tfoot>
+      </table>
+      <div class="dd-mono-muted dd-rep-foot">Grooming entries, suspensions and time outs on school days in term, by the day they happened (suspensions and time outs by their first day).</div>`;
+}
+// Students by how many parent meetings they had this year (meetings that
+// went ahead, up to today; a postponed one counts on its new date).
+function computeReportPmCounts(year) {
+  const today = todayISO();
+  const rows = {};
+  state.parentMeetings.forEach((m) => {
+    const d = pmDate(m);
+    if (!isPmCounted(m) || !d || !d.startsWith(`${year}-`) || d > today) return;
+    const key = `${normalizeName(m.studentName)}|${normCls(sameYearGroup(year, m.studentName, m.studentClass || "")[0])}`;
+    rows[key] = rows[key] || { name: m.studentName, cls: m.studentClass, count: 0, last: "" };
+    if (d >= rows[key].last) { rows[key].cls = m.studentClass; rows[key].last = d; }
+    rows[key].count++;
+  });
+  return Object.values(rows).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+// ---- Page 5: levels and classes ----
+function renderReportLevelBlocks(year) {
+  const levels = computeYearLevelRanking(year).slice().sort((a, b) => a.total - b.total || a.label.localeCompare(b.label));
+  return `
+      <div class="dd-rep-levels">
+        ${levels.map((l) => `
+        <div class="dd-rep-level">
+          <div class="dd-rep-level-name">${l.label}</div>
+          <div class="dd-rep-level-total">${l.total}</div>
+          <div class="dd-rep-level-line"><span>Grooming</span><b>${l.discipline}</b></div>
+          <div class="dd-rep-level-line"><span>Suspension</span><b>${l.suspension}</b></div>
+          <div class="dd-rep-level-line"><span>Time Out</span><b>${l.timeOut}</b></div>
+        </div>`).join("")}
+      </div>
+      <div class="dd-rep-level-scale"><span>Least challenging</span><span>Most challenging</span></div>`;
+}
+function computeReportClassCounts(year) {
+  const inY = (d) => d && d.startsWith(`${year}-`);
+  return CLASS_OPTIONS.map((cls) => {
+    const discipline = state.incidents.filter((i) => !i.deleted && inY(i.date) && i.studentClass === cls).length;
+    const suspension = state.suspensions.filter((x) => !x.deleted && inY(x.startDate) && x.studentClass === cls).length;
+    const timeOut = state.timeOuts.filter((x) => !x.deleted && inY(x.startDate) && x.studentClass === cls).length;
+    const parentMeeting = state.parentMeetings.filter((m) => isPmCounted(m) && inY(pmDate(m)) && m.studentClass === cls).length;
+    return { cls, discipline, suspension, timeOut, parentMeeting, count: discipline + suspension + timeOut + parentMeeting };
+  }).filter((r) => r.count > 0).sort((a, b) => b.count - a.count || a.cls.localeCompare(b.cls));
+}
+const classCell = (r) => `
+  <div class="dd-rep-class">
+    <div class="dd-rep-class-name">${escapeHtml(r.cls)}</div>
+    <div class="dd-rep-class-break">
+      <div><span>Grooming</span><b>${r.discipline}</b></div>
+      <div><span>Suspension</span><b>${r.suspension}</b></div>
+      <div><span>Time Out</span><b>${r.timeOut}</b></div>
+      <div><span>Parent Meet</span><b>${r.parentMeeting}</b></div>
+    </div>
+  </div>`;
+const plainCount = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// ---- Top reasons for suspension / time out, by level ----
+// One row per reason that was actually used, ranked by total. A record with
+// several reasons counts once towards each. Columns: P1–P6, then the total.
+function computeReportReasonsByLevel(records, year) {
+  const rows = {};
+  records.forEach((r) => {
+    if (r.deleted || !r.startDate || !r.startDate.startsWith(`${year}-`)) return;
+    const lvl = classLevel(r.studentClass);
+    multiReasonsFromSaved(r).selected.forEach((reason) => {
+      if (!reason) return;
+      const row = (rows[reason] = rows[reason] || { reason, levels: [0, 0, 0, 0, 0, 0], total: 0 });
+      if (lvl >= 1 && lvl <= 6) row.levels[lvl - 1]++;
+      row.total++;
+    });
+  });
+  return Object.values(rows).sort((a, b) => b.total - a.total || a.reason.localeCompare(b.reason));
+}
+function renderReportReasonsTable(rows, emptyText) {
+  if (!rows.length) return `<div class="dd-dash-empty">${escapeHtml(emptyText)}</div>`;
+  return `
+      <table class="dd-rt dd-rt-reasons">
+        <thead><tr><th class="dd-rt-reason-h">Reason</th>${[1, 2, 3, 4, 5, 6].map((l) => `<th>P${l}</th>`).join("")}<th>Total</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr><th class="dd-rt-reason">${escapeHtml(r.reason)}</th>${r.levels.map((v) => `<td${v ? "" : ' class="dd-rt-zero"'}>${v}</td>`).join("")}<td class="dd-rt-tot">${r.total}</td></tr>`).join("")}</tbody>
+      </table>`;
+}
+function renderReportRecommendations(year) {
+  const ins = computeYearInsights(year);
+  return `
+      ${reportSectionTitle("Recommendations")}
+      <div class="dd-panel dd-ta-panel">
+        <ol class="dd-ta-list">${ins.recs.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ol>
+      </div>
+      <div class="dd-rep-disclaimer">Note: These recommendations are generated purely for reference purposes only. Do not use the recommendations without consideration.</div>`;
+}
 function renderAnnualReportPages(year) {
   const page = (n, html) => `<div class="dd-report-page" data-page="${n}">${html}</div>`;
-  // Page 1 — Annual summary + By term
+  // Page 1 — Annual summary tiles, By Term, By Weeks in a Term (4 graphs)
   const p1 = `
       <div class="dd-report-heading" style="margin:10px 0">
         <div class="dd-dash-title" style="color:#1B2A41;margin:0">Annual Summary — ${year}</div>
       </div>
       ${renderTallyGrid(["discipline", "suspension", "timeOut", "parentMeeting"], computeYearlyCategoryTotals(year))}
-      ${reportSectionTitle("By term")}
-      ${renderReportByTermTable(year)}`;
-  // Page 2 — Discipline load by month
-  const monthly = computeYearMonthlyTrend(year);
+      ${reportSectionTitle("By Term")}
+      ${renderReportByTermTable(year)}
+      ${reportSectionTitle("By Weeks in a Term")}
+      <div class="dd-keep-together">${renderReportTermQuadrants(year)}</div>`;
+  // Page 2 — Discipline Load by Month
   const p2 = `
-      ${reportSectionTitle("Discipline load by month")}
-      ${renderStackedAreaChart(monthly)}${renderMonthlyBreakdownTable(monthly)}`;
-  // Page 3 — By term (chart) + By position within term + By day of week
-  const dow = computeDayOfWeekPattern(year);
-  const termPos = computeTermPositionPattern(year);
-  const maxDow = Math.max(1, ...dow.map((d) => d.count));
-  const maxTermPos = Math.max(1, termPos.Early, termPos.Mid, termPos.Late);
+      ${reportSectionTitle("Discipline Load by Month")}
+      ${renderReportMonthlyPage(year)}`;
+  // Page 3 — Day of week
   const p3 = `
-      ${reportSectionTitle("By term (chart)")}
-      ${renderReportBarRows(computeYearTermTrend(year))}
-      ${reportSectionTitle("By position within term")}
-      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
-        ${renderReportBar("Early", termPos.Early, maxTermPos, CHART_COLORS.discipline)}
-        ${renderReportBar("Mid", termPos.Mid, maxTermPos, CHART_COLORS.discipline)}
-        ${renderReportBar("Late", termPos.Late, maxTermPos, CHART_COLORS.discipline)}
-      </div>
-      ${reportSectionTitle("By day of week")}
-      <div class="dd-panel" style="padding:12px;margin-bottom:4px">
-        ${dow.filter((d) => d.day !== "Sun" && d.day !== "Sat").map((d) => renderReportBar(d.day, d.count, maxDow, CHART_COLORS.discipline)).join("")}
-        ${(dow[0].count + dow[6].count) > 0 ? renderReportBar("Wknd", dow[0].count + dow[6].count, maxDow, "#8A8571") : ""}
-      </div>`;
-  // Page 4 — Repeat vs. unique + Grooming escalation rate + repeat intervals
+      ${reportSectionTitle("Discipline Load by Day of Week")}
+      ${renderReportDayOfWeek(year)}`;
+  // Page 4 — Top reasons (suspension, time out), then Parent meetings at the bottom
+  const pmCounts = computeReportPmCounts(year);
+  const p4 = `
+      ${reportSectionTitle("Top Reasons for Suspension")}
+      ${renderReportReasonsTable(computeReportReasonsByLevel(state.suspensions, year), "No suspensions this year.")}
+      ${reportSectionTitle("Top Reasons for Time Out")}
+      ${renderReportReasonsTable(computeReportReasonsByLevel(state.timeOuts, year), "No time outs this year.")}
+      ${reportSectionTitle("Parent Meetings by Month")}
+      ${renderReportPmBars(computeReportPmMonthly(year))}
+      ${reportSectionTitle("Parent Meet Count")}
+      ${renderReportGroupedGrid(groupByCount(pmCounts), (n, k) => `${plainCount(n, "meeting", "meetings")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No parent meetings this year.")}
+      ${pmCounts.length ? `<div class="dd-mono-muted dd-rep-foot">Meetings held up to ${formatDate(todayISO() < `${year}-12-31` ? todayISO() : `${year}-12-31`)}. Meetings booked for later dates aren't counted yet.</div>` : ""}`;
+  // Page 5 — Repeat vs. unique + Grooming escalation rate + repeat intervals
   const ru = computeRepeatVsUnique(year);
   const esc = computeEscalationRate(year);
   const intervals = computeRepeatSuspensionIntervals(year);
   const toIntervals = computeRepeatTimeOutIntervals(year);
-  const p4 = `
-      ${reportSectionTitle("Repeat vs. unique students")}
+  const p5 = `
+      ${reportSectionTitle("Repeated vs. Unique Students")}
       <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0 0 6px">
           <b>Suspensions:</b> ${ru.suspension.totalCount} suspension${ru.suspension.totalCount === 1 ? "" : "s"} across ${ru.suspension.uniqueStudents} student${ru.suspension.uniqueStudents === 1 ? "" : "s"}${ru.suspension.repeatStudents > 0 ? ` — ${ru.suspension.repeatStudents} of them suspended more than once` : ""}.
@@ -5389,30 +5859,33 @@ function renderAnnualReportPages(year) {
           <b>Grooming:</b> ${ru.grooming.totalCount} issue${ru.grooming.totalCount === 1 ? "" : "s"} across ${ru.grooming.uniqueStudents} student${ru.grooming.uniqueStudents === 1 ? "" : "s"}${ru.grooming.repeatStudents > 0 ? ` — ${ru.grooming.repeatStudents} flagged more than once` : ""}.
         </p>
       </div>
-      ${reportSectionTitle("Grooming escalation rate")}
+      ${reportSectionTitle("Grooming Escalation Rate")}
       ${!esc ? `<div class="dd-dash-empty">No grooming issues logged this year.</div>` : `
       <div class="dd-panel" style="background:#F7F5EE;border:1px solid #E4E1D4;padding:12px;margin-bottom:4px">
         <p class="dd-sans" style="font-size:13px;line-height:1.6;margin:0">
           Of ${esc.total} issue${esc.total === 1 ? "" : "s"} logged this year: <b>${esc.pct1st}%</b> never went past 1st Warning, <b>${esc.pct2nd}%</b> reached 2nd Warning, and <b>${esc.pctFinal}%</b> reached Final Warning.
         </p>
       </div>`}
-      ${reportSectionTitle("Repeat suspension intervals")}
+      ${reportSectionTitle("Repeat Suspension Intervals")}
       ${intervals.length === 0 ? `<div class="dd-dash-empty">No student was suspended more than once.</div>` : renderReportIntervalsTable(intervals)}
-      ${reportSectionTitle("Repeat time out intervals")}
+      ${reportSectionTitle("Repeat Time Out Intervals")}
       ${toIntervals.length === 0 ? `<div class="dd-dash-empty">No student was given more than one time out.</div>` : renderReportIntervalsTable(toIntervals)}`;
-  // Page 5 — Most challenging levels + classes (+ this year's lists)
-  const p5 = `
-      ${reportSectionTitle("Most challenging levels")}
-      ${renderRankingList(computeYearLevelRanking(year))}
-      ${reportSectionTitle("Most challenging classes")}
-      ${renderRankingList(computeYearClassRanking(year))}
-      ${reportSectionTitle("All suspensions this year")}
-      ${renderReportRoster(computeYearSuspensionRoster(year), "suspension", "No suspensions this year.")}
-      ${reportSectionTitle("All time outs this year")}
-      ${renderReportRoster(computeYearTimeOutRoster(year), "time out", "No time outs this year.")}`;
-  // Page 6 — Trend analysis + Recommendations
-  const p6 = renderTrendAnalysis(year);
-  return [p1, p2, p3, p4, p5, p6].map((h, i) => page(i + 1, h)).join("");
+  // Page 6 — Most challenging levels (blocks) + classes (grouped by count)
+  const p6 = `
+      ${reportSectionTitle("Most Challenging Levels")}
+      ${renderReportLevelBlocks(year)}
+      ${reportSectionTitle("Most Challenging Classes")}
+      ${renderReportGroupedGrid(groupByCount(computeReportClassCounts(year)), (n, k) => `${plainCount(n, "count", "counts")} <span class="dd-rep-group-n">· ${plainCount(k, "class", "classes")}</span>`, classCell, "No entries this year.")}`;
+  // Page 7 — All suspensions / time outs this year (grouped by how many)
+  const p7 = `
+      ${reportSectionTitle("All Suspensions This Year")}
+      ${renderReportGroupedGrid(groupByCount(computeYearSuspensionRoster(year)), (n, k) => `${plainCount(n, "suspension", "suspensions")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No suspensions this year.")}
+      ${reportSectionTitle("All Time-Outs This Year")}
+      ${renderReportGroupedGrid(groupByCount(computeYearTimeOutRoster(year)), (n, k) => `${plainCount(n, "time out", "time outs")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No time outs this year.")}`;
+  // Page 8 — Trend analysis; Page 9 — Recommendations
+  const p8 = renderTrendAnalysis(year);
+  const p9 = renderReportRecommendations(year);
+  return [p1, p2, p3, p4, p5, p6, p7, p8, p9].map((h, i) => page(i + 1, h)).join("");
 }
 const ADMIN_ONLY_NOTE = `<div class="dd-readonly-note">View only. Only admins and the owner can change this.</div>`;
 function renderSettingsSection() {
@@ -6194,14 +6667,14 @@ function renderAllView(incl) {
   const { from, to } = allRangeBounds();
   return renderTrendView(incl, from, to, "All");
 }
-// The 5 lines of the long-range trend graph. The Suspension pill switches
+// The 4 lines of the long-range trend graph (suspension is one line —
+// in-school and out-of-school together). The Suspension pill switches
 // both suspension lines together.
 const TREND_LINES = [
   { key: "discipline", cat: "discipline", label: "Grooming", color: CHART_COLORS.discipline },
   { key: "parentMeeting", cat: "parentMeeting", label: "Parent Meet", color: CHART_COLORS.parentMeeting },
   { key: "timeOut", cat: "timeOut", label: "Time Out", color: CHART_COLORS.timeOut },
-  { key: "iss", cat: "suspension", label: "In-School Suspension", cardLabel: "In-School Susp.", color: CHART_COLORS.suspension },
-  { key: "oss", cat: "suspension", label: "Out-of-School Suspension", cardLabel: "Out-of-School Susp.", color: OSS_DOT_COLOR },
+  { key: "suspension", cat: "suspension", label: "Suspension", color: CHART_COLORS.suspension },
 ];
 // One point per month, trimmed to the range at both ends.
 function trendBuckets(from, to, mode) {
@@ -6236,6 +6709,7 @@ function computeTrendSeries(buckets) {
     });
     return {
       ...b, iss, oss,
+      suspension: state.suspensions.filter((x) => !x.deleted && inB(x.startDate)).length,
       discipline: state.incidents.filter((i) => !i.deleted && inB(i.date)).length,
       timeOut: state.timeOuts.filter((x) => !x.deleted && inB(x.startDate)).length,
       parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && inB(pmDate(m))).length,
@@ -6253,7 +6727,7 @@ function renderTrendView(incl, from, to, title, mode = "months") {
       <div class="dd-trend-lines" data-from="${from}" data-to="${to}" data-mode="${mode}"></div>
     </div>
     <div class="dd-cal-legend dd-trend-lines-legend">
-      ${[lines.filter((l) => l.cat !== "suspension"), lines.filter((l) => l.cat === "suspension")].filter((row) => row.length).map((row) => `
+      ${[lines].filter((row) => row.length).map((row) => `
       <div class="dd-trend-lines-legend-row" data-fit="trend-legend">${row.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}</div>`).join("")}
     </div>
     <div class="dd-mono-muted dd-trend-lines-note">${mode === "weeks" ? "One point per school week. Tap or drag across the graph to see each week's numbers." : "One point per month. Tap or drag across the graph to see each month's numbers."} Each entry is counted once, on the date it starts.</div>` : ""}`;

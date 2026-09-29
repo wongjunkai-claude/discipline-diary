@@ -271,6 +271,45 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   the yearly public-holiday fetch also only run for admins/the Owner.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
 
+## Annual Summary Report layout
+
+Nine sections, each starting on a new sheet when printed or exported
+(`renderAnnualReportPages()`). Suspension is always one category
+(in-school and out-of-school together).
+
+1. **Annual Summary** tiles · **By Term** table (Groom, Susp, Time Out by
+   type, Meet, Total — the total includes parent meetings) · **By Weeks in a
+   Term**: four small line graphs (Term 1–4, W1–W10, same scale), 4 lines —
+   Grooming, Suspension, Time Out, Parent Meet — with one shared legend.
+2. **Discipline Load by Month**: stacked vertical bars (Grooming /
+   Suspension / Time Out) with the total on top, and a table with Time Out
+   split into R / L / CCA / LE (no parent meetings here).
+3. **Discipline Load by Day of Week**: a stacked bar per weekday split by
+   term, with a term × day table.
+4. **Top Reasons for Suspension** and **Top Reasons for Time Out**: one row
+   per reason actually used, ranked by total, with columns P1–P6 and Total
+   (no total row; a record with several reasons counts once towards each) ·
+   **Parent Meetings by Month** (bars, number on top) · **Parent Meet
+   Count**: students grouped by how many meetings (held up to today).
+5. Repeated vs. Unique Students · Grooming Escalation Rate · Repeat
+   Suspension / Time Out Intervals.
+6. **Most Challenging Levels**: six blocks in one row, least → most
+   challenging, each with Grooming / Suspension / Time Out · **Most
+   Challenging Classes**: grouped by count (including parent meetings), each
+   class with a 4-line breakdown.
+7. **All Suspensions / All Time-Outs This Year**: students grouped by how
+   many.
+8. **Trend Analysis** (kept to about a page).
+9. **Recommendations**, with a reference-only note.
+
+Grouped lists are 4 columns filled row by row with lines between the
+columns; in the PDF and print they break between rows, never inside one.
+Legends match their chart's label size. Export PDF switches off the
+tablet/desktop zoom while capturing, so it's identical from any device.
+
+The dashboard graphs (All, Custom over a year, Term 1–4) show one
+Suspension line — in-school and out-of-school together.
+
 ## Download a log as Excel
 
 Each log tab (Grooming, Suspension, Time Out, Parent Meet) has a

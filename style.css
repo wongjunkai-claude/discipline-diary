@@ -1023,3 +1023,122 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 .dd-update-bar button:disabled { opacity: 0.7; }
 /* If the Undo toast is showing too, the update bar sits above it. */
 .dd-undo-toast ~ .dd-update-bar { bottom: calc(84px + env(safe-area-inset-bottom)); }
+
+/* Annual Report line charts: two centred legend rows (suspensions on the
+   second), each shrunk if needed to stay on one line. */
+.dd-report-lines-legends { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #C9C4B4; display: flex; flex-direction: column; gap: 4px; }
+.dd-report-lines-legend.dd-cal-legend { margin: 0; padding: 0; border: none; overflow: hidden; }
+.dd-report-lines-legend .dd-legend-line { width: 1.3em; height: 0.25em; }
+/* Sized to the chart's own width (like its axis labels), so it's the same
+   on screen, in print and in the PDF: the chart's label size, but never
+   below ~10px on a phone. */
+.dd-area-chart-wrap .dd-report-lines-legend,
+html.dd-pdf-render .dd-area-chart-wrap .dd-report-lines-legend { font-size: max(9px, min(10px, 3.4cqi), 2.5cqi); gap: 0.33em 0.9em; }
+/* The Discipline Load legend matches its month labels in the PDF and in
+   print too (the screen rule above only covers tablet/desktop widths). */
+html.dd-pdf-render .dd-trend-legend { font-size: 2.5cqi; }
+@media print { .dd-trend-legend { font-size: 2.5cqi; } }
+
+/* Week × term grid under "By week of term" (Annual Report). */
+.dd-wg { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #1B2A41; background: #fff; border: 1px solid #E4E1D4; }
+.dd-wg th, .dd-wg td { text-align: center; padding: 4px 0; border: 1px solid #EFECE3; }
+.dd-wg thead th { font-weight: 600; color: #6B6652; background: #F7F5EE; }
+.dd-wg tbody th, .dd-wg tfoot th { font-weight: 700; background: #F7F5EE; width: 2.6em; }
+.dd-wg tfoot td, .dd-wg tfoot th { font-weight: 700; background: #F1EEE4; border-top: 1px solid #C9C4B4; }
+.dd-wg .dd-wg-tot { font-weight: 700; width: 3.2em; background: #F7F5EE; }
+.dd-wg tfoot .dd-wg-tot { background: #F1EEE4; }
+.dd-wg td.dd-wg-na { color: #C9C4B4; }
+@media (min-width: 700px) { .dd-wg { font-size: 11px; } }
+.dd-panel .dd-wg, .dd-report-page .dd-wg { break-inside: avoid; }
+/* A chart and the table that explains it stay on the same printed page. */
+.dd-keep-together { break-inside: avoid; page-break-inside: avoid; }
+
+/* Parent meetings page: victim/offender split under each reason's bar. */
+.dd-pm-reason { margin-bottom: 6px; break-inside: avoid; }
+.dd-pm-reason:last-child { margin-bottom: 0; }
+.dd-pm-reason-head { display: flex; justify-content: space-between; gap: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11.5px; color: #1B2A41; margin-bottom: 2px; }
+.dd-pm-reason-n { font-weight: 700; }
+.dd-pm-reason-track { background: #F2EFE6; border-radius: 2px; overflow: hidden; height: 8px; }
+.dd-pm-reason-track > div { height: 100%; }
+.dd-pm-reason-roles { font-size: 10.5px; margin-top: 2px; }
+
+/* ================= Annual Report (8-page layout) ================= */
+.dd-rep-legend-wrap { container-type: inline-size; }
+.dd-rep-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35em 1.1em; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #4A4536; font-size: max(8px, 1.8cqi); margin-top: 6px; }
+.dd-rep-legend-in .dd-rep-legend { font-size: max(8px, 2.5cqi); margin-top: 4px; }
+.dd-rep-legend-item { display: inline-flex; align-items: center; gap: 0.45em; white-space: nowrap; }
+.dd-rep-sw-line { display: inline-block; width: 1.3em; height: 0.25em; border-radius: 1px; }
+.dd-rep-sw-box { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 2px; }
+/* By Weeks in a Term: 2 × 2 on paper, tablet and desktop; stacked on phones. */
+.dd-rep-quads { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 480px) { .dd-rep-quads { grid-template-columns: 1fr; } }
+html.dd-pdf-render .dd-rep-quads { grid-template-columns: 1fr 1fr; }
+@media print { .dd-rep-quads { grid-template-columns: 1fr 1fr; } }
+.dd-area-chart-wrap.dd-rep-mini { padding: 6px 6px 4px; }
+.dd-rep-mini-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 700; color: #1B2A41; margin: 0 0 2px 2px; }
+/* Report tables. */
+.dd-rt { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 10px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #1B2A41; background: #fff; border: 1px solid #E4E1D4; }
+.dd-rt th, .dd-rt td { text-align: center; padding: 4px 2px; border: 1px solid #EFECE3; }
+.dd-rt thead th { font-weight: 600; color: #6B6652; background: #F7F5EE; font-size: 10px; }
+.dd-rt thead th.dd-rt-sub { font-size: 9.5px; }
+.dd-rt tbody th, .dd-rt tfoot th { font-weight: 700; background: #F7F5EE; }
+.dd-rt tfoot td, .dd-rt tfoot th { font-weight: 700; background: #F1EEE4; border-top: 1px solid #C9C4B4; }
+.dd-rt .dd-rt-to { background: #F3F7F9; }
+.dd-rt .dd-rt-tot { font-weight: 700; background: #F7F5EE; }
+.dd-rt tfoot .dd-rt-tot { background: #F1EEE4; }
+.dd-rep-foot { font-size: 10.5px; line-height: 1.4; margin-top: 5px; }
+/* Grouped lists (Parent Meet Count, classes, suspensions, time outs):
+   4 columns filled row by row, with lines between the columns. */
+.dd-rep-group { margin-bottom: 10px; }
+.dd-rep-group-head { break-after: avoid; page-break-after: avoid; }
+.dd-rep-cell { break-inside: avoid; page-break-inside: avoid; }
+.dd-rep-group-head { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 700; color: #1B2A41; padding: 2px 0 4px; }
+.dd-rep-group-n { font-weight: 400; color: #8A8571; }
+.dd-rep-grid3 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #E4E1D4; background: #fff; }
+.dd-rep-cell { padding: 5px 8px; border-bottom: 1px solid #EFECE3; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; overflow-wrap: anywhere; }
+.dd-rep-grid3 > .dd-rep-cell:not(:nth-child(4n+1)) { border-left: 1px solid #C9C4B4; }
+.dd-rep-cls { font-size: 10.5px; color: #8A8571; }
+.dd-rep-class { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
+.dd-rep-class-name { font-weight: 700; font-size: 13px; padding-top: 1px; }
+.dd-rep-class-break { font-size: 9.5px; line-height: 1.35; color: #6B6652; min-width: 6.6em; }
+.dd-rep-class-break > div { display: flex; justify-content: space-between; gap: 6px; }
+.dd-rep-class-break b { color: #1B2A41; }
+/* Most challenging levels: one row of 6 blocks, least → most. */
+.dd-rep-levels { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 480px) { .dd-rep-levels { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+html.dd-pdf-render .dd-rep-levels { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media print { .dd-rep-levels { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.dd-rep-level { border: 1px solid #E4E1D4; background: #F7F5EE; border-radius: 4px; padding: 6px 6px 5px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
+.dd-rep-level-name { font-size: 12px; font-weight: 700; text-align: center; }
+.dd-rep-level-total { font-size: 20px; font-weight: 800; text-align: center; line-height: 1.2; margin-bottom: 3px; }
+.dd-rep-level-line { display: flex; justify-content: space-between; gap: 4px; font-size: 9px; line-height: 1.45; color: #6B6652; }
+.dd-rep-level-line b { color: #1B2A41; }
+.dd-rep-level-scale { display: flex; justify-content: space-between; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #8A8571; margin-top: 4px; }
+.dd-rep-level-scale span:first-child::before { content: "← "; }
+.dd-rep-level-scale span:last-child::after { content: " →"; }
+.dd-rep-disclaimer { margin-top: 12px; padding: 8px 10px; border-left: 3px solid #D98F2B; background: #FBF3E4; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; line-height: 1.5; color: #4A4536; }
+.dd-rep-class-name, .dd-rep-class-break span { white-space: nowrap; }
+@media (max-width: 480px) {
+  .dd-rep-class { flex-direction: column; gap: 2px; }
+  .dd-rep-class-break { min-width: 0; width: 100%; }
+  .dd-rep-cell { padding: 5px 6px; }
+}
+/* Phones show the term graphs one per row, so their labels are twice as
+   big — the shared legend follows. */
+@media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 3.6cqi); } }
+/* Report table headings: full words, shortened on narrow phones. */
+.dd-rt-short { display: none; }
+@media (max-width: 480px) { .dd-rt-long { display: none; } .dd-rt-short { display: inline; } }
+html.dd-pdf-render .dd-rt-long { display: inline; }
+html.dd-pdf-render .dd-rt-short { display: none; }
+@media (max-width: 360px) { .dd-rt { font-size: 9.5px; } .dd-rt thead th { font-size: 8.5px; } .dd-rt th, .dd-rt td { padding: 4px 1px; } }
+
+/* Top reasons tables: reason, P1–P6, total. */
+.dd-rt-reasons th.dd-rt-reason, .dd-rt-reasons th.dd-rt-reason-h { text-align: left; padding-left: 6px; width: 30%; }
+.dd-rt-reasons th.dd-rt-reason { font-weight: 600; background: #fff; overflow-wrap: anywhere; }
+.dd-rt-reasons .dd-rt-zero { color: #C9C4B4; }
+.dd-rt-reasons thead th:last-child, .dd-rt-reasons td.dd-rt-tot { width: 12%; }
+.dd-rep-cell { font-size: 11.5px; }
+.dd-rt-reasons { margin-top: 4px; }
+.dd-rt-reasons th, .dd-rt-reasons td { padding: 2px 2px; }
+.dd-rep-cell { padding: 4px 7px; }
