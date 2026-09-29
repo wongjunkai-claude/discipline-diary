@@ -293,7 +293,7 @@ Nine sections, each starting on a new sheet when printed or exported
    Count**: students grouped by how many meetings (held up to today).
 5. Repeated vs. Unique Students · Grooming Escalation Rate · Repeat
    Suspension / Time Out Intervals.
-6. **Most Challenging Levels**: six blocks in one row, least → most
+6. **Most Challenging Levels**: six blocks in one row (also on phones), least → most
    challenging, each with Grooming / Suspension / Time Out · **Most
    Challenging Classes**: grouped by count (including parent meetings), each
    class with its breakdown beside it (only the non-zero lines).
@@ -302,7 +302,7 @@ Nine sections, each starting on a new sheet when printed or exported
 8. **Trend Analysis** (kept to about a page), with **Recommendations**
    right after it and a reference-only note.
 
-Grouped lists are 4 columns on phones and 6 on tablet/desktop (and in the PDF), filled row by row with vertical lines between
+Grouped lists are 3 columns on phones (2 for Most Challenging Classes) and 6 on tablet/desktop, and 4 in the PDF, filled row by row with vertical lines between
 the columns only (no outer border or row lines; unfilled cells in the last
 row keep their lines); in the PDF and print they break between rows, never inside one.
 Legends match their chart's label size. Export PDF switches off the

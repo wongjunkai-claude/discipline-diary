@@ -1094,9 +1094,12 @@ html.dd-pdf-render .dd-rep-quads { grid-template-columns: 1fr 1fr; }
 .dd-rep-cell { break-inside: avoid; page-break-inside: avoid; }
 .dd-rep-group-head { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 700; color: #1B2A41; padding: 2px 0 4px; }
 .dd-rep-group-n { font-weight: 400; color: #8A8571; }
-.dd-rep-grid3 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #fff; }
+.dd-rep-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: #fff; }
+.dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dd-rep-cell { padding: 5px 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; overflow-wrap: anywhere; }
-.dd-rep-grid3 > .dd-rep-cell:not(:nth-child(4n+1)) { border-left: 1px solid #C9C4B4; }
+.dd-rep-grid3 > .dd-rep-cell:not(:nth-child(3n+1)) { border-left: 1px solid #C9C4B4; }
+.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #C9C4B4; }
+.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(2n+1) { border-left: 0; }
 .dd-rep-cls { font-size: 10.5px; color: #8A8571; }
 .dd-rep-class { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
 .dd-rep-class-name { font-weight: 700; font-size: 13px; padding-top: 1px; }
@@ -1105,7 +1108,6 @@ html.dd-pdf-render .dd-rep-quads { grid-template-columns: 1fr 1fr; }
 .dd-rep-class-break b { color: #1B2A41; }
 /* Most challenging levels: one row of 6 blocks, least → most. */
 .dd-rep-levels { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
-@media (max-width: 480px) { .dd-rep-levels { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 html.dd-pdf-render .dd-rep-levels { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 @media print { .dd-rep-levels { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .dd-rep-level { border: 1px solid #E4E1D4; background: #F7F5EE; border-radius: 4px; padding: 6px 6px 5px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
@@ -1142,13 +1144,34 @@ html.dd-pdf-render .dd-rt-short { display: none; }
 .dd-rep-cell { padding: 4px 7px; }
 
 /* Empty filler cells so the column lines run down every row, even when the
-   last row isn't full: phones need to fill 4 columns, tablet/desktop 6. */
+   last row isn't full: phones fill 3 columns (2 for classes), tablet/desktop 6. */
 .dd-rep-cell-pad { display: none; }
 .dd-rep-cell-pad.dd-pad-p { display: block; }
 @media (min-width: 700px) {
-  .dd-rep-grid3 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .dd-rep-grid3 > .dd-rep-cell:nth-child(4n+1) { border-left: 1px solid #C9C4B4; }
-  .dd-rep-grid3 > .dd-rep-cell:nth-child(6n+1) { border-left: 0; }
+  .dd-rep-grid3, .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .dd-rep-grid3 > .dd-rep-cell, .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #C9C4B4; }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(6n+1), .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(6n+1) { border-left: 0; }
   .dd-rep-cell-pad.dd-pad-p { display: none; }
   .dd-rep-cell-pad.dd-pad-t { display: block; }
 }
+
+/* Phones: all six level blocks in one row (after the base rules so they win). */
+@media (max-width: 480px) {
+  .dd-rep-levels { gap: 3px; }
+  .dd-rep-level { padding: 5px 2px 4px; }
+  .dd-rep-level-name { font-size: 10px; }
+  .dd-rep-level-total { font-size: 15px; }
+  .dd-rep-level-line { font-size: 6.4px; gap: 1px; }
+}
+@media (max-width: 360px) {
+  .dd-rep-levels { gap: 2px; }
+  .dd-rep-level-line { font-size: 6px; gap: 0; }
+}
+
+/* PDF / print sheet: 4 columns for every grouped list (it is laid out at its
+   own fixed width, so phone and screen column counts don't apply). */
+html.dd-pdf-render .dd-rep-grid3, html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell, html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell { border-left: 1px solid #C9C4B4; }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell:nth-child(4n+1), html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
+html.dd-pdf-render .dd-rep-cell-pad.dd-pad-p, html.dd-pdf-render .dd-rep-cell-pad.dd-pad-t { display: none; }
+html.dd-pdf-render .dd-rep-cell-pad.dd-pad-f { display: block; }

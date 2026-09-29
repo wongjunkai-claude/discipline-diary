@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.35.0";
+const APP_VERSION = "3.35.2";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -5620,13 +5620,13 @@ function renderReportStackedBars(rows, segs, { maxTicks = 5 } = {}) {
   }).join("");
   return `<svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${bars}</svg>`;
 }
-// Grouped list, 4 columns (6 on tablet/desktop), row by row, with lines between the columns.
-function renderReportGroupedGrid(groups, headFn, itemFn, emptyText) {
+// Grouped list, 3 columns (2 for classes; 6 on tablet/desktop), row by row, with lines between the columns.
+function renderReportGroupedGrid(groups, headFn, itemFn, emptyText, phoneCols = 3, extraCls = "") {
   if (!groups.length) return `<div class="dd-dash-empty">${escapeHtml(emptyText)}</div>`;
   return `<div class="dd-rep-groups">${groups.map((g) => `
     <div class="dd-rep-group">
       <div class="dd-rep-group-head">${headFn(g.count, g.items.length)}</div>
-      <div class="dd-rep-grid3">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}${(() => { const n = g.items.length, p4 = (4 - (n % 4)) % 4, p6 = (6 - (n % 6)) % 6; return Array.from({ length: Math.max(p4, p6) }, (_, i) => `<div class="dd-rep-cell dd-rep-cell-pad${i < p4 ? " dd-pad-p" : ""}${i < p6 ? " dd-pad-t" : ""}"></div>`).join(""); })()}</div>
+      <div class="dd-rep-grid3${extraCls}">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}${(() => { const n = g.items.length, p4 = (phoneCols - (n % phoneCols)) % phoneCols, pf = (4 - (n % 4)) % 4, p6 = (6 - (n % 6)) % 6; return Array.from({ length: Math.max(p4, pf, p6) }, (_, i) => `<div class="dd-rep-cell dd-rep-cell-pad${i < p4 ? " dd-pad-p" : ""}${i < pf ? " dd-pad-f" : ""}${i < p6 ? " dd-pad-t" : ""}"></div>`).join(""); })()}</div>
     </div>`).join("")}</div>`;
 }
 function groupByCount(list) {
@@ -5747,9 +5747,9 @@ function renderReportLevelBlocks(year) {
         <div class="dd-rep-level">
           <div class="dd-rep-level-name">${l.label}</div>
           <div class="dd-rep-level-total">${l.total}</div>
-          <div class="dd-rep-level-line"><span>Grooming</span><b>${l.discipline}</b></div>
-          <div class="dd-rep-level-line"><span>Suspension</span><b>${l.suspension}</b></div>
-          <div class="dd-rep-level-line"><span>Time Out</span><b>${l.timeOut}</b></div>
+          <div class="dd-rep-level-line"><span><span class="dd-rt-long">Grooming</span><span class="dd-rt-short">Groom</span></span><b>${l.discipline}</b></div>
+          <div class="dd-rep-level-line"><span><span class="dd-rt-long">Suspension</span><span class="dd-rt-short">Susp</span></span><b>${l.suspension}</b></div>
+          <div class="dd-rep-level-line"><span><span class="dd-rt-long">Time Out</span><span class="dd-rt-short">T.Out</span></span><b>${l.timeOut}</b></div>
         </div>`).join("")}
       </div>
       <div class="dd-rep-level-scale"><span>Least challenging</span><span>Most challenging</span></div>`;
@@ -5872,7 +5872,7 @@ function renderAnnualReportPages(year) {
       ${reportSectionTitle("Most Challenging Levels")}
       ${renderReportLevelBlocks(year)}
       ${reportSectionTitle("Most Challenging Classes")}
-      ${renderReportGroupedGrid(groupByCount(computeReportClassCounts(year)), (n, k) => `${plainCount(n, "count", "counts")} <span class="dd-rep-group-n">· ${plainCount(k, "class", "classes")}</span>`, classCell, "No entries this year.")}`;
+      ${renderReportGroupedGrid(groupByCount(computeReportClassCounts(year)), (n, k) => `${plainCount(n, "count", "counts")} <span class="dd-rep-group-n">· ${plainCount(k, "class", "classes")}</span>`, classCell, "No entries this year.", 2, " dd-rep-grid3-cls")}`;
   // Page 7 — All suspensions / time outs this year (grouped by how many)
   const p7 = `
       ${reportSectionTitle("All Suspensions This Year")}
