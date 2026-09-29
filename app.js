@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.34.1";
+const APP_VERSION = "3.35.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -5620,13 +5620,13 @@ function renderReportStackedBars(rows, segs, { maxTicks = 5 } = {}) {
   }).join("");
   return `<svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${bars}</svg>`;
 }
-// Grouped list, 3 columns, row by row, with lines between the columns.
+// Grouped list, 4 columns (6 on tablet/desktop), row by row, with lines between the columns.
 function renderReportGroupedGrid(groups, headFn, itemFn, emptyText) {
   if (!groups.length) return `<div class="dd-dash-empty">${escapeHtml(emptyText)}</div>`;
   return `<div class="dd-rep-groups">${groups.map((g) => `
     <div class="dd-rep-group">
       <div class="dd-rep-group-head">${headFn(g.count, g.items.length)}</div>
-      <div class="dd-rep-grid3">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}</div>
+      <div class="dd-rep-grid3">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}${(() => { const n = g.items.length, p4 = (4 - (n % 4)) % 4, p6 = (6 - (n % 6)) % 6; return Array.from({ length: Math.max(p4, p6) }, (_, i) => `<div class="dd-rep-cell dd-rep-cell-pad${i < p4 ? " dd-pad-p" : ""}${i < p6 ? " dd-pad-t" : ""}"></div>`).join(""); })()}</div>
     </div>`).join("")}</div>`;
 }
 function groupByCount(list) {
@@ -5768,10 +5768,7 @@ const classCell = (r) => `
   <div class="dd-rep-class">
     <div class="dd-rep-class-name">${escapeHtml(r.cls)}</div>
     <div class="dd-rep-class-break">
-      <div><span>Grooming</span><b>${r.discipline}</b></div>
-      <div><span>Suspension</span><b>${r.suspension}</b></div>
-      <div><span>Time Out</span><b>${r.timeOut}</b></div>
-      <div><span>Parent Meet</span><b>${r.parentMeeting}</b></div>
+      ${[["Grooming", r.discipline], ["Suspension", r.suspension], ["Time Out", r.timeOut], ["Parent Meet", r.parentMeeting]].filter(([, n]) => n > 0).map(([l, n]) => `<div><span>${l}</span><b>${n}</b></div>`).join("")}
     </div>
   </div>`;
 const plainCount = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -5882,10 +5879,9 @@ function renderAnnualReportPages(year) {
       ${renderReportGroupedGrid(groupByCount(computeYearSuspensionRoster(year)), (n, k) => `${plainCount(n, "suspension", "suspensions")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No suspensions this year.")}
       ${reportSectionTitle("All Time-Outs This Year")}
       ${renderReportGroupedGrid(groupByCount(computeYearTimeOutRoster(year)), (n, k) => `${plainCount(n, "time out", "time outs")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No time outs this year.")}`;
-  // Page 8 — Trend analysis; Page 9 — Recommendations
-  const p8 = renderTrendAnalysis(year);
-  const p9 = renderReportRecommendations(year);
-  return [p1, p2, p3, p4, p5, p6, p7, p8, p9].map((h, i) => page(i + 1, h)).join("");
+  // Page 8 — Trend analysis, with the Recommendations right after it
+  const p8 = renderTrendAnalysis(year) + renderReportRecommendations(year);
+  return [p1, p2, p3, p4, p5, p6, p7, p8].map((h, i) => page(i + 1, h)).join("");
 }
 const ADMIN_ONLY_NOTE = `<div class="dd-readonly-note">View only. Only admins and the owner can change this.</div>`;
 function renderSettingsSection() {

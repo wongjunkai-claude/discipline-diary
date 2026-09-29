@@ -1094,8 +1094,8 @@ html.dd-pdf-render .dd-rep-quads { grid-template-columns: 1fr 1fr; }
 .dd-rep-cell { break-inside: avoid; page-break-inside: avoid; }
 .dd-rep-group-head { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 700; color: #1B2A41; padding: 2px 0 4px; }
 .dd-rep-group-n { font-weight: 400; color: #8A8571; }
-.dd-rep-grid3 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #E4E1D4; background: #fff; }
-.dd-rep-cell { padding: 5px 8px; border-bottom: 1px solid #EFECE3; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; overflow-wrap: anywhere; }
+.dd-rep-grid3 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #fff; }
+.dd-rep-cell { padding: 5px 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; min-width: 0; overflow-wrap: anywhere; }
 .dd-rep-grid3 > .dd-rep-cell:not(:nth-child(4n+1)) { border-left: 1px solid #C9C4B4; }
 .dd-rep-cls { font-size: 10.5px; color: #8A8571; }
 .dd-rep-class { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
@@ -1119,8 +1119,6 @@ html.dd-pdf-render .dd-rep-levels { grid-template-columns: repeat(6, minmax(0, 1
 .dd-rep-disclaimer { margin-top: 12px; padding: 8px 10px; border-left: 3px solid #D98F2B; background: #FBF3E4; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; line-height: 1.5; color: #4A4536; }
 .dd-rep-class-name, .dd-rep-class-break span { white-space: nowrap; }
 @media (max-width: 480px) {
-  .dd-rep-class { flex-direction: column; gap: 2px; }
-  .dd-rep-class-break { min-width: 0; width: 100%; }
   .dd-rep-cell { padding: 5px 6px; }
 }
 /* Phones show the term graphs one per row, so their labels are twice as
@@ -1142,3 +1140,15 @@ html.dd-pdf-render .dd-rt-short { display: none; }
 .dd-rt-reasons { margin-top: 4px; }
 .dd-rt-reasons th, .dd-rt-reasons td { padding: 2px 2px; }
 .dd-rep-cell { padding: 4px 7px; }
+
+/* Empty filler cells so the column lines run down every row, even when the
+   last row isn't full: phones need to fill 4 columns, tablet/desktop 6. */
+.dd-rep-cell-pad { display: none; }
+.dd-rep-cell-pad.dd-pad-p { display: block; }
+@media (min-width: 700px) {
+  .dd-rep-grid3 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(4n+1) { border-left: 1px solid #C9C4B4; }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(6n+1) { border-left: 0; }
+  .dd-rep-cell-pad.dd-pad-p { display: none; }
+  .dd-rep-cell-pad.dd-pad-t { display: block; }
+}

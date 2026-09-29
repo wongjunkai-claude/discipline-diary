@@ -296,14 +296,15 @@ Nine sections, each starting on a new sheet when printed or exported
 6. **Most Challenging Levels**: six blocks in one row, least → most
    challenging, each with Grooming / Suspension / Time Out · **Most
    Challenging Classes**: grouped by count (including parent meetings), each
-   class with a 4-line breakdown.
+   class with its breakdown beside it (only the non-zero lines).
 7. **All Suspensions / All Time-Outs This Year**: students grouped by how
    many.
-8. **Trend Analysis** (kept to about a page).
-9. **Recommendations**, with a reference-only note.
+8. **Trend Analysis** (kept to about a page), with **Recommendations**
+   right after it and a reference-only note.
 
-Grouped lists are 4 columns filled row by row with lines between the
-columns; in the PDF and print they break between rows, never inside one.
+Grouped lists are 4 columns on phones and 6 on tablet/desktop (and in the PDF), filled row by row with vertical lines between
+the columns only (no outer border or row lines; unfilled cells in the last
+row keep their lines); in the PDF and print they break between rows, never inside one.
 Legends match their chart's label size. Export PDF switches off the
 tablet/desktop zoom while capturing, so it's identical from any device.
 
