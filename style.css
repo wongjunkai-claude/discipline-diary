@@ -306,7 +306,9 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-cal-selected { background: #1B2A41 !important; }
 .dd-cal-selected .dd-cal-daynum { color: #fff; }
 .dd-cal-daynum { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #1B2A41; }
-.dd-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; }
+/* Zero height, so the icons hang below the number without pushing it up: the day number sits
+   in the same place whether or not the day has entries. */
+.dd-cal-dots { display: flex; gap: 2px; margin-top: 2px; flex-wrap: wrap; justify-content: center; align-items: flex-start; align-content: flex-start; height: 0; overflow: visible; }
 .dd-cal-dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
 .dd-day-detail { margin-top: 14px; padding: 10px 12px; border: 1px solid #C9C4B4; border-radius: 3px; background: #fff; }
 .dd-day-detail-title { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; color: #1B2A41; margin-bottom: 8px; }
