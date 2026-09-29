@@ -173,6 +173,12 @@ Pills: Day / Week / Month / Year, then Term 1–4 / All / Custom.
   counting) by length (`customRangeLayout()`): up to 7 days → Week,
   8–31 days → Month, up to a year → Year (months shown, days outside the
   range greyed), longer → the All graph.
+- **Term 1–4** show this year's term week by week: the same line graph as
+  All, one point per school week (W1–W10, Week 1 = the term's first day),
+  with tap-to-read cards titled e.g. "Week 6 · 03 Aug – 09 Aug". The tally
+  counts each entry once, on its start date, within the term's dates. Weeks
+  (or, in All/Custom, months) that haven't started yet keep their label but
+  the lines stop at the current one.
 - **All** runs from the earliest entry to today, drawn like a stock chart:
   one line each for Grooming, Parent Meet, Time Out, In-School Suspension
   and Out-of-School Suspension, one point per month
@@ -264,6 +270,24 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   `settings/*` writes need `isAdmin()`). The automatic holiday set-up and
   the yearly public-holiday fetch also only run for admins/the Owner.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
+
+## Download a log as Excel
+
+Each log tab (Grooming, Suspension, Time Out, Parent Meet) has a
+**Download Excel** button under the level counters. Pick From/To dates
+(default: 1 Jan this year to today) and it saves an `.xlsx` with one row
+per entry, oldest first, removed entries left out. Columns follow the
+Google Sheet sync (`exportLogTable()`); dates are real Excel dates, the
+header row is frozen with filters. The file is written by a small built-in
+writer (`buildXlsxSheetXml()` / `buildZip()`), no spreadsheet library.
+
+## New version bar
+
+The app checks for a newer release when it opens, when it's brought back to
+the front, and every 30 minutes (`watchForAppUpdates()`). When sw.js has
+installed a new version, a bar at the bottom says "A new version of
+Discipline Diary is ready" with an **Update** button, which does the same
+full refresh as pulling down at the top of the page (`forceRefreshApp()`).
 
 ## Backups
 

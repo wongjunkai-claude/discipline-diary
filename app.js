@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.28.1";
+const APP_VERSION = "3.30.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1747,6 +1747,228 @@ function downloadBackupFile() {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// ---------- Download a log as Excel (.xlsx) ----------
+// A small .xlsx writer: one worksheet, bold header row frozen at the top
+// with filters, real dates (so Excel sorts them), wrapped multi-line cells.
+// Built by hand (an .xlsx is a zip of a few XML files) rather than loading a
+// spreadsheet library of ~1 MB for this one job.
+const XLSX_DATE = "date";
+function xlsxEscape(v) {
+  return String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+function xlsxColName(i) { let s = ""; i++; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+function isoToExcelSerial(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+}
+function buildXlsxSheetXml(columns, rows) {
+  const cell = (ref, v, kind, header) => {
+    if (v === null || v === undefined || v === "") return "";
+    if (kind === XLSX_DATE && /^\d{4}-\d{2}-\d{2}$/.test(v)) return `<c r="${ref}" s="3"><v>${isoToExcelSerial(v)}</v></c>`;
+    if (typeof v === "number") return `<c r="${ref}" s="${header ? 1 : 2}"><v>${v}</v></c>`;
+    return `<c r="${ref}" t="inlineStr" s="${header ? 1 : 2}"><is><t xml:space="preserve">${xlsxEscape(v)}</t></is></c>`;
+  };
+  const head = `<row r="1">${columns.map((c, i) => cell(`${xlsxColName(i)}1`, c.label, null, true)).join("")}</row>`;
+  const body = rows.map((r, ri) => `<row r="${ri + 2}">${columns.map((c, i) => cell(`${xlsxColName(i)}${ri + 2}`, r[i], c.kind)).join("")}</row>`).join("");
+  const lastCol = xlsxColName(columns.length - 1);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+<cols>${columns.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c.width || 14}" customWidth="1"/>`).join("")}</cols>
+<sheetData>${head}${body}</sheetData>
+<autoFilter ref="A1:${lastCol}${Math.max(1, rows.length + 1)}"/>
+</worksheet>`;
+}
+function buildXlsxFiles(sheetName, sheetXml) {
+  const safeName = xlsxEscape(sheetName.replace(/[\\/?*[\]:]/g, " ").slice(0, 31));
+  return {
+    "[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
+    "_rels/.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    "xl/workbook.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${safeName}" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'${safeName.replace(/'/g, "''")}'!$A$1:$A$1</definedName></definedNames></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+    "xl/styles.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="dd mmm yyyy"/></numFmts>
+<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1B2A41"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="4">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="left" vertical="top"/></xf>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`,
+    "xl/worksheets/sheet1.xml": sheetXml,
+  };
+}
+// Minimal zip writer (files stored uncompressed — Excel reads that fine).
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function buildZip(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  for (const [name, text] of Object.entries(files)) {
+    const nameBytes = enc.encode(name), data = enc.encode(text), crc = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true); local.setUint16(6, 0x0800, true); local.setUint16(8, 0, true);
+    local.setUint16(10, dosTime, true); local.setUint16(12, dosDate, true); local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true); local.setUint32(22, data.length, true); local.setUint16(26, nameBytes.length, true); local.setUint16(28, 0, true);
+    parts.push(new Uint8Array(local.buffer), nameBytes, data);
+    const cen = new DataView(new ArrayBuffer(46));
+    cen.setUint32(0, 0x02014b50, true); cen.setUint16(4, 20, true); cen.setUint16(6, 20, true); cen.setUint16(8, 0x0800, true); cen.setUint16(10, 0, true);
+    cen.setUint16(12, dosTime, true); cen.setUint16(14, dosDate, true); cen.setUint32(16, crc, true);
+    cen.setUint32(20, data.length, true); cen.setUint32(24, data.length, true); cen.setUint16(28, nameBytes.length, true);
+    cen.setUint32(42, offset, true);
+    central.push(new Uint8Array(cen.buffer), nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const cenSize = central.reduce((a, b) => a + b.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, Object.keys(files).length, true); end.setUint16(10, Object.keys(files).length, true);
+  end.setUint32(12, cenSize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+// What goes in each log's spreadsheet: one row per entry (removed entries
+// left out), oldest first, within the chosen dates.
+const EXPORT_LOGS = {
+  discipline: { title: "Grooming Log" },
+  suspension: { title: "Suspension Log" },
+  timeOut: { title: "Time Out Log" },
+  pm: { title: "Parent Meet Log" },
+};
+function exportLogTable(kind, from, to) {
+  const inRange = (d) => d && d >= from && d <= to;
+  const byDate = (f) => (a, b) => (f(a) || "").localeCompare(f(b) || "");
+  const D = XLSX_DATE;
+  if (kind === "discipline") {
+    const cols = [{ label: "Date", kind: D, width: 13 }, { label: "Student", width: 24 }, { label: "Class", width: 8 }, { label: "Issues", width: 40 }, { label: "Status", width: 12 }, { label: "Follow-up notes", width: 50 }, { label: "Logged by", width: 18 }];
+    const rows = state.incidents.filter((i) => !i.deleted && inRange(i.date)).sort(byDate((i) => i.date)).map((it) => {
+      const legacy = !Array.isArray(it.issues);
+      const issues = legacy ? (it.issue || "") : it.issues.map((x) => `${groomingIssueLabel(x)} — ${WARNING_STAGE_LABEL[x.stage] || ""}${x.resolved ? " (Resolved)" : ""}`).join("\n");
+      const status = legacy ? (STATUS_TEXT[it.status] || it.status || "") : (groomingEntryResolved(it) ? "Resolved" : "In Progress");
+      return [it.date, it.studentName, it.studentClass || "", issues, status, formatFollowUpsForSheet(it.issues), it.loggedBy || ""];
+    });
+    return { cols, rows };
+  }
+  if (kind === "suspension" || kind === "timeOut") {
+    const isTo = kind === "timeOut";
+    const list = isTo ? state.timeOuts : state.suspensions;
+    const cols = [{ label: "Start date", kind: D, width: 13 }, { label: "Student", width: 24 }, { label: "Class", width: 8 },
+      ...(isTo ? [{ label: "Time Out type", width: 26 }] : []),
+      { label: "Reason", width: 34 }, { label: "Total days", width: 10 }, { label: "In-school days", width: 13 }, { label: "Out-of-school days", width: 16 }, { label: "Day by day", width: 46 }, { label: "Logged by", width: 18 }];
+    const rows = list.filter((x) => !x.deleted && inRange(x.startDate)).sort(byDate((x) => x.startDate)).map((x) => [
+      x.startDate, x.studentName, x.studentClass || "", ...(isTo ? [toTypeLabel(x.toType)] : []),
+      x.reason || (Array.isArray(x.reasons) ? x.reasons.join("; ") : ""),
+      Number(x.totalDays) || suspensionDayEntries(x).length, Number(x.issDays) || 0, Number(x.ossDays) || 0,
+      formatScheduleForSheet(suspensionDayEntries(x)), x.loggedBy || "",
+    ]);
+    return { cols, rows };
+  }
+  const cols = [{ label: "Date", kind: D, width: 13 }, { label: "Time", width: 14 }, { label: "Location", width: 18 }, { label: "Student", width: 24 }, { label: "Class", width: 8 }, { label: "Attendees", width: 30 }, { label: "Reason", width: 36 }, { label: "Status", width: 30 }, { label: "Logged by", width: 18 }];
+  const rows = state.parentMeetings.filter((m) => !m.deleted && inRange(m.date || pmDate(m))).sort(byDate((m) => m.date)).map((m) => {
+    const status = m.pmStatus === "Cancelled" ? "Cancelled"
+      : m.pmStatus === "Postponed" ? (m.postponedTo ? `Postponed to ${formatDate(m.postponedTo)}${m.postponedTime ? `, ${pmSlotLabel(m.postponedTime, m.postponedEndTime, m.postponedLocation)}` : ""}` : "Postponed (new date not set)")
+      : "Scheduled";
+    return [m.date, formatTimeRange(m.time, m.endTime) || "", m.location || "", m.studentName, m.studentClass || "", formatAttendeesForSheet(m.attendees, m.othersText), pmReasonLines(m).join("\n"), status, m.loggedBy || ""];
+  });
+  return { cols, rows };
+}
+function downloadLogExcel(kind, from, to) {
+  const { cols, rows } = exportLogTable(kind, from, to);
+  const title = EXPORT_LOGS[kind].title;
+  const blob = buildZip(buildXlsxFiles(title, buildXlsxSheetXml(cols, rows)));
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${title} ${from} to ${to}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return rows.length;
+}
+const ICON_DOWNLOAD = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>`;
+// Right-aligned "Download Excel" button on each log tab.
+function renderExportButton(kind) {
+  return `<div class="dd-export-row"><button type="button" class="dd-print-btn" data-action="open-export" data-kind="${kind}">${ICON_DOWNLOAD}<span>Download Excel</span></button></div>`;
+}
+function renderExportModal() {
+  const ex = state.exportDraft;
+  const count = exportLogTable(ex.kind, ex.from, ex.to).rows.length;
+  return `
+    <div class="dd-modal-backdrop" id="export-backdrop">
+      <div class="dd-modal" id="export-modal">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Download ${EXPORT_LOGS[ex.kind].title}</div>
+          <button type="button" class="dd-modal-close" id="export-close">✕</button>
+        </div>
+        <label class="dd-label" style="margin-top:0">From</label>
+        ${renderDateField("export-from", ex.from)}
+        <label class="dd-label">To</label>
+        ${renderDateField("export-to", ex.to, `min="${ex.from}"`)}
+        <div class="dd-mono-muted dd-custom-hint">${count} ${count === 1 ? "entry" : "entries"} in these dates. Removed entries aren't included.</div>
+        <button class="dd-btn-primary" type="button" id="export-go" ${count ? "" : "disabled"}>Download Excel file</button>
+      </div>
+    </div>`;
+}
+function attachExportListeners() {
+  document.querySelectorAll('[data-action="open-export"]').forEach((el) => el.addEventListener("click", () => {
+    const y = new Date().getFullYear();
+    state.exportDraft = { kind: el.dataset.kind, from: `${y}-01-01`, to: todayISO() };
+    render();
+  }));
+  if (!state.exportDraft) return;
+  const close = () => { state.exportDraft = null; render(); };
+  const x = document.getElementById("export-close"); if (x) x.addEventListener("click", close);
+  const bd = document.getElementById("export-backdrop"); if (bd) bd.addEventListener("click", (e) => { if (e.target.id === "export-backdrop") close(); });
+  const f = document.getElementById("export-from"), t = document.getElementById("export-to");
+  if (f) f.addEventListener("change", () => { if (f.value) { state.exportDraft.from = f.value; if (state.exportDraft.to < f.value) state.exportDraft.to = f.value; } renderKeepingModalScroll(); });
+  if (t) t.addEventListener("change", () => { if (t.value) state.exportDraft.to = t.value < state.exportDraft.from ? state.exportDraft.from : t.value; renderKeepingModalScroll(); });
+  const go = document.getElementById("export-go");
+  if (go) go.addEventListener("click", () => { const ex = state.exportDraft; downloadLogExcel(ex.kind, ex.from, ex.to); close(); });
+}
+
+// ---------- "New version available" bar ----------
+// The app checks for a newer release when it opens, whenever it's brought
+// back to the front, and every 30 minutes. When one has been downloaded
+// and taken over (sw.js installs straight away), a bar offers to reload
+// into it — so nobody sits on an old version without knowing.
+function watchForAppUpdates() {
+  if (!("serviceWorker" in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller; // first-ever visit: nothing to update from
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || state.updateReady) return;
+    state.updateReady = true;
+    render();
+  });
+  const check = () => navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+  window.addEventListener("focus", check);
+  setInterval(check, 30 * 60 * 1000);
+  setTimeout(check, 4000);
+}
+function renderUpdateBar() {
+  return `
+    <div class="dd-update-bar" role="status">
+      <span>A new version of Discipline Diary is ready.</span>
+      <button type="button" id="btn-app-update">Update</button>
+    </div>`;
+}
+watchForAppUpdates();
 
 function teacherName() { return state.teacherName || "Unnamed teacher"; }
 function saveTeacherName(name) {
@@ -3940,6 +4162,8 @@ function renderMain() {
   html += state.pendingDuplicateConfirm ? renderDuplicateConfirmModal() : "";
   if (!state.saving && !state.pendingDuplicateConfirm && !state.confirmDeleteTarget && (state.linkPromptQueue || []).length) html += renderLinkPromptModal();
   html += state.undoToast ? renderUndoToast() : "";
+  html += state.exportDraft ? renderExportModal() : "";
+  html += state.updateReady ? renderUpdateBar() : "";
   return html + renderKnownStudentsDatalist();
 }
 function renderUndoToast() {
@@ -5959,6 +6183,13 @@ function renderCustomView(incl) {
   return `${renderTallyGrid(cats, totals)}${nav}
     <div class="dd-mini-year-grid">${months.map((mk) => renderMiniMonth(mk, incl, range)).join("")}</div>${footer}`;
 }
+// Term 1–4: this year's term, week by week. Tally counted like Month/Year
+// (each entry once, on its start date, within the term's dates).
+function renderTermView(incl, idx) {
+  const year = new Date().getFullYear();
+  const t = computeMoeCalendar(year).terms[idx];
+  return renderTrendView(incl, t.start, t.end, `Term ${idx + 1} ${year}`, "weeks");
+}
 function renderAllView(incl) {
   const { from, to } = allRangeBounds();
   return renderTrendView(incl, from, to, "All");
@@ -5973,11 +6204,20 @@ const TREND_LINES = [
   { key: "oss", cat: "suspension", label: "Out-of-School Suspension", cardLabel: "Out-of-School Susp.", color: OSS_DOT_COLOR },
 ];
 // One point per month, trimmed to the range at both ends.
-function trendBuckets(from, to) {
+function trendBuckets(from, to, mode) {
+  // Term view: one point per school week (Week 1 starts on the term's first day).
+  if (mode === "weeks") {
+    const out = [];
+    for (let s0 = from, w = 1; s0 <= to && w <= 20; s0 = addDays(s0, 7), w++) {
+      const e0 = addDays(s0, 6) > to ? to : addDays(s0, 6);
+      out.push({ week: w, start: s0, end: e0, label: `W${w}`, title: `Week ${w} · ${formatDateShort(s0)} – ${formatDateShort(e0)}` });
+    }
+    return out;
+  }
   return monthKeysInRange(monthKey(from), monthKey(to)).map((mk) => {
     const [y, m] = mk.split("-").map(Number);
     const start = `${mk}-01`, end = `${mk}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
-    return { year: y, month: m, start: start < from ? from : start, end: end > to ? to : end };
+    return { year: y, month: m, start: start < from ? from : start, end: end > to ? to : end, label: MONTH_ABBR[m - 1], title: `${MONTH_ABBR[m - 1]} ${y}` };
   });
 }
 // Counted like the Month and Year views: one per entry, on its start date.
@@ -6002,7 +6242,7 @@ function computeTrendSeries(buckets) {
     };
   });
 }
-function renderTrendView(incl, from, to, title) {
+function renderTrendView(incl, from, to, title, mode = "months") {
   const cats = ["discipline", "suspension", "timeOut", "parentMeeting"].filter((c) => incl[c]);
   const lines = TREND_LINES.filter((l) => incl[l.cat]);
   return `
@@ -6010,13 +6250,13 @@ function renderTrendView(incl, from, to, title) {
     ${renderRangeNavLabel(title, from, to)}
     ${lines.length ? `
     <div class="dd-trend-lines-wrap">
-      <div class="dd-trend-lines" data-from="${from}" data-to="${to}"></div>
+      <div class="dd-trend-lines" data-from="${from}" data-to="${to}" data-mode="${mode}"></div>
     </div>
     <div class="dd-cal-legend dd-trend-lines-legend">
       ${[lines.filter((l) => l.cat !== "suspension"), lines.filter((l) => l.cat === "suspension")].filter((row) => row.length).map((row) => `
       <div class="dd-trend-lines-legend-row" data-fit="trend-legend">${row.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}</div>`).join("")}
     </div>
-    <div class="dd-mono-muted dd-trend-lines-note">One point per month. Tap or drag across the graph to see each month's numbers. Each entry is counted once, on the date it starts.</div>` : ""}`;
+    <div class="dd-mono-muted dd-trend-lines-note">${mode === "weeks" ? "One point per school week. Tap or drag across the graph to see each week's numbers." : "One point per month. Tap or drag across the graph to see each month's numbers."} Each entry is counted once, on the date it starts.</div>` : ""}`;
 }
 // Drawn after the page is on screen, so the graph can be sized to the
 // space it actually has. Styled like a stock chart: thin lines, the value
@@ -6031,7 +6271,12 @@ function renderTrendView(incl, from, to, title) {
 // again, or anywhere off the graph, hides it.
 function drawTrendLineCharts() {
   document.querySelectorAll(".dd-trend-lines").forEach((host) => {
-    const rows = computeTrendSeries(trendBuckets(host.dataset.from, host.dataset.to));
+    const mode = host.dataset.mode || "months";
+    const rows = computeTrendSeries(trendBuckets(host.dataset.from, host.dataset.to, mode));
+    // Lines stop at the current week/month: periods that haven't started
+    // keep their label but get no point (a flat 0 would look like a quiet spell).
+    const today = todayISO();
+    const lastPast = rows.reduce((acc, r, i) => (r.start <= today ? i : acc), -1);
     const lines = TREND_LINES.filter((l) => chartIncl()[l.cat]);
     const axisW = 30;
     host.innerHTML = `<div class="dd-trend-axis"></div><div class="dd-trend-scroll"></div><div class="dd-trend-card" hidden></div>`;
@@ -6041,31 +6286,34 @@ function drawTrendLineCharts() {
     const n = rows.length;
     const plotW = avail - padL - padR;
     const W = plotW + padL + padR, plotH = H - padT - padB;
-    const maxV = Math.max(1, ...rows.flatMap((r) => lines.map((l) => r[l.key])));
-    const axisMax = niceAxisMax(maxV);
+    const maxV = Math.max(1, ...rows.slice(0, lastPast + 1).flatMap((r) => lines.map((l) => r[l.key])));
+    // Scale in even steps (1, 2, 5, 10, 20, 25, 50…), at most 5 of them.
+    const tickStep = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((st) => Math.ceil(maxV / st) <= 5) || Math.ceil(maxV / 5);
+    const axisMax = Math.max(tickStep, Math.ceil(maxV / tickStep) * tickStep);
     const x = (i) => (n === 1 ? padL + plotW / 2 : padL + (i * plotW) / (n - 1));
     const y = (v) => padT + plotH - (v / axisMax) * plotH;
     const font = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
-    const ticks = [...new Set([0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(axisMax * f)))];
+    const ticks = Array.from({ length: axisMax / tickStep + 1 }, (_, i) => i * tickStep);
     const grid = ticks.map((t) => `<line x1="0" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#ECE9DF"}" stroke-width="1"></line>`).join("");
     // A faint divider where each new year starts.
-    const yearLines = rows.map((r, i) => (i > 0 && r.month === 1 ? `<line x1="${x(i) - (x(i) - x(i - 1)) / 2}" y1="${padT - 8}" x2="${x(i) - (x(i) - x(i - 1)) / 2}" y2="${padT + plotH}" stroke="#C9C4B4" stroke-width="1" stroke-dasharray="3 3"></line>` : "")).join("");
+    const yearLines = rows.map((r, i) => (mode === "months" && i > 0 && r.month === 1 ? `<line x1="${x(i) - (x(i) - x(i - 1)) / 2}" y1="${padT - 8}" x2="${x(i) - (x(i) - x(i - 1)) / 2}" y2="${padT + plotH}" stroke="#C9C4B4" stroke-width="1" stroke-dasharray="3 3"></line>` : "")).join("");
     // "Jan" with the year under it, on the first month and on every January.
     // A month name needs about 24px; name fewer months when they're closer.
     const gap = n > 1 ? plotW / (n - 1) : plotW;
-    const step = [1, 2, 3, 6, 12].find((k) => gap * k >= 24) || 12;
-    const onStep = (r) => (r.month - 1) % step === 0; // step 12 → January only
+    const step = mode === "weeks" ? (gap >= 20 ? 1 : 2) : [1, 2, 3, 6, 12].find((k) => gap * k >= 24) || 12;
+    const onStep = (r) => (mode === "weeks" ? (r.week - 1) % step === 0 : (r.month - 1) % step === 0); // months: step 12 → January only
     // The first month is named even off-step, unless it would crowd the next named one.
     const nextNamed = rows.findIndex((r, i) => i > 0 && onStep(r));
     const showAt = (r, i) => (i === 0 ? nextNamed < 0 || nextNamed * gap >= 24 : onStep(r));
     const xLabels = rows.map((r, i) => (showAt(r, i) ? `
-      <text x="${x(i)}" y="${padT + plotH + 14}" text-anchor="middle" font-size="9.5" ${font} fill="#6B6652">${MONTH_ABBR[r.month - 1]}</text>
-      ${i === 0 || r.month === 1 ? `<text x="${x(i)}" y="${padT + plotH + 27}" text-anchor="middle" font-size="9.5" font-weight="600" ${font} fill="#1B2A41">${r.year}</text>` : ""}` : "")).join("");
+      <text x="${x(i)}" y="${padT + plotH + 14}" text-anchor="middle" font-size="9.5" ${font} fill="${r.start > today ? "#B5B09F" : "#6B6652"}">${r.label}</text>
+      ${mode === "months" && (i === 0 || r.month === 1) ? `<text x="${x(i)}" y="${padT + plotH + 27}" text-anchor="middle" font-size="9.5" font-weight="600" ${font} fill="#1B2A41">${r.year}</text>` : ""}` : "")).join("");
     const dotR = gap < 8 ? 1.6 : 2.3;
     const paths = lines.map((l) => `
-      ${n > 1 ? `<polyline points="${rows.map((r, i) => `${x(i)},${y(r[l.key])}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
-      ${rows.map((r, i) => (r[l.key] > 0 || n === 1 ? `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="${dotR}" fill="${l.color}" data-line="${l.key}"></circle>` : "")).join("")}`).join("");
-    plotBox.innerHTML = `<svg class="dd-trend-lines-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${yearLines}${xLabels}${paths}<g class="dd-trend-cursor"></g></svg>`;
+      ${lastPast > 0 ? `<polyline points="${rows.slice(0, lastPast + 1).map((r, i) => `${x(i)},${y(r[l.key])}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
+      ${rows.map((r, i) => (i <= lastPast && (r[l.key] > 0 || lastPast === 0) ? `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="${dotR}" fill="${l.color}" data-line="${l.key}"></circle>` : "")).join("")}`).join("");
+    const notYet = lastPast < 0 ? `<text x="${W / 2}" y="${padT + plotH / 2}" text-anchor="middle" font-size="12" ${font} fill="#8A8571">Nothing yet — starts ${formatDate(rows[0] ? rows[0].start : host.dataset.from)}</text>` : "";
+    plotBox.innerHTML = `<svg class="dd-trend-lines-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${grid}${yearLines}${xLabels}${paths}${notYet}<g class="dd-trend-cursor"></g></svg>`;
     axisBox.innerHTML = `<svg width="${axisW}" height="${H}" viewBox="0 0 ${axisW} ${H}">${ticks.map((t) => `<text x="${axisW - 6}" y="${y(t) + 3.5}" text-anchor="end" font-size="10" ${font} fill="#8A8571">${t}</text>`).join("")}</svg>`;
 
     // ---- tap / drag to read a month ----
@@ -6077,7 +6325,7 @@ function drawTrendLineCharts() {
       const r = rows[i];
       cursor.innerHTML = `<line x1="${x(i)}" y1="${padT - 8}" x2="${x(i)}" y2="${padT + plotH}" stroke="#1B2A41" stroke-width="1" stroke-opacity="0.55"></line>` +
         lines.map((l) => `<circle cx="${x(i)}" cy="${y(r[l.key])}" r="4" fill="#fff" stroke="${l.color}" stroke-width="2"></circle>`).join("");
-      card.innerHTML = `<div class="dd-trend-card-title">${MONTH_ABBR[r.month - 1]} ${r.year}</div>` +
+      card.innerHTML = `<div class="dd-trend-card-title">${r.title}</div>` +
         lines.map((l) => `<div class="dd-trend-card-row" data-line="${l.key}"><span class="dd-legend-line" style="background:${l.color}"></span><span class="dd-trend-card-label">${l.cardLabel || l.label}</span><span class="dd-trend-card-num">${r[l.key]}</span></div>`).join("");
       card.hidden = false;
       // Beside the line, on the side with more room, kept inside the graph.
@@ -6090,12 +6338,13 @@ function drawTrendLineCharts() {
     const nearest = (ev) => {
       const b = svg.getBoundingClientRect();
       const px = ((ev.clientX - b.left) / b.width) * W;
-      return n === 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round(((px - padL) / plotW) * (n - 1))));
+      return n === 1 ? 0 : Math.max(0, Math.min(lastPast, Math.round(((px - padL) / plotW) * (n - 1))));
     };
     // Press: show that month (or, pressing the month already showing,
     // hide it on release unless the finger then drags to another month).
     let dragging = false, toggleOff = false;
     svg.addEventListener("pointerdown", (ev) => {
+      if (lastPast < 0) return;
       dragging = true;
       const i = nearest(ev);
       toggleOff = i === shown;
@@ -6194,6 +6443,16 @@ function renderMonthlyChart() {
       ${rangeSelectorHtml}
       ${renderCategoryToggles(incl)}
       ${renderYearCalendar(incl)}
+    </div>
+    ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
+  }
+
+  if (/^term[1-4]$/.test(rangeMode)) {
+    return `
+    <div class="dd-panel" style="margin-top:16px">
+      ${rangeSelectorHtml}
+      ${renderCategoryToggles(incl)}
+      ${renderTermView(incl, parseInt(rangeMode.slice(4), 10) - 1)}
     </div>
     ${state.showChartCustomModal ? renderChartCustomModal() : ""}`;
   }
@@ -6546,6 +6805,7 @@ function renderLogSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("discipline", state.incidents, "date")}
+        ${renderExportButton("discipline")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
           <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
@@ -7322,6 +7582,7 @@ function renderSuspensionSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("suspension", state.suspensions, "startDate")}
+        ${renderExportButton("suspension")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -7650,6 +7911,7 @@ function renderTimeOutSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("timeOut", state.timeOuts, "startDate")}
+        ${renderExportButton("timeOut")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.toTab === t ? "active" : ""}" data-action="set-to-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -7977,6 +8239,7 @@ function renderParentMeetingSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("pm", state.parentMeetings.map((m) => ({ ...m, countDate: pmDate(m) })), "countDate", isPmCounted)}
+        ${renderExportButton("pm")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
@@ -8118,6 +8381,9 @@ function renderPmForm(isEdit) {
 function attachMainListeners() {
   const undoBtn = document.getElementById("btn-undo-delete");
   if (undoBtn) undoBtn.addEventListener("click", undoLastDelete);
+  attachExportListeners();
+  const updBtn = document.getElementById("btn-app-update");
+  if (updBtn) updBtn.addEventListener("click", () => { updBtn.textContent = "Updating…"; updBtn.disabled = true; forceRefreshApp(); });
 
   document.querySelectorAll('[data-action="view-student"]').forEach((el) =>
     el.addEventListener("click", () => {

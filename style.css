@@ -1014,3 +1014,12 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 .dd-checkbox-pill.dd-readonly { cursor: default; }
 .dd-checkbox-pill.dd-readonly input { cursor: default; }
 .dd-date-icon-btn.dd-readonly { cursor: default; opacity: 0.45; }
+
+/* "Download Excel" on each log tab. */
+.dd-export-row { display: flex; justify-content: flex-end; margin: -4px 0 10px; }
+/* "A new version is ready" bar, pinned to the bottom of the screen. */
+.dd-update-bar { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 14px; background: #1B2A41; color: #fff; border-radius: 8px; padding: 10px 12px 10px 16px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; width: max-content; max-width: calc(100vw - 32px); }
+.dd-update-bar button { background: #fff; color: #1B2A41; border: none; border-radius: 6px; padding: 7px 14px; font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.dd-update-bar button:disabled { opacity: 0.7; }
+/* If the Undo toast is showing too, the update bar sits above it. */
+.dd-undo-toast ~ .dd-update-bar { bottom: calc(84px + env(safe-area-inset-bottom)); }
