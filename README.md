@@ -264,8 +264,30 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   per table behind the report (Summary, By Term, By Week of Term, By Month,
   Day of Week, Top Reasons for Suspension / Time Out, Parent Meets by Month,
   Parent Meet Count, Levels, Classes, Suspensions / Time Outs by Student).
-- **Classes For The Year:** the class list for the current year
-  (`settings/classConfig`).
+  The Excel button opens a choice: **Report tables** (that workbook) or
+  **All logs for YYYY** (`All Logs YYYY.xlsx`: every entry of the year from
+  the Grooming, Suspension, Time Out and Parent Meet logs, one sheet each,
+  same columns as each log's own Download Excel; for filing or backup).
+- **Classes For The Year:** each year's classes (`settings/classConfig`),
+  shown in a grid by level (P1–P6). Teachers see the list only. Admins and
+  the owner also get **+** (type a name, e.g. "P4-1" or "4 Excellence"; the
+  level is picked from the number in the name or chosen; tick to add, saved
+  straight away) and a **pencil**: in edit mode each class becomes a text
+  field with ✕ to remove it; the ✕ turns into a tick to confirm once its
+  name is changed; the pencil turns into a tick that saves all changes (Cancel
+  undoes them). This year or next year can be picked at the top. A year with
+  nothing saved carries on the latest earlier year's list, so names stay the
+  same year after year until changed. Each name's level is kept in
+  `classLevels` (all years), and every level count, report, ranking, Data
+  Check and student link reads a class's level from there (`classLevel()`),
+  falling back to the number in the name. Entries already logged keep the
+  class name they were logged with. Class names always show in full on one line.
+  The view and edit modes use the same columns: 6, 3, 2 or 1, the most
+  that fit a name as long as "6 Excellence" with its edit field and one
+  button (`fitClassGrid()`); a longer name, if ever used, widens them. In
+  edit mode a class's ✕ turns into a tick once its name is changed. The log
+  pages' class table widens its class column, and class pills with longer
+  names size to their text and wrap to a second row if needed.
 - **Holidays / School Closure / HBL Days:** public and school holidays and
   closure days (`holidays/singapore`, `settings/schoolCalendarOverrides`,
   `settings/schoolClosureDays`). Used to skip non-school days when setting
@@ -308,14 +330,28 @@ Nine sections, each starting on a new sheet when printed or exported
 8. **Trend Analysis** (kept to about a page), with **Recommendations**
    right after it and a reference-only note.
 
-Grouped lists: phone 3 columns (Most Challenging Classes 2); tablet vertical 5 (classes 4); tablet horizontal and desktop 6 (classes 5); always 4 in the PDF and in Print (which always matches the PDF, on any device), filled row by row with vertical lines between
+Grouped lists (Most Challenging Classes, All Suspensions, All Time-Outs, Parent Meet Count): phone 2 columns; tablet vertical 4; tablet horizontal and desktop 5; always 3 in the PDF and in Print (which always matches the PDF, on any device), filled row by row with vertical lines between
 the columns only (no outer border or row lines; unfilled cells in the last
 row keep their lines); in the PDF and print they break between rows, never inside one.
-Legends match their chart's label size. Export PDF switches off the
+Every report chart's text and legend is the same size as Discipline Load by Month on each screen. The By Weeks in a Term charts keep their own smaller sizing, with their legend matched to them. Export PDF switches off the
 tablet/desktop zoom while capturing, so it's identical from any device.
 
 The dashboard graphs (All, Custom over a year, Term 1–4) show one
 Suspension line — in-school and out-of-school together.
+
+## Data Check
+
+Settings → **Data Check** reads through a year's entries (pick the year at
+the top) and lists anything that could throw the counts and the Annual
+Summary off: no student name, no class, a class not in that year's
+Classes For The Year list (or not a P1–P6 class if the list isn't set),
+possible duplicates (same student, same day, same log; Parent Meets also
+same time), a Time Out with no type, a Suspension or Time Out with no
+reason, a Grooming entry with no issue, and a Parent Meet postponed over
+two weeks ago that still has no new date. It only reports; nothing is
+changed. Tapping an item opens that student's record (a past year opens
+expanded) to edit the entry. The Settings row shows how many items there
+are for the current year (`computeDataCheck()`).
 
 ## Download a log as Excel
 

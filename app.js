@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.38.0";
+const APP_VERSION = "3.43.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1915,6 +1915,10 @@ function downloadLogExcel(kind, from, to) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   return rows.length;
 }
+const ICON_CFY_PLUS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>`;
+const ICON_CFY_PENCIL = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`;
+const ICON_CFY_TICK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>`;
+const ICON_CFY_X = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>`;
 const ICON_DOWNLOAD = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>`;
 // Right-aligned "Download Excel" button on each log tab.
 function renderExportButton(kind) {
@@ -4177,6 +4181,7 @@ function renderMain() {
   if (!state.saving && !state.pendingDuplicateConfirm && !state.confirmDeleteTarget && (state.linkPromptQueue || []).length) html += renderLinkPromptModal();
   html += state.undoToast ? renderUndoToast() : "";
   html += state.exportDraft ? renderExportModal() : "";
+  html += state.reportExcelOpen && state.section === "settings" && state.settingsView === "yearReport" ? renderReportExcelModal() : "";
   html += state.updateReady ? renderUpdateBar() : "";
   return html + renderKnownStudentsDatalist();
 }
@@ -4513,7 +4518,7 @@ function computeYearLevelRanking(year) {
   }).sort((a, b) => b.total - a.total);
 }
 function computeYearClassRanking(year) {
-  return CLASS_OPTIONS.map((cls) => {
+  return classesSeenInYear(year).map((cls) => {
     const discipline = state.incidents.filter((i) => !i.deleted && i.date && i.date.startsWith(`${year}-`) && i.studentClass === cls).length;
     const suspension = state.suspensions.filter((s) => !s.deleted && s.startDate && s.startDate.startsWith(`${year}-`) && s.studentClass === cls).length;
     const timeOut = state.timeOuts.filter((t) => !t.deleted && t.startDate && t.startDate.startsWith(`${year}-`) && t.studentClass === cls).length;
@@ -5410,7 +5415,7 @@ async function exportAnnualReportPdfInner(year) {
         doc.documentElement.classList.add("dd-pdf-render");
         // The copy loses the charts' class-based sizing, so restate it inline
         // before anything is measured.
-        el.querySelectorAll("svg.dd-area-chart, .dd-area-chart-wrap > svg").forEach((svg) => { svg.style.width = "100%"; svg.style.height = "auto"; svg.style.display = "block"; });
+        el.querySelectorAll("svg.dd-area-chart, .dd-area-chart-wrap > svg").forEach((svg) => { if (doc.defaultView.getComputedStyle(svg).display === "none") return; svg.style.width = "100%"; svg.style.height = "auto"; svg.style.display = "block"; });
         const r = el.getBoundingClientRect();
         const pageH = (H / W) * r.width;
         measured = { width: r.width, slices: pdfPageSlices(pdfBreakUnits(el, pageH), r.height, pageH) };
@@ -5513,6 +5518,40 @@ function annualReportSheets(year) {
   out.push(sheet("Suspensions by Student", [N("Student", 26), N("Class", 8), N("Suspensions", 12)], computeYearSuspensionRoster(year).map((r) => [r.name, r.cls || "", r.count])));
   out.push(sheet("Time Outs by Student", [N("Student", 26), N("Class", 8), N("Time Outs", 12)], computeYearTimeOutRoster(year).map((r) => [r.name, r.cls || "", r.count])));
   return out;
+}
+// Year-end archive: every entry of the year from all four logs, one sheet
+// each (same columns as each log's own Download Excel; removed entries left out).
+function annualArchiveSheets(year) {
+  return ["discipline", "suspension", "timeOut", "pm"].map((kind) => {
+    const { cols, rows } = exportLogTable(kind, `${year}-01-01`, `${year}-12-31`);
+    return { name: EXPORT_LOGS[kind].title, xml: buildXlsxSheetXml(cols, rows), count: rows.length };
+  });
+}
+function downloadAnnualArchiveExcel(year) {
+  const blob = buildZip(buildXlsxWorkbookFiles(annualArchiveSheets(year)));
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `All Logs ${year}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+// The report's Excel button offers both files.
+function renderReportExcelModal() {
+  const year = state.settingsSelectedYear;
+  const counts = annualArchiveSheets(year).map((sh) => `${sh.name}: ${sh.count}`).join(" · ");
+  return `
+    <div class="dd-modal-backdrop" id="rxl-backdrop">
+      <div class="dd-modal" id="rxl-modal">
+        <div class="dd-modal-head">
+          <div class="dd-modal-title">Download Excel — ${year}</div>
+          <button type="button" class="dd-modal-close" id="rxl-close">✕</button>
+        </div>
+        <button class="dd-btn-primary" type="button" id="rxl-report" style="margin-top:0">Report tables</button>
+        <div class="dd-mono-muted dd-custom-hint">The tables behind this report, one sheet each (By Term, By Month, Top Reasons, Levels, Classes…).</div>
+        <button class="dd-btn-primary" type="button" id="rxl-archive" style="margin-top:14px">All logs for ${year}</button>
+        <div class="dd-mono-muted dd-custom-hint">Every entry from the four logs, one sheet each, for filing or backup. ${counts}. Removed entries aren't included.</div>
+      </div>
+    </div>`;
 }
 function downloadAnnualReportExcel(year) {
   const blob = buildZip(buildXlsxWorkbookFiles(annualReportSheets(year)));
@@ -5661,6 +5700,8 @@ function reportTicks(maxV, maxTicks = 5) {
   return { top, ticks: Array.from({ length: top / step + 1 }, (_, i) => i * step) };
 }
 const REP_FONT = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
+// A small line chart (one per term on page 1). `axisTop` shares the scale
+// across the four so the terms can be compared by eye.
 // A small line chart (one per term on page 1). `axisTop` shares the scale
 // across the four so the terms can be compared by eye.
 function renderReportMiniLines(rows, lines, { title, axisTop, note } = {}) {
@@ -5841,7 +5882,7 @@ function renderReportLevelBlocks(year) {
 }
 function computeReportClassCounts(year) {
   const inY = (d) => d && d.startsWith(`${year}-`);
-  return CLASS_OPTIONS.map((cls) => {
+  return classesSeenInYear(year).map((cls) => {
     const discipline = state.incidents.filter((i) => !i.deleted && inY(i.date) && i.studentClass === cls).length;
     const suspension = state.suspensions.filter((x) => !x.deleted && inY(x.startDate) && x.studentClass === cls).length;
     const timeOut = state.timeOuts.filter((x) => !x.deleted && inY(x.startDate) && x.studentClass === cls).length;
@@ -5973,6 +6014,158 @@ function renderAnnualReportPages(year) {
   return [p1, p2, p3, p4, p5, p6, p7, p8].map((h, i) => page(i + 1, h)).join("");
 }
 const ADMIN_ONLY_NOTE = `<div class="dd-readonly-note">View only. Only admins and the owner can change this.</div>`;
+// ---------- Data Check (Settings) ----------
+// Reads through a year's entries and lists anything likely to throw the
+// counts off. It only reports — nothing is changed. Each item opens that
+// student's record, where the entry can be edited.
+function computeDataCheck(year) {
+  const y = String(year);
+  const cl = classListForYear(year);
+  const classList = cl.source === "default" ? null : new Set(cl.list);
+  const today = todayISO();
+  const logs = [
+    { key: "grooming", label: "Grooming", list: state.incidents, date: (x) => x.date, dupKey: (x) => x.date },
+    { key: "suspension", label: "Suspension", list: state.suspensions, date: (x) => x.startDate, dupKey: (x) => x.startDate },
+    { key: "timeOut", label: "Time Out", list: state.timeOuts, date: (x) => x.startDate, dupKey: (x) => x.startDate },
+    { key: "pm", label: "Parent Meet", list: state.parentMeetings, date: (x) => x.date, dupKey: (x) => `${x.date}|${x.time || ""}` },
+  ];
+  const groups = [
+    { key: "noName", title: "No student name", items: [] },
+    { key: "noClass", title: "No class", items: [] },
+    { key: "badClass", title: `Class not in ${year}'s class list`, items: [] },
+    { key: "dup", title: "Possible duplicates (same student, same day, same log)", items: [] },
+    { key: "noType", title: "Time Out with no type", items: [] },
+    { key: "noReason", title: "Suspension or Time Out with no reason", items: [] },
+    { key: "noIssue", title: "Grooming entry with no issue", items: [] },
+    { key: "pmWaiting", title: "Parent Meet postponed over 2 weeks ago, still no new date", items: [] },
+  ];
+  const G = Object.fromEntries(groups.map((g) => [g.key, g]));
+  logs.forEach((lg) => {
+    const seen = new Map();
+    lg.list.forEach((x) => {
+      const d = lg.date(x);
+      if (x.deleted || !d || !d.startsWith(`${y}-`)) return;
+      const item = { log: lg.label, date: d, name: x.studentName || "", cls: x.studentClass || "" };
+      if (!String(x.studentName || "").trim()) G.noName.items.push(item);
+      if (!String(x.studentClass || "").trim()) G.noClass.items.push(item);
+      else if (classList ? !classList.has(x.studentClass) : classLevel(x.studentClass) > 6) G.badClass.items.push(item);
+      if (x.studentName) {
+        const k = `${normalizeName(x.studentName)}|${normCls(x.studentClass || "")}|${lg.dupKey(x)}`;
+        if (seen.has(k)) { const first = seen.get(k); if (!first.flagged) { G.dup.items.push(first.item); first.flagged = true; } G.dup.items.push(item); }
+        else seen.set(k, { item, flagged: false });
+      }
+      if (lg.key === "timeOut" && !x.toType) G.noType.items.push(item);
+      if ((lg.key === "suspension" || lg.key === "timeOut") && !multiReasonsFromSaved(x).selected.length && !String(x.reason || "").trim()) G.noReason.items.push(item);
+      if (lg.key === "grooming" && Array.isArray(x.issues) && x.issues.length === 0) G.noIssue.items.push(item);
+      if (lg.key === "pm" && x.pmStatus === "Postponed" && !x.postponedTo && addDays(d, 14) < today) G.pmWaiting.items.push(item);
+    });
+  });
+  groups.forEach((g) => g.items.sort((a, b) => a.date.localeCompare(b.date) || a.log.localeCompare(b.log)));
+  return { groups: groups.filter((g) => g.items.length), total: groups.reduce((a, g) => a + g.items.length, 0), classListSet: !!classList };
+}
+function renderDataCheck() {
+  const years = availableReportYears();
+  const year = state.dataCheckYear || new Date().getFullYear();
+  const r = computeDataCheck(year);
+  const row = (it) => `
+        <button type="button" class="dd-dc-row" data-action="view-student" data-name="${escapeHtml(it.name)}" data-class="${escapeHtml(it.cls)}" data-year="${it.date.slice(0, 4)}" data-open-year="1">
+          <span class="dd-dc-date">${formatDate(it.date)}</span>
+          <span class="dd-dc-who"><b>${escapeHtml(it.name || "(no name)")}</b>${it.cls ? ` <span class="dd-rep-cls">${escapeHtml(it.cls)}</span>` : ""}</span>
+          <span class="dd-dc-log">${it.log}</span>
+        </button>`;
+  return `
+      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0 6px">Data Check</div>
+      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">Looks through the year's entries for anything that could throw the counts and the Annual Summary off. Nothing is changed. Tap an item to open that student and edit the entry. Removed entries aren't checked.</div>
+      <div class="dd-range-pills" style="margin-bottom:12px">${years.map((yy) => `<button type="button" class="dd-range-pill${yy === year ? " active" : ""}" data-action="dc-year" data-year="${yy}">${yy}</button>`).join("")}</div>
+      ${r.classListSet ? "" : `<div class="dd-mono-muted" style="font-size:12px;margin-bottom:10px">Classes for ${year} haven't been set, so classes are only checked for being a real class (P1–P6).</div>`}
+      ${r.total === 0 ? `<div class="dd-dc-ok">All clear — nothing to check for ${year}.</div>` : `
+      <div class="dd-dc-summary">${r.total} ${r.total === 1 ? "item" : "items"} to look at</div>
+      ${r.groups.map((g) => `
+        <div class="dd-dc-group">
+          <div class="dd-dc-head">${escapeHtml(g.title)} <span class="dd-rep-group-n">· ${g.items.length}</span></div>
+          ${g.items.map(row).join("")}
+        </div>`).join("")}`}`;
+}
+// Settings → Classes For The Year. Everyone sees the year's classes by
+// level. Admins and the owner also get + (add a class) and a pencil: in
+// edit mode each class becomes a text field with ✕ to remove it and a tick
+// that appears once its name is changed; the pencil turns into a tick that
+// saves the changes. The list carries on to later years until it's changed;
+// entries already logged keep the class name they were logged with.
+function renderClassesForYear() {
+  const thisYear = new Date().getFullYear();
+  const canEdit = !!state.isAdmin;
+  let draft = state._classDraft && state._classDraft.year ? state._classDraft : (state._classDraft = makeClassDraft(thisYear));
+  if (!canEdit && draft.year !== thisYear) draft = state._classDraft = makeClassDraft(thisYear);
+  const year = draft.year;
+  const info = classListForYear(year);
+  const status = info.source === "set" ? "" : info.source === "carried" ? `Carried on from ${info.from}.` : "Standard class names.";
+  const busy = !!state.saving;
+  const tools = !canEdit ? "" : draft.editing ? `
+          <button type="button" class="dd-cfy-link" data-action="class-edit-cancel">Cancel</button>
+          <button type="button" class="dd-cfy-icon dd-cfy-icon-on" data-action="class-edit-done" title="Save changes" aria-label="Save changes" ${busy ? "disabled" : ""}>${ICON_CFY_TICK}</button>` : `
+          <button type="button" class="dd-cfy-icon" data-action="class-add-open" title="Add a class" aria-label="Add a class" ${draft.adding ? "disabled" : ""}>${ICON_CFY_PLUS}</button>
+          <button type="button" class="dd-cfy-icon" data-action="class-edit" title="Edit classes" aria-label="Edit classes">${ICON_CFY_PENCIL}</button>`;
+  // Names typed but not yet ticked are kept across re-draws.
+  const typed = draft.typed || {};
+  const cell = (it) => { const v = typed[it.id] !== undefined ? typed[it.id] : it.name; const changed = v.replace(/\s+/g, " ").trim() !== it.name; return draft.editing ? `
+          <div class="dd-cfy-row dd-cfy-row-edit">
+            <input type="text" class="dd-cfy-field${changed ? " dd-cfy-field-changed" : ""}" data-id="${it.id}" data-orig="${escapeHtml(it.name)}" value="${escapeHtml(v)}" maxlength="24" aria-label="Class name" />
+            <button type="button" class="dd-cfy-mini dd-cfy-ok" data-action="class-rename" data-id="${it.id}" title="Confirm new name" aria-label="Confirm new name" ${changed ? "" : "hidden"}>${ICON_CFY_TICK}</button>
+            <button type="button" class="dd-cfy-mini dd-cfy-x" data-action="class-remove" data-id="${it.id}" title="Remove ${escapeHtml(it.name)}" aria-label="Remove ${escapeHtml(it.name)}" ${changed ? "hidden" : ""}>${ICON_CFY_X}</button>
+          </div>` : `<div class="dd-cfy-row"><span class="dd-cfy-name">${escapeHtml(it.name)}</span></div>`; };
+  return `
+      <div class="dd-cfy-top">
+        <div class="dd-dash-title" style="color:#1B2A41;margin:0">Classes For ${year}</div>
+        <div class="dd-cfy-tools">${tools}</div>
+      </div>
+      ${canEdit && !draft.editing ? `<div class="dd-cfy-years">${[thisYear, thisYear + 1].map((y) => `<button type="button" class="dd-cfy-year${y === year ? " active" : ""}" data-action="class-year" data-year="${y}">${y}</button>`).join("")}</div>` : ""}
+      ${status ? `<div class="dd-mono-muted dd-cfy-status">${status}</div>` : ""}
+      ${canEdit && draft.adding && !draft.editing ? `
+      <div class="dd-cfy-add">
+        <input type="text" class="dd-input dd-cfy-input" id="cfy-name" maxlength="24" placeholder="Class name" value="${escapeHtml(draft.pendingName || "")}" />
+        <select class="dd-input dd-cfy-level" id="cfy-level" aria-label="Level">
+          <option value="">Level</option>
+          ${[1, 2, 3, 4, 5, 6].map((l) => `<option value="${l}" ${draft.pendingLevel === l ? "selected" : ""}>P${l}</option>`).join("")}
+        </select>
+        <button type="button" class="dd-cfy-icon dd-cfy-icon-on" data-action="class-add" title="Add" aria-label="Add" ${busy ? "disabled" : ""}>${ICON_CFY_TICK}</button>
+        <button type="button" class="dd-cfy-icon" data-action="class-add-cancel" title="Cancel" aria-label="Cancel">${ICON_CFY_X}</button>
+      </div>` : ""}
+      ${draft.error ? `<div class="dd-error" style="margin:0 0 10px">${escapeHtml(draft.error)}</div>` : ""}
+      ${state.saveError ? `<div class="dd-error" style="margin:0 0 10px">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
+      <div class="dd-cfy-grid${draft.editing ? " dd-cfy-grid-edit" : ""}">
+        ${[1, 2, 3, 4, 5, 6].map((lvl) => {
+          const items = draft.items.filter((it) => it.level === lvl).sort((x, z) => x.name.localeCompare(z.name, undefined, { numeric: true, sensitivity: "base" }));
+          return `
+        <div class="dd-cfy-col">
+          <div class="dd-cfy-head">P${lvl}</div>
+          ${items.map(cell).join("") || `<div class="dd-cfy-none">None</div>`}
+        </div>`;
+        }).join("")}
+      </div>`;
+}
+// Classes For The Year: 6, 3, 2 or 1 columns — the most that fit a class
+// name as long as "6 Excellence" (the longest the school expects) with its
+// edit field and its ✕ (which turns into a tick once the name is changed),
+// so the view and edit modes use the same columns.
+// A longer name, if ever used, widens the columns so it still fits.
+window.addEventListener("resize", () => { clearTimeout(window.__cfyFit); window.__cfyFit = setTimeout(() => fitClassGrid(), 150); });
+function fitClassGrid() {
+  const g = document.querySelector(".dd-cfy-grid");
+  if (!g) return;
+  const names = [...g.querySelectorAll(".dd-cfy-field")].map((f) => f.value).concat([...g.querySelectorAll(".dd-cfy-name")].map((e) => e.textContent));
+  const probe = document.createElement("span");
+  probe.className = "dd-cfy-probe";
+  document.body.appendChild(probe);
+  let widest = 0;
+  names.concat(["6 Excellence"]).forEach((n) => { probe.textContent = n; widest = Math.max(widest, probe.offsetWidth); });
+  probe.remove();
+  // field padding/border 10 + one button (✕, or the tick once the name is changed) 18 + gap 2 + column padding/border 12 + 4 spare
+  const need = widest + 46;
+  const width = g.clientWidth;
+  const cols = [6, 3, 2, 1].find((n) => (width - (n - 1) * 6) / n >= need) || 1;
+  g.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+}
 function renderSettingsSection() {
   // Every back button sits in the same kind of row as the report's
   // "← Years" toolbar, so back buttons and titles line up page to page.
@@ -6000,30 +6193,18 @@ function renderSettingsSection() {
       <div class="dd-settings-menu-group">
         ${years.map((y) => `<button type="button" class="dd-settings-menu-row" data-action="settings-open-year" data-year="${y}"><span>${y}</span><span class="dd-settings-chevron">›</span></button>`).join("")}
       </div>`;
+  } else if (state.settingsView === "dataCheck") {
+    body = `
+      ${backRow("Settings", "settings-back-to-menu")}
+      ${renderDataCheck()}`;
   } else if (state.settingsView === "studentLinks") {
     body = `
       ${backRow("Settings", "settings-back-to-menu")}
       ${renderStudentLinksSettings()}`;
   } else if (state.settingsView === "classesForYear") {
-    const year = new Date().getFullYear();
-    const draft = state._classDraft || classOptionsForCurrentYear();
-    const canEdit = !!state.isAdmin;
     body = `
       ${backRow("Settings", "settings-back-to-menu")}
-      <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0">Classes For ${year}</div>
-      ${canEdit ? "" : ADMIN_ONLY_NOTE}
-      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:12px">
-        Only ticked classes will show up in the class dropdown when logging an entry this year.${canEdit ? " Untick any that don't exist this year (e.g. after re-streaming); tick any new ones." : ""}
-      </div>
-      <div class="dd-issue-grid">
-        ${CLASS_OPTIONS.map((c) => `
-          <label class="dd-checkbox-pill${canEdit ? "" : " dd-readonly"}" style="display:flex">
-            <input type="checkbox" class="dd-class-year-cb" value="${c}" ${draft.includes(c) ? "checked" : ""} ${canEdit ? "" : "disabled"} />
-            <span>${c}</span>
-          </label>`).join("")}
-      </div>
-      ${state.saveError ? `<div class="dd-error">Couldn't save — ${escapeHtml(state.saveErrorDetail || "check your connection and try again")}.</div>` : ""}
-      ${canEdit ? `<button class="dd-btn-primary" type="button" id="btn-save-class-config" style="margin-top:14px" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : `Save for ${year}`}</button>` : ""}`;
+      ${renderClassesForYear()}`;
   } else if (state.settingsView === "holidays") {
     const year = state.holidaySettingsYear || new Date().getFullYear();
     const moe = computeMoeCalendar(year);
@@ -6190,7 +6371,7 @@ function renderSettingsSection() {
       ${state.saveError ? `<div class="dd-error" style="margin-top:14px;padding:10px 12px;border:1px solid #A3372B;border-radius:6px;background:#A3372B11">${escapeHtml(state.saveErrorDetail || "Couldn't restore that entry.")}</div>` : ""}`;
   } else {
     const year = new Date().getFullYear();
-    const needsReview = !state.classConfig?.classesByYear?.[String(year)];
+    const needsReview = classListForYear(year).source === "default";
     const menuRow = (label, action) => `<button type="button" class="dd-settings-menu-row" data-action="${action}"><span class="dd-settings-menu-label" data-fit="settings-menu">${label}</span><span class="dd-settings-chevron">›</span></button>`;
     body = `
       <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px">Settings</div>
@@ -6201,6 +6382,7 @@ function renderSettingsSection() {
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
         ${menuRow("Authorised Teachers List", "settings-open-access")}
         ${menuRow("Student Links", "settings-open-links")}
+        ${(() => { const n = computeDataCheck(year).total; return menuRow(`Data Check${n ? ` <span class="dd-dc-badge">${n}</span>` : ""}`, "settings-open-datacheck"); })()}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -6224,8 +6406,8 @@ function renderClassPillsRow(pageKey, level) {
   if (!classes.length) return "";
   const selected = state[`${pageKey}SelectedClass`] || null;
   return `
-    <div class="dd-range-pills" style="flex-wrap:nowrap;margin-bottom:14px">
-      ${classes.map((c) => `<button type="button" class="dd-range-pill${selected === c ? " active" : ""}" style="flex:1" data-action="select-class-pill" data-page="${pageKey}" data-class="${c}">${c}</button>`).join("")}
+    <div class="dd-range-pills${classes.some((c) => c.length > 5) ? " dd-class-pills-wrap" : ""}" style="${classes.some((c) => c.length > 5) ? "" : "flex-wrap:nowrap;"}margin-bottom:14px">
+      ${classes.map((c) => `<button type="button" class="dd-range-pill${selected === c ? " active" : ""}" ${classes.some((x) => x.length > 5) ? "" : `style="flex:1"`} data-action="select-class-pill" data-page="${pageKey}" data-class="${c}">${c}</button>`).join("")}
     </div>`;
 }
 function renderLevelBreakdown(pageKey, items, dateField, isActive) {
@@ -6254,8 +6436,10 @@ function renderLevelBreakdown(pageKey, items, dateField, isActive) {
   const rowTotals = classes.map((cls) => moe.terms.reduce((sum, t) => sum + (termCountFor(cls, t) || 0), 0));
   const colTotals = moe.terms.map((t) => classes.reduce((sum, cls) => sum + (termCountFor(cls, t) || 0), 0));
   const grandTotal = rowTotals.reduce((a, b) => a + b, 0);
+  // Class column wide enough for the longest class name on one line.
+  const clsW = Math.max(64, ...classes.map((c) => Math.ceil(String(c).length * 7.2 + 18)));
   const breakdownHtml = `
-    <div class="dd-level-breakdown">
+    <div class="dd-level-breakdown" style="--cls-w:${clsW}px">
       <div class="dd-level-row dd-level-row-header">
         <div class="dd-level-cell-class">Class</div>
         ${moe.terms.map((t) => `<div class="dd-level-cell-term">${t.label}</div>`).join("")}
@@ -7248,7 +7432,7 @@ function renderDashboardSection() {
     <div class="dd-app">
       ${renderNav()}
       <div class="dd-main">
-        ${!state.classConfig?.classesByYear?.[String(new Date().getFullYear())] ? `
+        ${state.classConfig && classListForYear(new Date().getFullYear()).source === "default" ? `
         ${state.isAdmin ? `<div class="dd-error" style="margin-bottom:12px" data-action="goto-classes-for-year">Classes for ${new Date().getFullYear()} haven't been reviewed yet — <button type="button" class="dd-back-link" data-action="goto-classes-for-year" style="text-decoration:underline">tap here to set them up</button>.</div>` : `<div class="dd-error" style="margin-bottom:12px">Classes for ${new Date().getFullYear()} haven't been reviewed yet — ask an admin or the owner to set them up.</div>`}` : ""}
         ${renderNewEntryRow()}
 
@@ -7316,9 +7500,25 @@ function normalizeName(name) {
 function studentKey(name, studentClass) {
   return `${normalizeName(name)}|${(studentClass || "").trim().toUpperCase()}`;
 }
+// A class's level (1–6): the level saved for that name under Settings →
+// Classes For The Year, else read from the name ("P4-1" → 4, "4 Excellence"
+// → 4). 999 = no level (not a primary class name the app can place).
 function classLevel(cls) {
-  const m = /^P(\d+)/.exec(cls || "");
-  return m ? parseInt(m[1], 10) : 999;
+  const name = String(cls || "").trim();
+  if (!name) return 999;
+  const saved = state.classConfig?.classLevels?.[name];
+  if (saved >= 1 && saved <= 6) return Number(saved);
+  return guessClassLevel(name);
+}
+function guessClassLevel(name) {
+  const n = String(name || "").trim();
+  const m = /^P(\d+)/i.exec(n) || /^(?:Pri(?:mary)?\s*)?([1-6])(?!\d)/i.exec(n) || /(?:^|[^\d])([1-6])(?:[^\d]|$)/.exec(n);
+  const lvl = m ? parseInt(m[1], 10) : 999;
+  return lvl >= 1 && lvl <= 6 ? lvl : 999;
+}
+// Level first, then name in natural order (P4-2 before P4-10).
+function sortClasses(list) {
+  return list.slice().sort((a, b) => classLevel(a) - classLevel(b) || String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" }));
 }
 function filteredIncidents() {
   let list = state.incidents.filter((it) => !it.deleted);
@@ -7956,10 +8156,32 @@ function renderIncidentDetail(it) {
 // The classes actually available this year, if configured under Settings
 // → Classes For The Year — falls back to the full roster if nothing has
 // been set for this year yet (e.g. before the feature was ever used).
-function classOptionsForCurrentYear() {
-  const year = String(new Date().getFullYear());
-  const configured = state.classConfig?.classesByYear?.[year];
-  return Array.isArray(configured) && configured.length ? configured : CLASS_OPTIONS;
+// A year keeps the most recent list saved for it or any earlier year, so
+// the class names carry on year after year until an admin changes them.
+// source: "set" (saved for this year), "carried" (from an earlier year) or
+// "default" (nothing saved yet: the standard P1-1… list).
+function classListForYear(year) {
+  const byYear = state.classConfig?.classesByYear || {};
+  const y = Number(year);
+  if (Array.isArray(byYear[String(y)]) && byYear[String(y)].length) return { list: sortClasses(byYear[String(y)]), source: "set", from: y };
+  const earlier = Object.keys(byYear).map(Number).filter((k) => k < y && Array.isArray(byYear[String(k)]) && byYear[String(k)].length).sort((a, b) => b - a);
+  if (earlier.length) return { list: sortClasses(byYear[String(earlier[0])]), source: "carried", from: earlier[0] };
+  return { list: CLASS_OPTIONS.slice(), source: "default", from: null };
+}
+function classOptionsForYear(year) { return classListForYear(year).list; }
+function classOptionsForCurrentYear() { return classOptionsForYear(new Date().getFullYear()); }
+// Every class that appears in a year: that year's list plus any class
+// actually used on an entry that year (e.g. an older name), sorted by level.
+function classesSeenInYear(year) {
+  const set = new Set(classOptionsForYear(year));
+  const y = `${year}-`;
+  state.incidents.forEach((x) => { if (!x.deleted && String(x.date || "").startsWith(y) && x.studentClass) set.add(x.studentClass); });
+  [...state.suspensions, ...state.timeOuts].forEach((x) => { if (!x.deleted && String(x.startDate || "").startsWith(y) && x.studentClass) set.add(x.studentClass); });
+  state.parentMeetings.forEach((m) => { const d = pmDate(m) || m.date; if (!m.deleted && String(d || "").startsWith(y) && m.studentClass) set.add(m.studentClass); });
+  return sortClasses([...set]);
+}
+function makeClassDraft(year) {
+  return { year, items: classOptionsForYear(year).map((name, i) => ({ id: `c${i}`, name, level: classLevel(name) })), error: "", editing: false, adding: false, nextId: 1000 };
 }
 // A single shared <datalist> of every student name seen across all
 // three logs, for the "Student name" fields to offer as suggestions —
@@ -8952,6 +9174,8 @@ function attachMainListeners() {
       state.studentViewClass = el.dataset.class || "";
       state.studentViewYear = el.dataset.year ? parseInt(el.dataset.year, 10) : null;
       state.studentViewOpenYears = {};
+      // From Data Check: an item in a past year opens with that year expanded.
+      if (el.dataset.openYear && state.studentViewYear) state.studentViewOpenYears[state.studentViewYear] = true;
       state.section = "studentView";
       window.scrollTo(0, 0);
       render();
@@ -9057,8 +9281,12 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.linkArchiveOpen = !state.linkArchiveOpen; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="settings-open-links"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsView = "studentLinks"; state.linkError = ""; render(); }));
+  document.querySelectorAll('[data-action="settings-open-datacheck"]').forEach((el) =>
+    el.addEventListener("click", () => { state.settingsView = "dataCheck"; state.dataCheckYear = new Date().getFullYear(); window.scrollTo(0, 0); render(); }));
+  document.querySelectorAll('[data-action="dc-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state.dataCheckYear = parseInt(el.dataset.year, 10); render(); }));
   document.querySelectorAll('[data-action="settings-open-classes"]').forEach((el) =>
-    el.addEventListener("click", () => { state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
+    el.addEventListener("click", () => { state._classDraft = makeClassDraft(new Date().getFullYear()); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
 
   document.querySelectorAll('[data-action="settings-open-holidays"]').forEach((el) =>
     el.addEventListener("click", () => { state.settingsView = "holidays"; state.holidaySettingsYear = new Date().getFullYear(); state.saveError = false; render(); }));
@@ -9187,10 +9415,15 @@ function attachMainListeners() {
   });
 
   const exportXlsxBtn = document.getElementById("btn-export-report-xlsx");
-  if (exportXlsxBtn) exportXlsxBtn.addEventListener("click", () => {
-    try { downloadAnnualReportExcel(state.settingsSelectedYear); }
-    catch (err) { state.reportExportError = `Couldn't create the Excel file — ${err?.message || String(err)}.`; render(); }
-  });
+  if (exportXlsxBtn) exportXlsxBtn.addEventListener("click", () => { state.reportExcelOpen = true; render(); });
+  if (state.reportExcelOpen) {
+    const close = () => { state.reportExcelOpen = false; render(); };
+    const run = (fn) => { try { fn(state.settingsSelectedYear); close(); } catch (err) { state.reportExcelOpen = false; state.reportExportError = `Couldn't create the Excel file — ${err?.message || String(err)}.`; render(); } };
+    const x = document.getElementById("rxl-close"); if (x) x.addEventListener("click", close);
+    const bd = document.getElementById("rxl-backdrop"); if (bd) bd.addEventListener("click", (e) => { if (e.target.id === "rxl-backdrop") close(); });
+    const r1 = document.getElementById("rxl-report"); if (r1) r1.addEventListener("click", () => run(downloadAnnualReportExcel));
+    const r2 = document.getElementById("rxl-archive"); if (r2) r2.addEventListener("click", () => run(downloadAnnualArchiveExcel));
+  }
 
   const loadKnownBtn = document.getElementById("btn-load-known-holidays");
   if (loadKnownBtn) loadKnownBtn.addEventListener("click", async () => {
@@ -9387,33 +9620,103 @@ function attachMainListeners() {
   }
 
   document.querySelectorAll('[data-action="goto-classes-for-year"]').forEach((el) =>
-    el.addEventListener("click", () => { state.section = "settings"; state._classDraft = classOptionsForCurrentYear().slice(); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
-  document.querySelectorAll(".dd-class-year-cb").forEach((cb) =>
-    cb.addEventListener("change", () => {
-      if (!state._classDraft) state._classDraft = classOptionsForCurrentYear().slice();
-      if (cb.checked) { if (!state._classDraft.includes(cb.value)) state._classDraft.push(cb.value); }
-      else { state._classDraft = state._classDraft.filter((x) => x !== cb.value); }
-    }));
-  const saveClassBtn = document.getElementById("btn-save-class-config");
-  if (saveClassBtn) saveClassBtn.addEventListener("click", async () => {
-    if (!state.isAdmin) return;
-    const year = String(new Date().getFullYear());
-    const classes = (state._classDraft || []).slice();
-    state.saveError = false;
-    state.saving = true;
-    render();
+    el.addEventListener("click", () => { state.section = "settings"; state._classDraft = makeClassDraft(new Date().getFullYear()); state.settingsView = "classesForYear"; state.saveError = false; render(); }));
+  fitClassGrid();
+  const classDraft = () => (state._classDraft && state._classDraft.year ? state._classDraft : (state._classDraft = makeClassDraft(new Date().getFullYear())));
+  // Why a class name can't be used (null = fine). `self` is the class being renamed.
+  const classNameProblem = (d, name, lvl, self) => {
+    if (!name) return "A class needs a name.";
+    if (d.items.some((it) => it !== self && it.name.toLowerCase() === name.toLowerCase())) return `"${name}" is already in the list.`;
+    const g = guessClassLevel(name);
+    if (g !== 999 && g !== lvl) return `"${name}" looks like a P${g} class, not P${lvl}.`;
+    return null;
+  };
+  const saveClassList = async (d) => {
+    const classes = sortClasses(d.items.map((it) => it.name));
+    // Each name's level is kept for good (all years), so entries logged
+    // under it — including names later renamed — stay under the right level.
+    const classLevels = { ...(state.classConfig?.classLevels || {}) };
+    d.items.forEach((it) => { classLevels[it.name] = it.level; });
+    state.saveError = false; state.saving = true; render();
     try {
-      await setDoc(doc(db, "settings", "classConfig"), { classesByYear: { ...(state.classConfig?.classesByYear || {}), [year]: classes } }, { merge: true });
-      state.settingsView = "menu";
-      state.saving = false;
-      render();
+      await setDoc(doc(db, "settings", "classConfig"), { classesByYear: { ...(state.classConfig?.classesByYear || {}), [String(d.year)]: classes }, classLevels }, { merge: true });
+      state.saving = false; return true;
     } catch (err) {
-      state.saveError = true;
-      state.saveErrorDetail = err?.message || String(err);
-      state.saving = false;
-      render();
+      state.saveError = true; state.saveErrorDetail = err?.message || String(err); state.saving = false; render(); return false;
     }
+  };
+  const tidy = (v) => String(v || "").replace(/\s+/g, " ").trim();
+  document.querySelectorAll('[data-action="class-year"]').forEach((el) =>
+    el.addEventListener("click", () => { state._classDraft = makeClassDraft(parseInt(el.dataset.year, 10)); state.saveError = false; render(); }));
+  // + : add a class (saved straight away)
+  document.querySelectorAll('[data-action="class-add-open"]').forEach((el) =>
+    el.addEventListener("click", () => { const d = classDraft(); d.adding = true; d.error = ""; render(); const f = document.getElementById("cfy-name"); if (f) f.focus(); }));
+  document.querySelectorAll('[data-action="class-add-cancel"]').forEach((el) =>
+    el.addEventListener("click", () => { const d = classDraft(); d.adding = false; d.error = ""; d.pendingName = ""; d.pendingLevel = null; render(); }));
+  const cfyName = document.getElementById("cfy-name"), cfyLevel = document.getElementById("cfy-level");
+  if (cfyName && cfyLevel) cfyName.addEventListener("input", () => {
+    const g = guessClassLevel(cfyName.value);
+    if (g !== 999) cfyLevel.value = String(g);
+    classDraft().pendingName = cfyName.value;
   });
+  if (cfyLevel) cfyLevel.addEventListener("change", () => { classDraft().pendingLevel = parseInt(cfyLevel.value, 10) || null; });
+  const addClass = async () => {
+    const d = classDraft();
+    const name = tidy(cfyName?.value), lvl = parseInt(cfyLevel?.value || "", 10) || null;
+    d.pendingName = name; d.pendingLevel = lvl;
+    d.error = !name ? "" : !lvl ? `Pick the level for "${name}".` : classNameProblem(d, name, lvl, null) || "";
+    if (!name || d.error) { render(); return; }
+    d.items.push({ id: `c${d.nextId++}`, name, level: lvl });
+    d.pendingName = ""; d.pendingLevel = null;
+    if (await saveClassList(d)) { d.adding = false; render(); }
+  };
+  document.querySelectorAll('[data-action="class-add"]').forEach((el) => el.addEventListener("click", addClass));
+  if (cfyName) cfyName.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addClass(); } });
+  // Pencil: edit mode
+  document.querySelectorAll('[data-action="class-edit"]').forEach((el) =>
+    el.addEventListener("click", () => { const d = classDraft(); d.editing = true; d.adding = false; d.error = ""; d.typed = {}; d.before = d.items.map((it) => ({ ...it })); render(); }));
+  document.querySelectorAll('[data-action="class-edit-cancel"]').forEach((el) =>
+    el.addEventListener("click", () => { const d = classDraft(); d.items = d.before || d.items; d.editing = false; d.error = ""; d.typed = {}; render(); }));
+  // A class's own tick shows once its name is changed.
+  document.querySelectorAll(".dd-cfy-field").forEach((f) => {
+    const ok = f.parentElement.querySelector(".dd-cfy-ok");
+    let refit = null;
+    f.addEventListener("input", () => { clearTimeout(refit); refit = setTimeout(fitClassGrid, 250); });
+    const x = f.parentElement.querySelector(".dd-cfy-x");
+    const sync = () => { ok.hidden = tidy(f.value) === f.dataset.orig; x.hidden = !ok.hidden; f.classList.toggle("dd-cfy-field-changed", !ok.hidden); const d = classDraft(); (d.typed = d.typed || {})[f.dataset.id] = f.value; };
+    f.addEventListener("input", sync);
+    f.addEventListener("keydown", (e) => { if (e.key === "Enter" && !ok.hidden) { e.preventDefault(); ok.click(); } });
+  });
+  document.querySelectorAll('[data-action="class-rename"]').forEach((el) =>
+    el.addEventListener("click", () => {
+      const d = classDraft();
+      const it = d.items.find((x) => x.id === el.dataset.id);
+      const f = document.querySelector(`.dd-cfy-field[data-id="${el.dataset.id}"]`);
+      if (!it || !f) return;
+      const name = tidy(f.value);
+      const problem = classNameProblem(d, name, it.level, it);
+      if (problem) { d.error = problem; render(); return; }
+      it.name = name; if (d.typed) delete d.typed[it.id]; d.error = ""; render();
+    }));
+  document.querySelectorAll('[data-action="class-remove"]').forEach((el) =>
+    el.addEventListener("click", () => { const d = classDraft(); d.items = d.items.filter((x) => x.id !== el.dataset.id); d.error = ""; render(); }));
+  // Tick in place of the pencil: take any names typed but not yet ticked, then save.
+  document.querySelectorAll('[data-action="class-edit-done"]').forEach((el) =>
+    el.addEventListener("click", async () => {
+      const d = classDraft();
+      for (const f of document.querySelectorAll(".dd-cfy-field")) {
+        const it = d.items.find((x) => x.id === f.dataset.id);
+        const name = tidy(f.value);
+        if (!it || name === it.name) continue;
+        const problem = classNameProblem(d, name, it.level, it);
+        if (problem) { d.error = problem; render(); return; }
+        it.name = name;
+      }
+      if (!d.items.length) { d.error = "Keep at least one class."; render(); return; }
+      const changed = JSON.stringify((d.before || []).map((x) => [x.name, x.level])) !== JSON.stringify(d.items.map((x) => [x.name, x.level]));
+      if (changed && !(await saveClassList(d))) return;
+      d.editing = false; d.error = ""; d.before = null; d.typed = {}; render();
+    }));
 
   const helpBtn = document.getElementById("btn-help");
   if (helpBtn) helpBtn.addEventListener("click", () => { state.showHelp = true; render(); });

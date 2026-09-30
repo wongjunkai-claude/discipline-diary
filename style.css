@@ -372,7 +372,7 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-level-row-header { background: #F2EFE6; }
 .dd-level-row-header .dd-level-cell-term, .dd-level-row-header .dd-level-cell-class { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; color: #8A8571; font-weight: 600; }
 @media (max-width: 360px) { .dd-level-row-header .dd-level-cell-term { font-size: 9px; letter-spacing: -0.2px; padding-left: 2px; padding-right: 2px; } }
-.dd-level-cell-class { width: 64px; flex-shrink: 0; padding: 7px 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; }
+.dd-level-cell-class { width: var(--cls-w, 64px); flex-shrink: 0; padding: 7px 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1B2A41; }
 /* min-width: 0 lets flex-grow ratios (e.g. the "By term" table's 4x-wide
    Time Out group) actually hold — without it, a word like "Suspension"
    claims its full content width before the grow ratio is applied to
@@ -1066,7 +1066,7 @@ html.dd-pdf-render .dd-trend-legend { font-size: 2.5cqi; }
 
 /* ================= Annual Report (8-page layout) ================= */
 .dd-rep-legend-wrap { container-type: inline-size; }
-.dd-rep-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35em 1.1em; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #4A4536; font-size: max(8px, 1.8cqi); margin-top: 6px; }
+.dd-rep-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35em 1.1em; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #4A4536; font-size: max(8px, 2.5cqi); margin-top: 6px; }
 .dd-rep-legend-in .dd-rep-legend { font-size: max(8px, 2.5cqi); margin-top: 4px; }
 .dd-rep-legend-item { display: inline-flex; align-items: center; gap: 0.45em; white-space: nowrap; }
 .dd-rep-sw-line { display: inline-block; width: 1.3em; height: 0.25em; border-radius: 1px; }
@@ -1104,8 +1104,9 @@ html.dd-pdf-render .dd-rep-quads { grid-template-columns: 1fr 1fr; }
 .dd-rep-class-name { font-weight: 700; font-size: 13px; height: 13px; display: flex; align-items: center; }
 .dd-rep-class-one { align-items: center; }
 .dd-rep-class-one .dd-rep-class-name { height: auto; }
-.dd-rep-class-break { font-size: 9.5px; line-height: 13px; color: #6B6652; min-width: 6.6em; }
-.dd-rep-class-break > div { display: flex; justify-content: space-between; gap: 6px; }
+.dd-rep-class-break { font-size: 9.5px; line-height: 13px; color: #6B6652; display: grid; grid-template-columns: max-content max-content; column-gap: 5px; }
+.dd-rep-class-break > div { display: contents; }
+.dd-rep-class-break b { text-align: right; }
 .dd-rep-class-break b { color: #1B2A41; }
 /* Most challenging levels: one row of 6 blocks, least → most. */
 .dd-rep-levels { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
@@ -1120,13 +1121,14 @@ html.dd-pdf-render .dd-rep-levels { grid-template-columns: repeat(6, minmax(0, 1
 .dd-rep-level-scale span:first-child::before { content: "← "; }
 .dd-rep-level-scale span:last-child::after { content: " →"; }
 .dd-rep-disclaimer { margin-top: 12px; padding: 8px 10px; border-left: 3px solid #D98F2B; background: #FBF3E4; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; line-height: 1.5; color: #4A4536; }
-.dd-rep-class-name, .dd-rep-class-break span { white-space: nowrap; }
+.dd-rep-class-break span { white-space: nowrap; }
+.dd-rep-class-name { white-space: nowrap; }
 @media (max-width: 480px) {
   .dd-rep-cell { padding: 5px 6px; }
 }
 /* Phones show the term graphs one per row, so their labels are twice as
    big — the shared legend follows. */
-@media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 3.6cqi); } }
+
 /* Report table headings: full words, shortened on narrow phones. */
 .dd-rt-short { display: none; }
 @media (max-width: 480px) { .dd-rt-long { display: none; } .dd-rt-short { display: inline; } }
@@ -1168,7 +1170,7 @@ html.dd-pdf-render .dd-rt-short { display: none; }
 html.dd-pdf-render .dd-rep-note-1line { font-size: 11px; }
 
 /* Print sheet = the PDF: whatever the screen or phone width, Print lays the grouped
-   lists, level blocks and labels out exactly as Export PDF does (4 columns). */
+   lists, level blocks and labels out exactly as Export PDF does (3 columns). */
 @media print {
   html .dd-rep-cell { padding: 4px 7px; }
   html .dd-rep-levels { gap: 6px; }
@@ -1181,68 +1183,40 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 11px; }
   html .dd-rep-note-1line { font-size: 11px; }
 }
 
-/* Grouped lists: columns per screen (lists / classes). Empty filler cells (dd-pad-cN) keep the
-   column lines running down every row when the last row isn't full. */
+/* Grouped lists (Most Challenging Classes, All Suspensions, All Time-Outs, Parent Meet Count):
+   phone 2 columns, tablet vertical 4, tablet horizontal and desktop 5, Print and PDF 3.
+   Empty filler cells (dd-pad-cN) keep the column lines running down every row. */
 .dd-rep-cell-pad { display: none; }
-/* phone */
-.dd-rep-grid3:not(.dd-rep-grid3-cls) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-.dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(3n+1) { border-left: 0; }
-.dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad:not(.dd-pad-c3) { display: none; }
-.dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad.dd-pad-c3 { display: block; }
-.dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(2n+1) { border-left: 0; }
-.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad:not(.dd-pad-c2) { display: none; }
-.dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad.dd-pad-c2 { display: block; }
-/* tablet, vertical */
+.dd-rep-grid3, .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dd-rep-grid3 > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
+.dd-rep-grid3 > .dd-rep-cell:nth-child(2n+1) { border-left: 0; }
+.dd-rep-grid3 > .dd-rep-cell-pad:not(.dd-pad-c2) { display: none; }
+.dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c2 { display: block; }
 @media (min-width: 700px) {
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(5n+1) { border-left: 0; }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad:not(.dd-pad-c5) { display: none; }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad.dd-pad-c5 { display: block; }
-  .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad:not(.dd-pad-c4) { display: none; }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad.dd-pad-c4 { display: block; }
+  .dd-rep-grid3, .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
+  .dd-rep-grid3 > .dd-rep-cell-pad:not(.dd-pad-c4) { display: none; }
+  .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c4 { display: block; }
 }
-/* tablet, horizontal and desktop */
 @media (min-width: 1024px) {
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(6n+1) { border-left: 0; }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad:not(.dd-pad-c6) { display: none; }
-  .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad.dd-pad-c6 { display: block; }
-  .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(5n+1) { border-left: 0; }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad:not(.dd-pad-c5) { display: none; }
-  .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad.dd-pad-c5 { display: block; }
+  .dd-rep-grid3, .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
+  .dd-rep-grid3 > .dd-rep-cell:nth-child(5n+1) { border-left: 0; }
+  .dd-rep-grid3 > .dd-rep-cell-pad:not(.dd-pad-c5) { display: none; }
+  .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c5 { display: block; }
 }
-/* Export PDF and Print: always 4 (the sheet is a fixed A4 layout) */
-html.dd-pdf-render .dd-rep-grid3:not(.dd-rep-grid3-cls) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-html.dd-pdf-render .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-html.dd-pdf-render .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
-html.dd-pdf-render .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad:not(.dd-pad-c4) { display: none; }
-html.dd-pdf-render .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad.dd-pad-c4 { display: block; }
-html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
-html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad:not(.dd-pad-c4) { display: none; }
-html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad.dd-pad-c4 { display: block; }
+html.dd-pdf-render .dd-rep-grid3, html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell:nth-child(3n+1) { border-left: 0; }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell-pad:not(.dd-pad-c3) { display: none; }
+html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c3 { display: block; }
 @media print {
-  html .dd-rep-grid3:not(.dd-rep-grid3-cls) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  html .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-  html .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
-  html .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad:not(.dd-pad-c4) { display: none; }
-  html .dd-rep-grid3:not(.dd-rep-grid3-cls) > .dd-rep-cell-pad.dd-pad-c4 { display: block; }
-  html .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  html .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
-  html .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell:nth-child(4n+1) { border-left: 0; }
-  html .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad:not(.dd-pad-c4) { display: none; }
-  html .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad.dd-pad-c4 { display: block; }
+  html .dd-rep-grid3, html .dd-rep-grid3.dd-rep-grid3-cls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html .dd-rep-grid3 > .dd-rep-cell:nth-child(n) { border-left: 1px solid #E2DED0; }
+  html .dd-rep-grid3 > .dd-rep-cell:nth-child(3n+1) { border-left: 0; }
+  html .dd-rep-grid3 > .dd-rep-cell-pad:not(.dd-pad-c3) { display: none; }
+  html .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c3 { display: block; }
 }
 
 /* Three toolbar buttons (Print, Export PDF, Excel) next to "← Years" on phones. */
@@ -1253,3 +1227,62 @@ html.dd-pdf-render .dd-rep-grid3.dd-rep-grid3-cls > .dd-rep-cell-pad.dd-pad-c4 {
 }
 /* Very narrow phones: icons only (each button keeps its title). */
 @media (max-width: 340px) { .dd-report-toolbar .dd-print-btn span { display: none; } .dd-report-toolbar .dd-print-btn { padding: 2px 6px; } }
+
+/* Data Check (Settings) */
+.dd-dc-badge { display: inline-block; min-width: 18px; padding: 1px 6px; margin-left: 6px; border-radius: 9px; background: #A3372B; color: #fff; font-size: 11px; font-weight: 700; text-align: center; vertical-align: 1px; }
+.dd-dc-ok { padding: 12px; border: 1px solid #C9DCC9; background: #EEF5EE; border-radius: 4px; color: #2F5A36; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; }
+.dd-dc-summary { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #A3372B; margin-bottom: 6px; }
+.dd-dc-group { margin-top: 12px; }
+.dd-dc-head { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 700; color: #1B2A41; margin-bottom: 4px; }
+.dd-dc-row { display: grid; grid-template-columns: 6.6em 1fr auto; gap: 8px; align-items: baseline; width: 100%; text-align: left; background: #fff; border: 1px solid #E4E1D4; border-radius: 3px; padding: 7px 9px; margin-bottom: 4px; cursor: pointer; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; color: #1B2A41; }
+.dd-dc-row:hover { border-color: #C9C4B4; }
+.dd-dc-date { color: #6B6652; white-space: nowrap; }
+.dd-dc-who { min-width: 0; overflow-wrap: anywhere; }
+.dd-dc-who b { font-weight: 600; }
+.dd-dc-log { color: #8A8571; font-size: 11.5px; white-space: nowrap; }
+
+/* Settings → Classes For The Year: title with + and pencil on the right,
+   then the classes in a grid by level (3 across on phones, 6 on tablet and
+   desktop). In edit mode each class is a text field with its own tick and ✕. */
+.dd-cfy-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 6px; min-height: 34px; }
+.dd-cfy-tools { display: flex; align-items: center; gap: 6px; }
+.dd-cfy-icon { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #C9C4B4; border-radius: 50%; background: #fff; color: #1B2A41; cursor: pointer; padding: 0; flex-shrink: 0; }
+.dd-cfy-icon:disabled { opacity: 0.45; cursor: default; }
+.dd-cfy-icon-on { background: #1B2A41; border-color: #1B2A41; color: #fff; }
+.dd-cfy-link { background: none; border: none; color: #6B6652; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 6px; }
+.dd-cfy-years { display: flex; gap: 6px; margin-bottom: 8px; }
+.dd-cfy-year { border: 1px solid #C9C4B4; background: #fff; color: #1B2A41; border-radius: 12px; padding: 3px 12px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; }
+.dd-cfy-year.active { background: #1B2A41; border-color: #1B2A41; color: #fff; }
+.dd-cfy-status { font-size: 12px; margin-bottom: 8px; }
+.dd-cfy-add { display: flex; align-items: center; gap: 6px; margin: 2px 0 10px; }
+.dd-cfy-add .dd-cfy-input { flex: 1; min-width: 0; margin: 0; }
+.dd-cfy-add .dd-cfy-level { width: 5.6em; flex-shrink: 0; margin: 0; }
+.dd-cfy-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
+@media (min-width: 700px) { .dd-cfy-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.dd-cfy-col { border: 1px solid #E4E1D4; background: #F7F5EE; border-radius: 4px; padding: 6px 5px 4px; min-width: 0; }
+.dd-cfy-head { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; font-weight: 700; color: #1B2A41; text-align: center; padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid #E4E1D4; }
+.dd-cfy-row { display: flex; align-items: center; gap: 2px; padding: 3px 0; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; color: #1B2A41; min-height: 22px; }
+.dd-cfy-row + .dd-cfy-row { border-top: 1px solid #EFECE3; }
+.dd-cfy-name { min-width: 0; white-space: nowrap; line-height: 1.25; }
+.dd-cfy-row-edit { padding: 2px 0; }
+.dd-cfy-field { flex: 1; min-width: 0; font-family: inherit; font-size: 12.5px; color: #1B2A41; background: #fff; border: 1px solid #C9C4B4; border-radius: 3px; padding: 3px 4px; }
+.dd-cfy-field-changed { border-color: #1B2A41; }
+.dd-cfy-mini { width: 18px; height: 18px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; color: #A09B88; cursor: pointer; padding: 0; }
+.dd-cfy-mini[hidden] { display: none; }
+.dd-cfy-mini svg { width: 14px; height: 14px; }
+.dd-cfy-ok { color: #fff; background: #1B2A41; border-radius: 50%; }
+.dd-cfy-ok svg { width: 13px; height: 13px; }
+.dd-cfy-x:hover { color: #A3372B; }
+.dd-cfy-none { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #A09B88; text-align: center; padding: 4px 0; }
+/* Edit mode: wider columns so names fit in their fields (2 across on phones, 3 on tablet, 6 on wide screens). */
+/* Measures class names for fitClassGrid() (same font as the names). */
+.dd-cfy-probe { position: absolute; visibility: hidden; white-space: nowrap; left: -9999px; top: 0; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; }
+/* Class pills with longer names (e.g. "4 Excellence"): each pill as wide as its name, wrapping to a second row if needed. */
+.dd-class-pills-wrap { flex-wrap: wrap; }
+.dd-class-pills-wrap .dd-range-pill { flex: 1 1 auto; overflow: visible; padding: 7px 10px; }
+.dd-level-breakdown[style*="--cls-w"] .dd-level-cell-class { white-space: nowrap; }
+.dd-cfy-row:not(.dd-cfy-row-edit) .dd-cfy-name { padding-left: 5px; }
+
+/* By Weeks in a Term legend: sized to its (smaller) term charts. */
+.dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 1.8cqi); }
+@media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 3.6cqi); } }
