@@ -1138,7 +1138,7 @@ html.dd-pdf-render .dd-rt-short { display: none; }
 
 /* Top reasons tables: reason, P1–P6, total. */
 .dd-rt-reasons th.dd-rt-reason, .dd-rt-reasons th.dd-rt-reason-h { text-align: left; padding-left: 6px; width: 44%; }
-.dd-rt-reasons th.dd-rt-reason { font-weight: 600; font-size: 0.92em; background: #fff; overflow-wrap: normal; word-break: normal; }
+.dd-rt-reasons th.dd-rt-reason { font-weight: 600; font-size: 11px; background: #fff; overflow-wrap: normal; word-break: normal; }
 .dd-rt-reasons .dd-rt-zero { color: #C9C4B4; }
 .dd-rt-reasons thead th:last-child, .dd-rt-reasons td.dd-rt-tot { width: 12%; }
 .dd-rep-cell { font-size: 11.5px; }
@@ -1358,3 +1358,39 @@ html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c3 { display: block; 
 /* Narrowest tablets: slightly smaller pill text so all ten equal pills still fit their labels. */
 @media (min-width: 700px) and (max-width: 799px) { .dd-range-rows .dd-range-pill { font-size: 12px; letter-spacing: -0.1px; } }
 @media (min-width: 700px) and (max-width: 739px) { .dd-range-rows .dd-range-pill { font-size: 10.5px; padding-left: 1px; padding-right: 1px; } }
+
+/* By Term header: Term, Grooming, Suspension, Meet and Total are merged across
+   the two header rows; Time Out spans its four types. */
+.dd-level-breakdown-byterm .dd-byterm-head2 { grid-template-rows: auto auto; }
+.dd-level-breakdown-byterm .dd-byterm-head2 .dd-bt-merge { grid-row: 1 / span 2; }
+.dd-level-breakdown-byterm .dd-byterm-head2 .dd-level-cell-term-sub { border-top: 1px solid #E4E1D4; }
+/* Where the Time Out types are spelled out (tablet, desktop, PDF, print) the "* Note" key isn't needed. */
+/* Time Out types: spelled out on tablet/desktop screens; R / L / CCA / LE with
+   the "* Note" key on phones, in Print and in the PDF. */
+.dd-to-short { display: none; }
+@media (max-width: 480px) { .dd-to-long { display: none; } .dd-to-short { display: inline; } }
+@media (min-width: 481px) { .dd-to-note { display: none; } }
+html.dd-pdf-render .dd-to-long { display: none !important; }
+html.dd-pdf-render .dd-to-short { display: inline !important; }
+html.dd-pdf-render .dd-to-note { display: block !important; }
+@media print { .dd-to-long { display: none !important; } .dd-to-short { display: inline !important; } .dd-to-note { display: block !important; } }
+/* Tablet and desktop: table headers the same size as the month labels (11px). */
+@media (min-width: 700px) {
+  .dd-rt thead th, .dd-rt thead th.dd-rt-sub { font-size: 11px; }
+  .dd-level-breakdown .dd-level-row-header .dd-level-cell-term, .dd-level-breakdown .dd-level-row-header .dd-level-cell-class,
+  .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-term, .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: 11px; letter-spacing: 0; }
+  .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-term-sub { white-space: normal; line-height: 1.15; }
+  .dd-rt thead th.dd-rt-sub { line-height: 1.15; }
+}
+/* By Term header in the same style as the monthly table (not all caps), wrapping where needed. */
+@media (min-width: 481px) {
+  .dd-level-breakdown-byterm .dd-byterm-head2 > * { text-transform: none; white-space: normal; line-height: 1.15; font-weight: 600; }
+}
+html.dd-pdf-render .dd-level-breakdown-byterm .dd-byterm-head2 > * { text-transform: none; white-space: normal; line-height: 1.15; font-weight: 600; }
+@media print { .dd-level-breakdown-byterm .dd-byterm-head2 > * { text-transform: none; white-space: normal; line-height: 1.15; font-weight: 600; } }
+/* Phones: the By Weeks in a Term legend on one line. */
+@media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { flex-wrap: nowrap; font-size: max(7.5px, 3cqi); gap: 0.35em 0.9em; } }
+/* The By Term table sits as close to its "* Note" line as the monthly table does (wherever the note shows). */
+@media (max-width: 480px) { .dd-level-breakdown-byterm { margin-bottom: 0; } }
+html.dd-pdf-render .dd-level-breakdown-byterm { margin-bottom: 0; }
+@media print { .dd-level-breakdown-byterm { margin-bottom: 0; } }

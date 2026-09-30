@@ -454,3 +454,12 @@ the week view's boxes are square with larger markers.
 
 When printing the Annual Summary, the Trend Analysis box may run across
 pages so its title stays with it.
+
+Report tables: the By Term header merges Term, Grooming, Suspension, Meet
+and Total across its two rows (Time Out spans its four types). On tablet and
+desktop screens the Time Out types are spelled out (Recess, Lesson, CCA,
+Learning Experience) in the By Term and monthly tables; phones, Print and
+the PDF use R / L / CCA / LE with a "* Note" key under each table. On tablet and desktop, table headers are
+the same size as the monthly table's month labels (11px); reason names in
+Top Reasons are that size in every view.
+On phones the By Weeks in a Term legend stays on one line.

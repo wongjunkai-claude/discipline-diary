@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.45.2";
+const APP_VERSION = "3.46.2";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -5247,20 +5247,14 @@ function renderReportByTermTable(year) {
   const grandTotal = termRows.reduce((s, t) => s + rowTotal(t), 0);
   return `
       <div class="dd-level-breakdown dd-level-breakdown-byterm">
-        <div class="dd-level-row dd-level-row-header">
-          <div class="dd-level-cell-class">Term</div>
-          <div class="dd-level-cell-term dd-level-cell-term-groom" style="color:${CHART_COLORS.discipline}">Groom</div>
-          <div class="dd-level-cell-term dd-level-cell-term-susp" style="color:${CHART_COLORS.suspension}">Susp</div>
-          <div class="dd-level-cell-term dd-level-cell-term-timeout dd-level-cell-term-timeout-first dd-byterm-to-head" style="color:${CHART_COLORS.timeOut}">Time Out</div>
-          <div class="dd-level-cell-term dd-level-cell-term-meet" style="color:${CHART_COLORS.parentMeeting}">Meet</div>
-          <div class="dd-level-cell-term dd-level-cell-term-total">Total</div>
-        </div>
-        <div class="dd-level-row dd-level-row-header dd-level-row-subheader">
-          <div class="dd-level-cell-class"></div>
-          <div class="dd-level-cell-term dd-level-cell-term-groom"></div><div class="dd-level-cell-term dd-level-cell-term-susp"></div>
-          ${TO_TYPES.map((t, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}" style="color:${CHART_COLORS.timeOut}">${t.abbrev}</div>`).join("")}
-          <div class="dd-level-cell-term dd-level-cell-term-meet"></div>
-          <div class="dd-level-cell-term dd-level-cell-term-total"></div>
+        <div class="dd-level-row dd-level-row-header dd-byterm-head2">
+          <div class="dd-level-cell-class dd-bt-merge" style="grid-column:1">Term</div>
+          <div class="dd-level-cell-term dd-level-cell-term-groom dd-bt-merge" style="grid-column:2;color:${CHART_COLORS.discipline}"><span class="dd-rt-long">Grooming</span><span class="dd-rt-short">Groom</span></div>
+          <div class="dd-level-cell-term dd-level-cell-term-susp dd-bt-merge" style="grid-column:3;color:${CHART_COLORS.suspension}"><span class="dd-rt-long">Suspension</span><span class="dd-rt-short">Susp</span></div>
+          <div class="dd-level-cell-term dd-level-cell-term-timeout dd-level-cell-term-timeout-first dd-byterm-to-head" style="grid-column:4 / span 4;grid-row:1;color:${CHART_COLORS.timeOut}">Time Out</div>
+          ${TO_TYPES.map((t, i) => `<div class="dd-level-cell-term dd-level-cell-term-sub dd-level-cell-term-timeout${i === 0 ? " dd-level-cell-term-timeout-first" : ""}" style="grid-column:${4 + i};grid-row:2;color:${CHART_COLORS.timeOut}"><span class="dd-to-long">${t.label.replace(/^Time Out \(|\)$/g, "")}</span><span class="dd-to-short">${t.abbrev}</span></div>`).join("")}
+          <div class="dd-level-cell-term dd-level-cell-term-meet dd-bt-merge" style="grid-column:8;color:${CHART_COLORS.parentMeeting}">Meet</div>
+          <div class="dd-level-cell-term dd-level-cell-term-total dd-bt-merge" style="grid-column:9">Total</div>
         </div>
         ${termRows.map((t) => `
           <div class="dd-level-row">
@@ -5277,7 +5271,8 @@ function renderReportByTermTable(year) {
           <div class="dd-level-cell-term dd-level-cell-term-meet">${grandMeeting}</div>
           <div class="dd-level-cell-term dd-level-cell-term-total">${grandTotal}</div>
         </div>
-      </div>`;
+      </div>
+      <div class="dd-mono-muted dd-rep-foot dd-rep-note-1line dd-to-note">* Note: ${TO_TYPES.map((t) => `${t.abbrev} = ${t.label.replace(/^Time Out \(|\)$/g, "")}`).join(" · ")}.</div>`;
 }
 function renderReportIntervalsTable(list) {
   return `
@@ -5806,12 +5801,12 @@ function renderReportMonthlyPage(year) {
       <table class="dd-rt">
         <thead>
           <tr><th rowspan="2">Month</th><th rowspan="2" style="color:${CHART_COLORS.discipline}"><span class="dd-rt-long">Grooming</span><span class="dd-rt-short">Groom</span></th><th rowspan="2" style="color:${CHART_COLORS.suspension}"><span class="dd-rt-long">Suspension</span><span class="dd-rt-short">Susp</span></th><th colspan="4" style="color:${CHART_COLORS.timeOut}">Time Out</th><th rowspan="2">Total</th></tr>
-          <tr>${TO_TYPES.map((t) => `<th class="dd-rt-sub" style="color:${CHART_COLORS.timeOut}">${t.abbrev}</th>`).join("")}</tr>
+          <tr>${TO_TYPES.map((t) => `<th class="dd-rt-sub" style="color:${CHART_COLORS.timeOut}"><span class="dd-to-long">${t.label.replace(/^Time Out \(|\)$/g, "")}</span><span class="dd-to-short">${t.abbrev}</span></th>`).join("")}</tr>
         </thead>
         <tbody>${shown.map((r) => `<tr><th>${r.label}</th><td>${r.discipline}</td><td>${r.suspension}</td>${TO_TYPES.map((t) => `<td class="dd-rt-to">${r.toByType[t.key] || 0}</td>`).join("")}<td class="dd-rt-tot">${rowTotal(r)}</td></tr>`).join("")}</tbody>
         <tfoot><tr><th>Total</th><td>${tot("discipline")}</td><td>${tot("suspension")}</td>${TO_TYPES.map((t) => `<td class="dd-rt-to">${totType(t.key)}</td>`).join("")}<td class="dd-rt-tot">${tot("discipline") + tot("suspension") + tot("timeOut")}</td></tr></tfoot>
       </table>
-      <div class="dd-mono-muted dd-rep-foot dd-rep-note-1line">* Note: ${TO_TYPES.map((t) => `${t.abbrev} = ${t.label.replace(/^Time Out \(|\)$/g, "")}`).join(" · ")}.</div>`;
+      <div class="dd-mono-muted dd-rep-foot dd-rep-note-1line dd-to-note">* Note: ${TO_TYPES.map((t) => `${t.abbrev} = ${t.label.replace(/^Time Out \(|\)$/g, "")}`).join(" · ")}.</div>`;
 }
 // ---- Page 3: day of week by term, parent meetings ----
 const TERM_SHADES = ["#B9C4D3", "#8494AB", "#4F6180", "#1B2A41"];
