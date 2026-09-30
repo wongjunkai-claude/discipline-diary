@@ -1065,9 +1065,12 @@ html.dd-pdf-render .dd-trend-legend { font-size: 2.5cqi; }
 .dd-pm-reason-roles { font-size: 10.5px; margin-top: 2px; }
 
 /* ================= Annual Report (8-page layout) ================= */
-.dd-rep-legend-wrap { container-type: inline-size; }
+.dd-rep-legend-wrap { container-type: normal; }
+/* Every report legend is sized against the page width, so they all match. */
+.dd-report-page { container-type: inline-size; }
+.dd-report-page .dd-area-chart-wrap { container-type: normal; }
 .dd-rep-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.35em 1.1em; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #4A4536; font-size: max(8px, 2.5cqi); margin-top: 6px; }
-.dd-rep-legend-in .dd-rep-legend { font-size: max(8px, 2.5cqi); margin-top: 4px; }
+.dd-rep-legend-in .dd-rep-legend { margin-top: 4px; }
 .dd-rep-legend-item { display: inline-flex; align-items: center; gap: 0.45em; white-space: nowrap; }
 .dd-rep-sw-line { display: inline-block; width: 1.3em; height: 0.25em; border-radius: 1px; }
 .dd-rep-sw-box { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 2px; }
@@ -1284,8 +1287,8 @@ html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c3 { display: block; 
 .dd-cfy-row:not(.dd-cfy-row-edit) .dd-cfy-name { padding-left: 5px; }
 
 /* By Weeks in a Term legend: sized to its (smaller) term charts. */
-.dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 1.8cqi); }
-@media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 3.6cqi); } }
+.dd-rep-legend { font-size: max(8px, 1.8cqi); }
+
 
 /* Week view boxes: the date number sits in the exact centre of the box; the
    day name hangs above it and the markers below it, so every box lines up
@@ -1389,8 +1392,32 @@ html.dd-pdf-render .dd-to-note { display: block !important; }
 html.dd-pdf-render .dd-level-breakdown-byterm .dd-byterm-head2 > * { text-transform: none; white-space: normal; line-height: 1.15; font-weight: 600; }
 @media print { .dd-level-breakdown-byterm .dd-byterm-head2 > * { text-transform: none; white-space: normal; line-height: 1.15; font-weight: 600; } }
 /* Phones: the By Weeks in a Term legend on one line. */
-@media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { flex-wrap: nowrap; font-size: max(7.5px, 3cqi); gap: 0.35em 0.9em; } }
+@media screen and (max-width: 480px) { html:not(.dd-pdf-render) .dd-rep-legend { flex-wrap: nowrap; font-size: max(7.5px, 3cqi); gap: 0.35em 0.9em; } }
 /* The By Term table sits as close to its "* Note" line as the monthly table does (wherever the note shows). */
 @media (max-width: 480px) { .dd-level-breakdown-byterm { margin-bottom: 0; } }
 html.dd-pdf-render .dd-level-breakdown-byterm { margin-bottom: 0; }
 @media print { .dd-level-breakdown-byterm { margin-bottom: 0; } }
+
+/* By Weeks in a Term: the phone drawing only on phone screens. */
+.dd-rep-mini-phone { display: none !important; }
+@media screen and (max-width: 480px) { html:not(.dd-pdf-render) .dd-rep-mini-phone { display: block !important; } html:not(.dd-pdf-render) .dd-rep-mini-std { display: none !important; } }
+
+/* Top Reasons header rows as tall as the Day of Week table's header. */
+.dd-rt-reasons thead th { padding: 4px 2px; line-height: normal; }
+
+/* Phones: By Term header in first-capital form (Term, Groom, Susp, Time Out,
+   Meet, Total); the Time Out types stay R / L / CCA / LE. */
+@media (max-width: 480px) { .dd-level-breakdown-byterm .dd-byterm-head2 > * { text-transform: none; } }
+
+/* Print and PDF: no squeezed letter spacing (it drew words with odd gaps,
+   e.g. "Me et"), no screen-width-based sizes, and the "* Note" line wraps
+   at a normal small size instead of running off the page. */
+html.dd-pdf-render * { letter-spacing: 0 !important; }
+@media print { * { letter-spacing: 0 !important; } }
+html.dd-pdf-render .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-term,
+html.dd-pdf-render .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: 8.5px; }
+@media print { .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-term, .dd-level-breakdown-byterm .dd-level-row-header .dd-level-cell-class { font-size: 8.5px; } }
+html.dd-pdf-render .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) .dd-level-cell-class { font-size: 11px; }
+@media print { .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) .dd-level-cell-class { font-size: 11px; } }
+html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space: normal; }
+@media print { .dd-rep-note-1line { font-size: 9.5px !important; white-space: normal; } }

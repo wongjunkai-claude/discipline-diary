@@ -301,7 +301,7 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
 
 ## Annual Summary Report layout
 
-Nine sections, each starting on a new sheet when printed or exported
+Eight sections, each starting on a new sheet when printed or exported
 (`renderAnnualReportPages()`). Suspension is always one category
 (in-school and out-of-school together).
 
@@ -311,7 +311,7 @@ Nine sections, each starting on a new sheet when printed or exported
    Grooming, Suspension, Time Out, Parent Meet — with one shared legend.
 2. **Discipline Load by Month**: stacked vertical bars (Grooming /
    Suspension / Time Out) with the total on top, and a table with Time Out
-   split into R / L / CCA / LE (no parent meetings here).
+   split into its four types (no parent meetings here).
 3. **Discipline Load by Day of Week**: a stacked bar per weekday split by
    term, with a term × day table.
 4. **Top Reasons for Suspension** and **Top Reasons for Time Out**: one row
@@ -463,3 +463,10 @@ the PDF use R / L / CCA / LE with a "* Note" key under each table. On tablet and
 the same size as the monthly table's month labels (11px); reason names in
 Top Reasons are that size in every view.
 On phones the By Weeks in a Term legend stays on one line.
+
+Report charts on phones: the By Weeks in a Term charts use a phone drawing
+laid out like the other report charts (same text size, y-axis in the same
+place); tablet, desktop, Print and PDF keep the standard drawing. Every
+report legend is sized against the page width, so all legends match (the
+Parent Meetings chart has none). Print and PDF drop squeezed letter
+spacing, which drew some words with odd gaps.

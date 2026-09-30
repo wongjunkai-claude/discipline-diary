@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.46.2";
+const APP_VERSION = "3.47.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4969,113 +4969,6 @@ function computeTermPositionPattern(year) {
   });
   return buckets;
 }
-// Stacked area chart of discipline load over time:
-// bottom, suspensions stack on top, so the filled height is total
-// incidents and the upper band shows how much of that was serious.
-// Parent meetings are deliberately excluded — they're a response to
-// issues rather than an issue themselves, so mixing them in would
-// overstate the incident count.
-// Bands, bottom to top: grooming, suspensions, time outs.
-// ---- Annual Report line charts (same look as the dashboard graphs) ----
-// Five lines (Grooming, Parent Meet, Time Out, In-/Out-of-School
-// Suspension) on an even scale, drawn as a fixed-size SVG so it prints and
-// exports to PDF like the other report chart. No numbers on the points
-// (they'd pile up); `totals` adds one row of totals under the labels.
-// Points whose period hasn't started (`r.future`) are left off the lines.
-// Parent meetings have their own page, so these charts show the four
-// discipline lines only.
-function reportLines() { return TREND_LINES.filter((l) => l.cat !== "parentMeeting"); }
-function renderReportLineChart(rows, { totals = false } = {}) {
-  if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
-  const lines = reportLines();
-  const W = 320, padL = 24, padR = 10, padT = 10, padB = totals ? 30 : 18;
-  const plotH = 86, H = padT + plotH + padB, plotW = W - padL - padR;
-  const n = rows.length;
-  const lastPast = rows.reduce((acc, r, i) => (r.future ? acc : i), -1);
-  const maxV = Math.max(1, ...rows.slice(0, lastPast + 1).flatMap((r) => lines.map((l) => r[l.key] || 0)));
-  const tickStep = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((st) => Math.ceil(maxV / st) <= 5) || Math.ceil(maxV / 5);
-  const axisMax = Math.max(tickStep, Math.ceil(maxV / tickStep) * tickStep);
-  const ticks = Array.from({ length: axisMax / tickStep + 1 }, (_, i) => i * tickStep);
-  const x = (i) => (n === 1 ? padL + plotW / 2 : padL + 6 + (i * (plotW - 12)) / (n - 1));
-  const y = (v) => padT + plotH - (v / axisMax) * plotH;
-  const font = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
-  const grid = ticks.map((t) => `
-    <line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="1"></line>
-    <text x="${padL - 5}" y="${y(t) + 3}" text-anchor="end" font-size="8" ${font} fill="#8A8571">${t}</text>`).join("");
-  const xLabels = rows.map((r, i) => `<text x="${x(i)}" y="${padT + plotH + 11}" text-anchor="middle" font-size="8" ${font} fill="${r.future ? "#B5B09F" : "#6B6652"}">${escapeHtml(r.label)}</text>`).join("");
-  const totalRow = totals ? `<text x="2" y="${padT + plotH + 24}" font-size="7.5" font-weight="600" ${font} fill="#8A8571">Total</text>` +
-    rows.map((r, i) => (r.future ? "" : `<text x="${x(i)}" y="${padT + plotH + 24}" text-anchor="middle" font-size="8" font-weight="700" ${font} fill="#1B2A41">${(r.discipline || 0) + (r.suspension || 0) + (r.timeOut || 0)}</text>`)).join("") : "";
-  const paths = lines.map((l) => `
-    ${lastPast > 0 ? `<polyline points="${rows.slice(0, lastPast + 1).map((r, i) => `${x(i)},${y(r[l.key] || 0)}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
-    ${rows.map((r, i) => (i <= lastPast && ((r[l.key] || 0) > 0 || lastPast === 0) ? `<circle cx="${x(i)}" cy="${y(r[l.key] || 0)}" r="1.9" fill="${l.color}"></circle>` : "")).join("")}`).join("");
-  const legendRow = (ls) => `<div class="dd-cal-legend dd-trend-legend dd-report-lines-legend">${ls.map((l) => `<div class="dd-cal-legend-item"><span class="dd-legend-line" style="background:${l.color}"></span>${l.label}</div>`).join("")}</div>`;
-  return `
-    <div class="dd-area-chart-wrap">
-      <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${xLabels}${totalRow}${paths}</svg>
-      <div class="dd-report-lines-legends">
-        ${legendRow(lines.filter((l) => l.cat !== "suspension"))}
-        ${legendRow(lines.filter((l) => l.cat === "suspension"))}
-      </div>
-    </div>`;
-}
-// One point per term, counted within each term's dates (as in the By term
-// table on page 1). Terms that haven't started are left off.
-function computeReportTermLines(year) {
-  const today = todayISO();
-  const terms = computeMoeCalendar(year).terms;
-  return computeTrendSeries(terms.map((t, i) => ({ start: t.start, end: t.end, label: `Term ${i + 1}` })))
-    .map((r) => ({ ...r, future: r.start > today }));
-}
-// Week 1–10 of the term, with all four terms added together — to show
-// whether the same weeks are busy every term (e.g. around exams).
-function computeReportWeekOfTermLines(year) {
-  const terms = computeMoeCalendar(year).terms;
-  const weeks = Math.max(...terms.map((t) => Math.ceil((daysBetween(t.start, t.end) + 1) / 7)));
-  const sum = Array.from({ length: weeks }, (_, w) => ({ label: `W${w + 1}`, discipline: 0, iss: 0, oss: 0, suspension: 0, timeOut: 0, parentMeeting: 0 }));
-  // Each term's own total per week (null = that week hasn't started yet),
-  // for the grid under the chart.
-  const today = todayISO();
-  const perTerm = terms.map(() => Array.from({ length: weeks }, () => null));
-  terms.forEach((t, ti) => {
-    const buckets = [];
-    for (let w = 0; w < weeks; w++) {
-      const st = addDays(t.start, w * 7);
-      if (st > t.end) break;
-      const en = addDays(st, 6) > t.end ? t.end : addDays(st, 6);
-      buckets.push({ start: st, end: en, w });
-    }
-    computeTrendSeries(buckets).forEach((r) => {
-      ["discipline", "iss", "oss", "suspension", "timeOut", "parentMeeting"].forEach((k) => { sum[r.w][k] += r[k]; });
-      if (r.start <= today) perTerm[ti][r.w] = r.discipline + r.suspension + r.timeOut;
-    });
-  });
-  sum.perTerm = perTerm;
-  return sum;
-}
-// Week × term grid under the week chart: how much each term adds to each
-// week, so one unusually bad term doesn't pass for a pattern. Darker = more.
-// "–" = that week hasn't happened yet.
-function renderReportWeekTermGrid(rows) {
-  const perTerm = rows.perTerm || [];
-  const weeks = rows.length;
-  const max = Math.max(1, ...perTerm.flat().filter((v) => v !== null));
-  const shade = (v) => {
-    if (v === null) return `class="dd-wg-na"`;
-    if (!v) return "";
-    const a = 0.1 + 0.55 * (v / max);
-    return `style="background:rgba(27,42,65,${a.toFixed(2)});${a > 0.42 ? "color:#fff;" : ""}"`;
-  };
-  const colTotal = (w) => perTerm.reduce((a, row) => a + (row[w] || 0), 0);
-  const rowTotal = (row) => row.reduce((a, v) => a + (v || 0), 0);
-  return `
-    <table class="dd-wg">
-      <thead><tr><th></th>${rows.map((r) => `<th>${r.label}</th>`).join("")}<th class="dd-wg-tot">Total</th></tr></thead>
-      <tbody>
-        ${perTerm.map((row, ti) => `<tr><th>T${ti + 1}</th>${row.map((v) => `<td ${shade(v)}>${v === null ? "–" : v}</td>`).join("")}<td class="dd-wg-tot">${row.every((v) => v === null) ? "–" : rowTotal(row)}</td></tr>`).join("")}
-      </tbody>
-      <tfoot><tr><th>Total</th>${Array.from({ length: weeks }, (_, w) => `<td>${colTotal(w)}</td>`).join("")}<td class="dd-wg-tot">${perTerm.reduce((a, row) => a + rowTotal(row), 0)}</td></tr></tfoot>
-    </table>`;
-}
 function renderStackedAreaChart(rows) {
   if (!rows.length) return `<div class="dd-dash-empty">No data for this period.</div>`;
   const totals = rows.map((r) => r.discipline + r.suspension + (r.timeOut || 0));
@@ -5292,16 +5185,6 @@ function renderReportIntervalsTable(list) {
         </div>`).join("")}
       </div>`;
 }
-function renderReportBar(label, count, max, color) {
-  return `
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-            <div class="dd-mono-muted" style="font-size:11px;width:34px;flex-shrink:0">${label}</div>
-            <div style="flex:1;background:#F2EFE6;border-radius:2px;overflow:hidden;height:14px">
-              <div style="width:${Math.max(count > 0 ? 4 : 0, (count / max) * 100)}%;height:100%;background:${color}"></div>
-            </div>
-            <div class="dd-mono-muted" style="font-size:11px;width:18px;text-align:right;flex-shrink:0">${count}</div>
-          </div>`;
-}
 function renderReportRoster(roster, noun, emptyText) {
   if (!roster.length) return `<div class="dd-dash-empty">${emptyText}</div>`;
   return `<div style="display:flex;flex-direction:column;gap:6px">
@@ -5408,6 +5291,10 @@ async function exportAnnualReportPdfInner(year) {
       windowWidth: PDF_LAYOUT_WIDTH, windowHeight: PDF_LAYOUT_HEIGHT,
       onclone: (doc, el) => {
         doc.documentElement.classList.add("dd-pdf-render");
+        // The PDF always uses the standard By Weeks in a Term drawings (the
+        // phone ones are for phone screens only).
+        el.querySelectorAll(".dd-rep-mini-phone").forEach((svg) => svg.remove());
+        el.querySelectorAll(".dd-rep-mini-std").forEach((svg) => svg.style.setProperty("display", "block", "important"));
         // The copy loses the charts' class-based sizing, so restate it inline
         // before anything is measured.
         el.querySelectorAll("svg.dd-area-chart, .dd-area-chart-wrap > svg").forEach((svg) => { if (doc.defaultView.getComputedStyle(svg).display === "none") return; svg.style.width = "100%"; svg.style.height = "auto"; svg.style.display = "block"; });
@@ -5595,46 +5482,6 @@ function renderReportPmBars(rows) {
       </svg>
     </div>`;
 }
-// Per term (each term runs until the next one starts, so meetings in the
-// holidays count with the term before them): held, still-postponed and
-// cancelled, by the date originally booked (held ones by the date held).
-function computeReportPmByTerm(year) {
-  const terms = computeMoeCalendar(year).terms;
-  const today = todayISO();
-  return terms.map((t, i) => {
-    const start = i === 0 ? `${year}-01-01` : t.start;
-    const end = i === terms.length - 1 ? `${year}-12-31` : addDays(terms[i + 1].start, -1);
-    const inT = (d) => d && d >= start && d <= end;
-    const live = state.parentMeetings.filter((m) => !m.deleted);
-    return {
-      label: `T${i + 1}`,
-      future: t.start > today,
-      held: live.filter((m) => isPmCounted(m) && pmDate(m) <= today && inT(pmDate(m))).length, // booked for later: not held yet
-      postponed: live.filter((m) => m.pmStatus === "Postponed" && !m.postponedTo && inT(m.date)).length,
-      cancelled: live.filter((m) => m.pmStatus === "Cancelled" && inT(m.date)).length,
-    };
-  });
-}
-function renderReportPmTermTable(rows) {
-  const tot = (k) => rows.reduce((a, r) => a + r[k], 0);
-  const row = (label, h, p, c, cls = "") => `
-        <div class="dd-level-row${cls}">
-          <div class="dd-level-cell-class">${label}</div>
-          <div class="dd-level-cell-term">${h}</div><div class="dd-level-cell-term">${p}</div><div class="dd-level-cell-term">${c}</div>
-        </div>`;
-  return `
-      <div class="dd-level-breakdown" style="margin-top:10px">
-        <div class="dd-level-row dd-level-row-header">
-          <div class="dd-level-cell-class">Term</div>
-          <div class="dd-level-cell-term" style="color:${CHART_COLORS.parentMeeting}">Held</div>
-          <div class="dd-level-cell-term">Postponed*</div>
-          <div class="dd-level-cell-term">Cancelled</div>
-        </div>
-        ${rows.map((r) => (r.future ? row(r.label, "–", "–", "–") : row(r.label, r.held, r.postponed, r.cancelled))).join("")}
-        ${row("Total", tot("held"), tot("postponed"), tot("cancelled"), " dd-level-row-total")}
-      </div>
-      <div class="dd-mono-muted" style="font-size:11px;margin-top:6px">*Postponed and still waiting for a new date. Once a new date is set, the meeting counts as held on that date. Meetings in the holidays count with the term before them.</div>`;
-}
 // Most common reasons for the year's meetings (held or not), with how
 // often the student was the victim, the offender or both.
 function computeReportPmReasons(year) {
@@ -5652,27 +5499,6 @@ function computeReportPmReasons(year) {
     });
   });
   return Object.values(tally).sort((a, b) => b.count - a.count);
-}
-function renderReportPmPage(year) {
-  const monthly = computeReportPmMonthly(year);
-  const reasons = computeReportPmReasons(year);
-  const maxR = Math.max(1, ...reasons.map((r) => r.count));
-  const roles = (r) => ["Victim", "Offender", "Both"].filter((k) => r[k]).map((k) => `${pmStatusWords(k)} ${r[k]}`).join(" · ");
-  return `
-      ${reportSectionTitle("Parent meetings by month")}
-      ${renderReportPmBars(monthly)}
-      ${reportSectionTitle("Parent meetings by term")}
-      ${renderReportPmTermTable(computeReportPmByTerm(year))}
-      ${reportSectionTitle("Reasons for parent meetings")}
-      ${reasons.length ? `<div class="dd-panel" style="padding:12px;margin-bottom:4px">
-        ${reasons.slice(0, 5).map((r) => `
-        <div class="dd-pm-reason">
-          <div class="dd-pm-reason-head"><span>${escapeHtml(r.cat)}</span><span class="dd-pm-reason-n">${r.count}</span></div>
-          <div class="dd-pm-reason-track"><div style="width:${Math.max(4, (r.count / maxR) * 100)}%;background:${CHART_COLORS.parentMeeting}"></div></div>
-          ${roles(r) ? `<div class="dd-mono-muted dd-pm-reason-roles">${roles(r)}</div>` : ""}
-        </div>`).join("")}
-        ${reasons.length > 5 ? `<div class="dd-mono-muted" style="font-size:11px">+ ${reasons.length - 5} other reason${reasons.length - 5 === 1 ? "" : "s"}</div>` : ""}
-      </div>` : `<div class="dd-dash-empty">No parent meetings logged this year.</div>`}`;
 }
 // ================= Annual Report building blocks (8-page layout) =================
 // Suspension is one category throughout (in-school and out-of-school
@@ -5696,26 +5522,31 @@ function reportTicks(maxV, maxTicks = 5) {
 }
 const REP_FONT = `font-family="Geist, system-ui, -apple-system, sans-serif"`;
 // A small line chart (one per term on page 1). `axisTop` shares the scale
-// across the four so the terms can be compared by eye.
-// A small line chart (one per term on page 1). `axisTop` shares the scale
-// across the four so the terms can be compared by eye.
+// across the four so the terms can be compared by eye. Two drawings: the
+// usual one (two per row on tablet, desktop, print and PDF), and a
+// full-width one for phones laid out exactly like the other report charts
+// (same text size and y-axis position). CSS shows the right one.
 function renderReportMiniLines(rows, lines, { title, axisTop, note } = {}) {
-  const W = 220, padL = 20, padR = 8, padT = 8, plotH = 78, padB = 16, H = padT + plotH + padB, plotW = W - padL - padR;
   const n = rows.length;
   const lastPast = rows.reduce((acc, r, i) => (r.future ? acc : i), -1);
   const { top, ticks } = reportTicks(axisTop || Math.max(1, ...rows.flatMap((r) => lines.map((l) => r[l.key] || 0))), 4);
-  const x = (i) => (n === 1 ? padL + plotW / 2 : padL + 4 + (i * (plotW - 8)) / (n - 1));
-  const y = (v) => padT + plotH - (v / top) * plotH;
-  const grid = ticks.map((t) => `<line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="0.8"></line><text x="${padL - 4}" y="${y(t) + 3}" text-anchor="end" font-size="8" ${REP_FONT} fill="#8A8571">${t}</text>`).join("");
-  const labels = rows.map((r, i) => `<text x="${x(i)}" y="${padT + plotH + 11}" text-anchor="middle" font-size="7.5" ${REP_FONT} fill="${r.future ? "#C9C4B4" : "#6B6652"}">${escapeHtml(r.label)}</text>`).join("");
-  const paths = lines.map((l) => `
-    ${lastPast > 0 ? `<polyline points="${rows.slice(0, lastPast + 1).map((r, i) => `${x(i)},${y(r[l.key] || 0)}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
-    ${rows.map((r, i) => (i <= lastPast && ((r[l.key] || 0) > 0 || lastPast === 0) ? `<circle cx="${x(i)}" cy="${y(r[l.key] || 0)}" r="1.6" fill="${l.color}"></circle>` : "")).join("")}`).join("");
-  const empty = lastPast < 0 ? `<text x="${padL + plotW / 2}" y="${padT + plotH / 2}" text-anchor="middle" font-size="9" ${REP_FONT} fill="#8A8571">${escapeHtml(note || "Not started yet")}</text>` : "";
+  const draw = ({ W, padL, padR, padT, plotH, padB, fs, lfs, sw, dot, cls }) => {
+    const H = padT + plotH + padB, plotW = W - padL - padR;
+    const x = (i) => (n === 1 ? padL + plotW / 2 : padL + 4 + (i * (plotW - 8)) / (n - 1));
+    const y = (v) => padT + plotH - (v / top) * plotH;
+    const grid = ticks.map((t) => `<line x1="${padL}" y1="${y(t)}" x2="${W}" y2="${y(t)}" stroke="${t === 0 ? "#C9C4B4" : "#E4E1D4"}" stroke-width="0.8"></line><text x="${padL - (W === 220 ? 4 : 5)}" y="${y(t) + 3}" text-anchor="end" font-size="${fs}" ${REP_FONT} fill="#8A8571">${t}</text>`).join("");
+    const labels = rows.map((r, i) => `<text x="${x(i)}" y="${padT + plotH + 11}" text-anchor="middle" font-size="${lfs}" ${REP_FONT} fill="${r.future ? "#C9C4B4" : "#6B6652"}">${escapeHtml(r.label)}</text>`).join("");
+    const paths = lines.map((l) => `
+      ${lastPast > 0 ? `<polyline points="${rows.slice(0, lastPast + 1).map((r, i) => `${x(i)},${y(r[l.key] || 0)}`).join(" ")}" fill="none" stroke="${l.color}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round"></polyline>` : ""}
+      ${rows.map((r, i) => (i <= lastPast && ((r[l.key] || 0) > 0 || lastPast === 0) ? `<circle cx="${x(i)}" cy="${y(r[l.key] || 0)}" r="${dot}" fill="${l.color}"></circle>` : "")).join("")}`).join("");
+    const empty = lastPast < 0 ? `<text x="${padL + plotW / 2}" y="${padT + plotH / 2}" text-anchor="middle" font-size="${fs + 1}" ${REP_FONT} fill="#8A8571">${escapeHtml(note || "Not started yet")}</text>` : "";
+    return `<svg viewBox="0 0 ${W} ${H}" class="dd-area-chart ${cls}" preserveAspectRatio="xMidYMid meet">${grid}${labels}${paths}${empty}</svg>`;
+  };
   return `
     <div class="dd-area-chart-wrap dd-rep-mini">
       <div class="dd-rep-mini-title">${escapeHtml(title || "")}</div>
-      <svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${labels}${paths}${empty}</svg>
+      ${draw({ W: 220, padL: 20, padR: 8, padT: 8, plotH: 78, padB: 16, fs: 8, lfs: 7.5, sw: 1.4, dot: 1.6, cls: "dd-rep-mini-std" })}
+      ${draw({ W: 320, padL: 22, padR: 6, padT: 10, plotH: 100, padB: 16, fs: 8, lfs: 8, sw: 1.6, dot: 1.8, cls: "dd-rep-mini-phone" })}
     </div>`;
 }
 // Vertical stacked bars with the total on top of each bar.
@@ -6402,7 +6233,7 @@ function renderClassPillsRow(pageKey, level) {
   const selected = state[`${pageKey}SelectedClass`] || null;
   return `
     <div class="dd-range-pills${classes.some((c) => c.length > 5) ? " dd-class-pills-wrap" : ""}" style="${classes.some((c) => c.length > 5) ? "" : "flex-wrap:nowrap;"}margin-bottom:14px">
-      ${classes.map((c) => `<button type="button" class="dd-range-pill${selected === c ? " active" : ""}" ${classes.some((x) => x.length > 5) ? "" : `style="flex:1"`} data-action="select-class-pill" data-page="${pageKey}" data-class="${c}">${c}</button>`).join("")}
+      ${classes.map((c) => `<button type="button" class="dd-range-pill${selected === c ? " active" : ""}" ${classes.some((x) => x.length > 5) ? "" : `style="flex:1"`} data-action="select-class-pill" data-page="${pageKey}" data-class="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join("")}
     </div>`;
 }
 function renderLevelBreakdown(pageKey, items, dateField, isActive) {
@@ -6442,7 +6273,7 @@ function renderLevelBreakdown(pageKey, items, dateField, isActive) {
       </div>
       ${classes.map((cls, i) => `
         <div class="dd-level-row">
-          <div class="dd-level-cell-class">${cls}</div>
+          <div class="dd-level-cell-class">${escapeHtml(cls)}</div>
           ${moe.terms.map((t) => {
             const n = termCountFor(cls, t);
             return `<div class="dd-level-cell-term">${n === null ? "" : n}</div>`;
