@@ -1421,3 +1421,7 @@ html.dd-pdf-render .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-he
 @media print { .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) .dd-level-cell-class { font-size: 11px; } }
 html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space: normal; }
 @media print { .dd-rep-note-1line { font-size: 9.5px !important; white-space: normal; } }
+
+/* Students' Watchlist: period dropdown at the right end of the title row. */
+.dd-watch-period { margin-left: auto; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; font-weight: 600; color: #1B2A41; background: #fff; border: 1px solid #C9C4B4; border-radius: 999px; padding: 5px 26px 5px 12px; -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%231B2A41' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; cursor: pointer; }
+@media (min-width: 700px) { .dd-watch-period { font-size: 13px; } }

@@ -470,3 +470,17 @@ place); tablet, desktop, Print and PDF keep the standard drawing. Every
 report legend is sized against the page width, so all legends match (the
 Parent Meetings chart has none). Print and PDF drop squeezed letter
 spacing, which drew some words with odd gaps.
+
+Students' Watchlist period: a dropdown at the right of the title picks
+Semester 1, Semester 2, Whole Year (this year) or Till Date (every year a
+student has been in school). It opens on the current semester. Whole Year
+halves the year's totals (average per semester) and places them with the
+semester limits (any entry at all is at least Low). Till Date joins a
+student's years only where they've been confirmed as the same student
+(student view / Student Links) and leaves out students who have left
+school (past P6); each semester of each year gets its own tier, then,
+counting back from the student's latest year for at least 2 years in a
+row: High = a High semester every year, or Medium+ in both semesters;
+Medium = a Medium+ semester every year, or Low+ in both semesters;
+everyone else with entries is Low. The ⓘ box shows these rules in the Till
+Date view.

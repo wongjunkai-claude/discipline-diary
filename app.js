@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.47.1";
+const APP_VERSION = "3.49.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -7196,7 +7196,17 @@ function renderDashboardSection() {
   const activeTo = state.timeOuts.filter((t) => !t.deleted);
   const activePm = state.parentMeetings.filter((m) => !m.deleted);
 
-  const semester = computeCurrentSemesterBounds();
+  // Watchlist period (dropdown): Semester 1, Semester 2, Whole Year (this
+  // year), or Till Date (every year the student has been in school).
+  const thisYear = new Date().getFullYear();
+  const moeNow = computeMoeCalendar(thisYear);
+  const curSem = todayISO() < moeNow.terms[2].start ? "sem1" : "sem2";
+  const watchPeriod = state.watchPeriod || curSem;
+  const semester = watchPeriod === "sem1" ? { start: moeNow.terms[0].start, end: moeNow.terms[1].end }
+    : watchPeriod === "sem2" ? { start: moeNow.terms[2].start, end: moeNow.terms[3].end }
+    : watchPeriod === "year" ? { start: `${thisYear}-01-01`, end: `${thisYear}-12-31` }
+    : { start: "0000-00-00", end: "9999-12-31" };
+  const tillDate = watchPeriod === "all";
   const watchCounts = {};
   const watchClass = {};
   const watchName = {};
@@ -7204,19 +7214,38 @@ function renderDashboardSection() {
   // is counted once, shown under their latest class.
   const watchDate = {};
   const watchKey = (name, cls, date) => {
-    const y = parseInt(String(date).slice(0, 4), 10);
-    const grp = cls ? sameYearGroup(y, name, cls) : [""];
+    let y = parseInt(String(date).slice(0, 4), 10);
+    let c = cls;
+    // Till Date: follow the confirmed "same student" links back to the
+    // earliest year, so one student's years count together.
+    if (tillDate && c) {
+      for (let hop = 0; hop < 12; hop++) {
+        const d = linkDecision(y, name, c);
+        if (!d || d.decision !== "linked" || !d.toYear || !d.toClass) break;
+        y = d.toYear; c = d.toClass;
+      }
+    }
+    const grp = c ? sameYearGroup(y, name, c) : [""];
     return `${y}|${normalizeName(name)}|${normCls(grp[0])}`;
   };
   const noteClass = (key, cls, date) => { if (cls && (!watchDate[key] || date >= watchDate[key])) { watchClass[key] = cls; watchDate[key] = date; } };
+  // Till Date: the same counts kept per school year and semester (Semester 1
+  // = up to the start of Term 3, Semester 2 = from Term 3).
+  const perSem = {};
+  const semOf = (date) => { const y = parseInt(String(date).slice(0, 4), 10); return `${y}|${date < computeMoeCalendar(y).terms[2].start ? 1 : 2}`; };
+  const bump = (key, date, field) => {
+    if (!tillDate) return;
+    const b = ((perSem[key] = perSem[key] || {})[semOf(date)] = perSem[key][semOf(date)] || { suspension: 0, timeOut: 0, second: 0, third: 0 });
+    b[field]++;
+  };
   activeIncidents.forEach((i) => {
     if (i.date < semester.start || i.date > semester.end) return;
     const isLegacy = !Array.isArray(i.issues);
     const maxStage = isLegacy ? 0 : groomingEntryMaxStage(i);
     const key = watchKey(i.studentName, i.studentClass, i.date);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    if (maxStage >= 3) watchCounts[key].third++;
-    else if (maxStage >= 2) watchCounts[key].second++;
+    if (maxStage >= 3) { watchCounts[key].third++; bump(key, i.date, "third"); }
+    else if (maxStage >= 2) { watchCounts[key].second++; bump(key, i.date, "second"); }
     noteClass(key, i.studentClass, i.date);
     watchName[key] = i.studentName || watchName[key];
   });
@@ -7224,7 +7253,7 @@ function renderDashboardSection() {
     if (s.startDate < semester.start || s.startDate > semester.end) return;
     const key = watchKey(s.studentName, s.studentClass, s.startDate);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    watchCounts[key].suspension++;
+    watchCounts[key].suspension++; bump(key, s.startDate, "suspension");
     noteClass(key, s.studentClass, s.startDate);
     watchName[key] = s.studentName || watchName[key];
   });
@@ -7234,7 +7263,7 @@ function renderDashboardSection() {
     if (t.startDate < semester.start || t.startDate > semester.end) return;
     const key = watchKey(t.studentName, t.studentClass, t.startDate);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    watchCounts[key].timeOut++;
+    watchCounts[key].timeOut++; bump(key, t.startDate, "timeOut");
     noteClass(key, t.studentClass, t.startDate);
     watchName[key] = t.studentName || watchName[key];
   });
@@ -7249,9 +7278,43 @@ function renderDashboardSection() {
     if ((c.second >= 1 && c.second <= 3) || c.third === 1 || c.timeOut === 1) return "low";
     return null;
   };
+  // Whole Year: the year's totals averaged per semester (halved), then
+  // placed with the same limits (any entry at all is at least Low).
+  const riskTierForAvg = (c) => {
+    const a = { suspension: c.suspension / 2, timeOut: c.timeOut / 2, second: c.second / 2, third: c.third / 2 };
+    if (a.suspension >= 2 || a.third >= 3 || a.second >= 7 || a.timeOut >= 4) return "high";
+    if (a.suspension >= 1 || a.second >= 4 || a.third >= 2 || a.timeOut >= 2) return "medium";
+    if (a.suspension > 0 || a.second > 0 || a.third > 0 || a.timeOut > 0) return "low";
+    return null;
+  };
+  // Till Date: each semester of each year gets its own tier. Counting back
+  // from the student's latest year, at least 2 years in a row where
+  //   High:   a High semester every year, or Medium (or higher) in both semesters;
+  //   Medium: a Medium (or higher) semester every year, or Low (or higher) in both.
+  // Anyone else with entries is Low.
+  const RANK = { high: 3, medium: 2, low: 1 };
+  const riskTierTillDate = (key) => {
+    const sems = perSem[key] || {};
+    const years = [...new Set(Object.keys(sems).map((k) => parseInt(k, 10)))];
+    if (!years.length) return null;
+    const last = Math.max(...years);
+    const rank = (y, n) => (sems[`${y}|${n}`] ? RANK[riskTierFor(sems[`${y}|${n}`])] || 0 : 0);
+    const run = (ok) => { let n = 0; for (let y = last; ok(rank(y, 1), rank(y, 2)); y--) n++; return n; };
+    if (run((a, b) => Math.max(a, b) >= 3 || Math.min(a, b) >= 2) >= 2) return "high";
+    if (run((a, b) => Math.max(a, b) >= 2 || Math.min(a, b) >= 1) >= 2) return "medium";
+    return "low";
+  };
   const watchTier = state.watchTier || "high";
+  // Till Date leaves out students who have left (past P6 by now).
+  const stillInSchool = (key) => {
+    if (!tillDate) return true;
+    const lvl = classLevel(watchClass[key]);
+    if (lvl === 999) return true;
+    return lvl + (thisYear - parseInt(String(watchDate[key] || thisYear).slice(0, 4), 10)) <= 6;
+  };
   let watchlist = Object.entries(watchCounts)
-    .map(([key, c]) => ({ name: watchName[key] || key, studentClass: watchClass[key] || "", ...c, tier: riskTierFor(c) }))
+    .filter(([key]) => stillInSchool(key))
+    .map(([key, c]) => ({ name: watchName[key] || key, studentClass: watchClass[key] || "", ...c, tier: tillDate ? riskTierTillDate(key) : watchPeriod === "year" ? riskTierForAvg(c) : riskTierFor(c) }))
     .filter((t) => t.tier === watchTier);
   watchlist = watchlist.sort((a, b) => b.suspension - a.suspension || b.third - a.third || b.second - a.second);
 
@@ -7273,13 +7336,24 @@ function renderDashboardSection() {
           <div class="dd-dash-title" style="color:#1B2A41;margin-bottom:10px;display:flex;align-items:center;gap:6px">
             Students' Watchlist
             <button type="button" class="dd-info-icon-btn" data-action="toggle-watchlist-info" title="How risk is worked out">i</button>
+            <select class="dd-watch-period" id="watch-period" aria-label="Watchlist period">
+              ${[["sem1", "Semester 1"], ["sem2", "Semester 2"], ["year", "Whole Year"], ["all", "Till Date"]].map(([k, l]) => `<option value="${k}" ${watchPeriod === k ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
           </div>
           ${state.showWatchlistInfo ? `
           <div class="dd-risk-info">
-            <div class="dd-risk-info-note">Counted per semester. A student only needs to meet <b>any one</b> of the criteria in a tier (and/or) — and is shown in the highest tier they qualify for.</div>
+            ${tillDate ? `
+            <div class="dd-risk-info-note">Each semester of each year is placed in a tier first, using the semester limits. Counting back from the student's latest year, for at least 2 years in a row:</div>
+            <div class="dd-risk-info-tier">High Risk</div>
+            <ul class="dd-risk-info-list"><li>High Risk in at least one semester every year, or</li><li>Medium Risk (or higher) in both semesters every year</li></ul>
+            <div class="dd-risk-info-tier">Medium Risk</div>
+            <ul class="dd-risk-info-list"><li>Medium Risk (or higher) in at least one semester every year, or</li><li>Low Risk (or higher) in both semesters every year</li></ul>
+            <div class="dd-risk-info-tier">Low Risk</div>
+            <ul class="dd-risk-info-list"><li>Everyone else with at least one entry</li></ul>` : `
+            <div class="dd-risk-info-note">Counted over the period chosen on the right. A student only needs to meet <b>any one</b> of the criteria in a tier (and/or) — and is shown in the highest tier they qualify for.</div>
             ${RISK_TIER_CRITERIA.map((t) => `
             <div class="dd-risk-info-tier">${t.tier}</div>
-            <ul class="dd-risk-info-list">${t.criteria.map((c) => `<li>${c}</li>`).join("")}</ul>`).join("")}
+            <ul class="dd-risk-info-list">${t.criteria.map((c) => `<li>${c}</li>`).join("")}</ul>`).join("")}`}
           </div>` : ""}
           <div class="dd-range-pills" style="flex-wrap:nowrap">
             <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>
@@ -9080,6 +9154,8 @@ function attachMainListeners() {
       state[`${el.dataset.page}SelectedClass`] = null;
       renderKeepingPageScroll();
     }));
+  const watchPeriodSel = document.getElementById("watch-period");
+  if (watchPeriodSel) watchPeriodSel.addEventListener("change", () => { state.watchPeriod = watchPeriodSel.value; render(); });
   document.querySelectorAll('[data-action="select-class-pill"]').forEach((el) =>
     el.addEventListener("click", () => {
       const key = `${el.dataset.page}SelectedClass`;
