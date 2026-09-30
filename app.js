@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.36.2";
+const APP_VERSION = "3.38.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1810,6 +1810,20 @@ function buildXlsxFiles(sheetName, sheetXml) {
 </styleSheet>`,
     "xl/worksheets/sheet1.xml": sheetXml,
   };
+}
+// Several sheets in one workbook: same styles as the single-sheet file above,
+// with the workbook, relationships and content types written for N sheets.
+function buildXlsxWorkbookFiles(sheets) {
+  const files = buildXlsxFiles(sheets[0].name, sheets[0].xml);
+  const names = sheets.map((sh) => xlsxEscape(sh.name.replace(/[\\/?*[\]:]/g, " ").slice(0, 31)));
+  files["[Content_Types].xml"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
+  files["xl/workbook.xml"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${n}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`;
+  files["xl/_rels/workbook.xml.rels"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  sheets.forEach((sh, i) => { files[`xl/worksheets/sheet${i + 1}.xml`] = sh.xml; });
+  return files;
 }
 // Minimal zip writer (files stored uncompressed — Excel reads that fine).
 const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -5440,7 +5454,73 @@ async function exportAnnualReportPdfInner(year) {
       pdf.addImage(part.toDataURL("image/jpeg", 0.9), "JPEG", M, M, W, (sh / pxPerCss) * mmPerCss);
     }
   }
+  // Footer on every sheet: what it is, page x of y, and when it was made.
+  const total = pdf.getNumberOfPages(), made = formatDate(todayISO());
+  pdf.setFontSize(8); pdf.setTextColor(138, 133, 113);
+  for (let i = 1; i <= total; i++) {
+    pdf.setPage(i);
+    pdf.text(`Discipline Diary | Annual Summary ${year}`, M, 297 - 6);
+    pdf.text(`Page ${i} of ${total} | Generated ${made}`, 210 - M, 297 - 6, { align: "right" });
+  }
   pdf.save(`Annual Summary ${year}.pdf`);
+}
+// ---- Annual report as an Excel workbook: the tables behind the report ----
+function annualReportSheets(year) {
+  const N = (label, width) => ({ label, width });
+  const sheet = (name, cols, rows) => ({ name, xml: buildXlsxSheetXml(cols, rows) });
+  const totals = computeYearlyCategoryTotals(year);
+  const out = [];
+  // Summary
+  const ru = computeRepeatVsUnique(year);
+  out.push(sheet("Summary", [N("Measure", 34), N("Count", 12)], [
+    ["Grooming issues", totals.discipline], ["Suspensions", totals.suspension], ["Time Outs", totals.timeOut], ["Parent Meets", totals.parentMeeting],
+    ["Students suspended", ru.suspension.uniqueStudents], ["Suspended more than once", ru.suspension.repeatStudents],
+    ["Students given a Time Out", ru.timeOut.uniqueStudents], ["Given more than one Time Out", ru.timeOut.repeatStudents],
+  ]));
+  // By Term
+  const terms = computeYearTermTrend(year);
+  const tRow = (label, t) => [label, t.discipline, t.suspension, ...TO_TYPES.map((ty) => t.timeOutByType[ty.key] || 0), t.timeOut, t.parentMeeting, t.discipline + t.suspension + t.timeOut + t.parentMeeting];
+  const sum = (k) => terms.reduce((a, t) => a + t[k], 0);
+  const grand = { discipline: sum("discipline"), suspension: sum("suspension"), timeOut: sum("timeOut"), parentMeeting: sum("parentMeeting"), timeOutByType: {} };
+  TO_TYPES.forEach((ty) => { grand.timeOutByType[ty.key] = terms.reduce((a, t) => a + (t.timeOutByType[ty.key] || 0), 0); });
+  out.push(sheet("By Term", [N("Term", 10), N("Grooming", 11), N("Suspension", 12), ...TO_TYPES.map((ty) => N(`Time Out ${ty.abbrev}`, 12)), N("Time Out", 11), N("Parent Meet", 12), N("Total", 9)],
+    [...terms.map((t, i) => tRow(`Term ${i + 1}`, t)), tRow("Total", grand)]));
+  // By week of term
+  const wkRows = [];
+  computeReportTermWeeks(year).forEach((t) => t.rows.forEach((r, i) => { if (!r.future) wkRows.push([t.title, `Week ${i + 1}`, r.start, r.discipline, r.suspension, r.timeOut, r.parentMeeting, r.discipline + r.suspension + r.timeOut + r.parentMeeting]); }));
+  out.push(sheet("By Week of Term", [N("Term", 10), N("Week", 10), { label: "Week starts", kind: XLSX_DATE, width: 13 }, N("Grooming", 11), N("Suspension", 12), N("Time Out", 11), N("Parent Meet", 12), N("Total", 9)], wkRows));
+  // By month
+  const months = computeReportMonthly(year).filter((m) => !m.future);
+  out.push(sheet("By Month", [N("Month", 9), N("Grooming", 11), N("Suspension", 12), ...TO_TYPES.map((ty) => N(`Time Out ${ty.abbrev}`, 12)), N("Time Out", 11), N("Total", 9)],
+    months.map((m) => [m.label, m.discipline, m.suspension, ...TO_TYPES.map((ty) => (m.toByType || {})[ty.key] || 0), m.timeOut, m.discipline + m.suspension + m.timeOut])));
+  // Day of week
+  const dow = computeReportDayByTerm(year);
+  out.push(sheet("Day of Week", [N("Day", 9), ...dow.table.map((_, i) => N(`Term ${i + 1}`, 10)), N("Total", 9)],
+    dow.rows.map((r, di) => [r.label, ...dow.table.map((t) => t[di]), dow.table.reduce((a, t) => a + t[di], 0)])));
+  // Top reasons
+  const reasonCols = [N("Reason", 38), ...[1, 2, 3, 4, 5, 6].map((l) => N(`P${l}`, 7)), N("Total", 9)];
+  const reasonRows = (recs) => computeReportReasonsByLevel(recs, year).map((r) => [r.reason, ...r.levels, r.total]);
+  out.push(sheet("Top Reasons - Suspension", reasonCols, reasonRows(state.suspensions)));
+  out.push(sheet("Top Reasons - Time Out", reasonCols, reasonRows(state.timeOuts)));
+  // Parent meetings
+  out.push(sheet("Parent Meets by Month", [N("Month", 9), N("Meetings", 10)], computeReportPmMonthly(year).filter((m) => !m.future).map((m) => [m.label, m.count])));
+  out.push(sheet("Parent Meet Count", [N("Student", 26), N("Class", 8), N("Meetings", 10)], computeReportPmCounts(year).map((r) => [r.name, r.cls || "", r.count])));
+  // Levels and classes (parent meetings counted)
+  const lvl = computeYearLevelRanking(year);
+  out.push(sheet("Levels", [N("Level", 8), N("Grooming", 11), N("Suspension", 12), N("Time Out", 11), N("Parent Meet", 12), N("Total", 9)], lvl.map((l) => [l.label, l.discipline, l.suspension, l.timeOut, l.parentMeeting, l.total])));
+  out.push(sheet("Classes", [N("Class", 8), N("Grooming", 11), N("Suspension", 12), N("Time Out", 11), N("Parent Meet", 12), N("Total", 9)], computeReportClassCounts(year).map((r) => [r.cls, r.discipline, r.suspension, r.timeOut, r.parentMeeting, r.count])));
+  // Students
+  out.push(sheet("Suspensions by Student", [N("Student", 26), N("Class", 8), N("Suspensions", 12)], computeYearSuspensionRoster(year).map((r) => [r.name, r.cls || "", r.count])));
+  out.push(sheet("Time Outs by Student", [N("Student", 26), N("Class", 8), N("Time Outs", 12)], computeYearTimeOutRoster(year).map((r) => [r.name, r.cls || "", r.count])));
+  return out;
+}
+function downloadAnnualReportExcel(year) {
+  const blob = buildZip(buildXlsxWorkbookFiles(annualReportSheets(year)));
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `Annual Summary ${year}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 // ---- Annual Report: Parent meetings page ----
 // Meetings held per month, up to today (by the date they happen — a postponed meeting
@@ -5626,12 +5706,12 @@ function renderReportStackedBars(rows, segs, { maxTicks = 5 } = {}) {
   return `<svg viewBox="0 0 ${W} ${H}" class="dd-area-chart" preserveAspectRatio="xMidYMid meet">${grid}${bars}</svg>`;
 }
 // Grouped list, 3 columns (2 for classes; 6 on tablet/desktop), row by row, with lines between the columns.
-function renderReportGroupedGrid(groups, headFn, itemFn, emptyText, phoneCols = 3, extraCls = "") {
+function renderReportGroupedGrid(groups, headFn, itemFn, emptyText, extraCls = "") {
   if (!groups.length) return `<div class="dd-dash-empty">${escapeHtml(emptyText)}</div>`;
   return `<div class="dd-rep-groups">${groups.map((g) => `
     <div class="dd-rep-group">
       <div class="dd-rep-group-head">${headFn(g.count, g.items.length)}</div>
-      <div class="dd-rep-grid3${extraCls}">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}${(() => { const n = g.items.length, p4 = (phoneCols - (n % phoneCols)) % phoneCols, pf = (4 - (n % 4)) % 4, p6 = (6 - (n % 6)) % 6; return Array.from({ length: Math.max(p4, pf, p6) }, (_, i) => `<div class="dd-rep-cell dd-rep-cell-pad${i < p4 ? " dd-pad-p" : ""}${i < pf ? " dd-pad-f" : ""}${i < p6 ? " dd-pad-t" : ""}"></div>`).join(""); })()}</div>
+      <div class="dd-rep-grid3${extraCls}">${g.items.map((it) => `<div class="dd-rep-cell">${itemFn(it)}</div>`).join("")}${(() => { const n = g.items.length, cols = [2, 3, 4, 5, 6], pads = cols.map((k) => (k - (n % k)) % k); return Array.from({ length: Math.max(...pads) }, (_, i) => `<div class="dd-rep-cell dd-rep-cell-pad${cols.map((k, ci) => (i < pads[ci] ? ` dd-pad-c${k}` : "")).join("")}"></div>`).join(""); })()}</div>
     </div>`).join("")}</div>`;
 }
 function groupByCount(list) {
@@ -5881,7 +5961,7 @@ function renderAnnualReportPages(year) {
       ${reportSectionTitle("Most Challenging Levels")}
       ${renderReportLevelBlocks(year)}
       ${reportSectionTitle("Most Challenging Classes")}
-      ${renderReportGroupedGrid(groupByCount(computeReportClassCounts(year)), (n, k) => `${plainCount(n, "count", "counts")} <span class="dd-rep-group-n">· ${plainCount(k, "class", "classes")}</span>`, classCell, "No entries this year.", 2, " dd-rep-grid3-cls")}`;
+      ${renderReportGroupedGrid(groupByCount(computeReportClassCounts(year)), (n, k) => `${plainCount(n, "count", "counts")} <span class="dd-rep-group-n">· ${plainCount(k, "class", "classes")}</span>`, classCell, "No entries this year.", " dd-rep-grid3-cls")}`;
   // Page 7 — All suspensions / time outs this year (grouped by how many)
   const p7 = `
       ${reportSectionTitle("All Suspensions This Year")}
@@ -5907,6 +5987,7 @@ function renderSettingsSection() {
         <div class="dd-report-actions">
           <button type="button" class="dd-print-btn" id="btn-print-report" title="Print">${ICON_PRINTER}<span>Print</span></button>
           <button type="button" class="dd-print-btn" id="btn-export-pdf" title="Export PDF">${ICON_DOCUMENT}<span>Export PDF</span></button>
+          <button type="button" class="dd-print-btn" id="btn-export-report-xlsx" title="Download Excel">${ICON_DOWNLOAD}<span>Excel</span></button>
         </div>
       </div>
       ${state.reportExportError ? `<div class="dd-error dd-print-hide">${escapeHtml(state.reportExportError)}</div>` : ""}
@@ -9085,6 +9166,13 @@ function attachMainListeners() {
     window.addEventListener("beforeprint", onBefore, { once: true });
     window.addEventListener("afterprint", restore, { once: true });
     // Let the browser paint "Opening…" first so the tap feels acknowledged.
+    // Footer on each printed sheet (shown by browsers that support page margin boxes, such as Chrome and Edge).
+    const yr = state.settingsSelectedYear;
+    const foot = document.createElement("style");
+    foot.id = "dd-print-footer";
+    foot.textContent = `@page { @bottom-left { content: "Discipline Diary | Annual Summary ${yr}"; font: 8pt sans-serif; color: #8A8571; } @bottom-right { content: "Page " counter(page) " of " counter(pages) " | Generated ${formatDate(todayISO())}"; font: 8pt sans-serif; color: #8A8571; } }`;
+    document.head.appendChild(foot);
+    window.addEventListener("afterprint", () => foot.remove(), { once: true });
     setTimeout(() => { window.print(); setTimeout(restore, 2000); }, 30);
   });
   // Export PDF: builds the file here (same look as printing to PDF) and
@@ -9096,6 +9184,12 @@ function attachMainListeners() {
     catch (err) { state.reportExportError = `Couldn't create the PDF — ${err?.message || String(err)}.`; render(); return; }
     finally { restore(); }
     if (state.reportExportError) { state.reportExportError = ""; render(); }
+  });
+
+  const exportXlsxBtn = document.getElementById("btn-export-report-xlsx");
+  if (exportXlsxBtn) exportXlsxBtn.addEventListener("click", () => {
+    try { downloadAnnualReportExcel(state.settingsSelectedYear); }
+    catch (err) { state.reportExportError = `Couldn't create the Excel file — ${err?.message || String(err)}.`; render(); }
   });
 
   const loadKnownBtn = document.getElementById("btn-load-known-holidays");

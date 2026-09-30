@@ -258,6 +258,12 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   recommendations are generated from the report's own figures by fixed
   rules (`computeYearInsights()`), not AI; mid-year it compares completed
   terms only.
+  Every PDF sheet carries a footer (year, "Page x of y", date generated);
+  Print shows the same footer in browsers that support page margin boxes
+  (Chrome, Edge). **Excel** downloads `Annual Summary YYYY.xlsx`, one sheet
+  per table behind the report (Summary, By Term, By Week of Term, By Month,
+  Day of Week, Top Reasons for Suspension / Time Out, Parent Meets by Month,
+  Parent Meet Count, Levels, Classes, Suspensions / Time Outs by Student).
 - **Classes For The Year:** the class list for the current year
   (`settings/classConfig`).
 - **Holidays / School Closure / HBL Days:** public and school holidays and
@@ -302,7 +308,7 @@ Nine sections, each starting on a new sheet when printed or exported
 8. **Trend Analysis** (kept to about a page), with **Recommendations**
    right after it and a reference-only note.
 
-Grouped lists are 3 columns on phones (2 for Most Challenging Classes) and 6 on tablet/desktop, and 4 in the PDF, filled row by row with vertical lines between
+Grouped lists: phone 3 columns (Most Challenging Classes 2); tablet vertical 5 (classes 4); tablet horizontal and desktop 6 (classes 5); always 4 in the PDF and in Print (which always matches the PDF, on any device), filled row by row with vertical lines between
 the columns only (no outer border or row lines; unfilled cells in the last
 row keep their lines); in the PDF and print they break between rows, never inside one.
 Legends match their chart's label size. Export PDF switches off the
