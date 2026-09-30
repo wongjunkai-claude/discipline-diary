@@ -443,3 +443,14 @@ an "offline" note. Entries can't load or save until the device reconnects.
 The app has been checked with automated browser tests that run the real
 `app.js` against a stand-in database. They aren't part of this folder;
 nothing here needs building or installing.
+
+## Dashboard sizing
+
+Week view boxes keep the date number in the exact centre, with the day
+name above and the markers below, so every box lines up. On tablets
+(700px and up; desktop a step bigger) the dashboard's text is sized against the log pages' student
+names, the ten range pills (Day … Custom) sit in one row, all the same width, their text shrinking if needed so every label fits: bigger pills, labels, tally labels, calendar numbers and legend, and
+the week view's boxes are square with larger markers.
+
+When printing the Annual Summary, the Trend Analysis box may run across
+pages so its title stays with it.

@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.43.1";
+const APP_VERSION = "3.45.2";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -7145,11 +7145,12 @@ function renderMonthlyChart() {
   const incl = chartIncl();
   const rangePillsRow = (opts, cls = "") => `
     <div class="dd-range-pills${cls}">
-      ${opts.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}">${o.label}</button>`).join("")}
+      ${opts.map((o) => `<button type="button" class="dd-range-pill ${rangeMode === o.key ? "active" : ""}" data-action="set-chart-range" data-range="${o.key}" data-fit="range-pills">${o.label}</button>`).join("")}
     </div>`;
-  const rangeSelectorHtml = `
+  // Two rows on phones; tablet and desktop put all ten pills in one row (CSS).
+  const rangeSelectorHtml = `<div class="dd-range-rows">
     ${rangePillsRow(CHART_RANGE_OPTIONS_PRIMARY)}
-    <div style="margin-top:8px">${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY, " dd-range-pills-fit")}</div>`;
+    <div class="dd-range-row2" style="margin-top:8px">${rangePillsRow(CHART_RANGE_OPTIONS_SECONDARY, " dd-range-pills-fit")}</div></div>`;
 
   if (rangeMode === "today") {
     return `

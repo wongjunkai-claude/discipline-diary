@@ -1286,3 +1286,75 @@ html.dd-pdf-render .dd-rep-grid3 > .dd-rep-cell-pad.dd-pad-c3 { display: block; 
 /* By Weeks in a Term legend: sized to its (smaller) term charts. */
 .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 1.8cqi); }
 @media (max-width: 480px) { .dd-rep-legend-wrap:not(.dd-rep-legend-in) .dd-rep-legend { font-size: max(8px, 3.6cqi); } }
+
+/* Week view boxes: the date number sits in the exact centre of the box; the
+   day name hangs above it and the markers below it, so every box lines up
+   whether or not it has markers. */
+.dd-week-cell { position: relative; justify-content: center; gap: 0; }
+.dd-week-cell .dd-cal-weekday-label { position: absolute; left: 0; right: 0; top: 16%; text-align: center; line-height: 1; }
+.dd-week-cell .dd-cal-daynum { line-height: 1; }
+.dd-week-cell .dd-cal-dots { position: absolute; left: 0; right: 0; bottom: 16%; height: auto; margin: 0; }
+
+/* Tablets and desktop: the dashboard's text is sized against the log pages' student
+   names (16px) — headings above them, body text a step below, pills and
+   small labels a step below that — instead of the phone sizes. */
+@media (min-width: 700px) {
+  .dd-pill-tab-sm { font-size: 13.5px; }
+  .dd-newbtn-compact { font-size: 13.5px; padding: 9px 4px; }
+  .dd-range-pill { font-size: 13px; }
+  .dd-show-header { font-size: 12px; }
+  .dd-show-btn { font-size: 13px; }
+  .dd-tally-label { font-size: 12px; }
+  .dd-dash-title { font-size: 18px; }
+  .dd-dash-empty { font-size: 14px; }
+  .dd-panel .dd-dash-title[style*="font-size:14px"] { font-size: 16px !important; }
+  .dd-panel .dd-dash-title .dd-mono-muted[style*="font-size:12px"] { font-size: 14px !important; }
+  .dd-cal-nav-label { font-size: 19px; }
+  .dd-cal-nav-sublabel { font-size: 13px; }
+  .dd-cal-weekday-label { font-size: 13px; }
+  .dd-cal-daynum { font-size: 18px; }
+  .dd-cal-dot { width: 7px; height: 7px; }
+  .dd-cal-dots { gap: 3px; }
+  .dd-week-grid { gap: 6px; }
+  .dd-week-cell { aspect-ratio: 1; }
+  .dd-week-cell .dd-cal-dot { width: 9px; height: 9px; }
+  .dd-week-cell .dd-cal-weekday-label { top: 13%; }
+  .dd-week-cell .dd-cal-dots { bottom: 13%; }
+  .dd-cal-legend-2col .dd-cal-legend-item, .dd-daytype-legend .dd-cal-legend-item, .dd-cal-legend-item { font-size: 13px; }
+  .dd-cal-legend-2col, .dd-daytype-legend { gap: 6px 11px; }
+  .dd-cal-legend-item .dd-cal-dot { width: 10px; height: 10px; }
+  .dd-legend-swatch { width: 12px; height: 12px; }
+}
+
+/* Desktop: the same sizing a step bigger. */
+@media (min-width: 1300px) {
+  .dd-pill-tab-sm { font-size: 14.5px; }
+  .dd-newbtn-compact { font-size: 14.5px; }
+  .dd-range-pill { font-size: 14px; }
+  .dd-show-header { font-size: 13px; }
+  .dd-show-btn { font-size: 14px; }
+  .dd-tally-label { font-size: 13px; }
+  .dd-dash-title { font-size: 19px; }
+  .dd-dash-empty { font-size: 15px; }
+  .dd-panel .dd-dash-title[style*="font-size:14px"] { font-size: 17px !important; }
+  .dd-panel .dd-dash-title .dd-mono-muted[style*="font-size:12px"] { font-size: 15px !important; }
+  .dd-cal-nav-label { font-size: 20px; }
+  .dd-cal-nav-sublabel { font-size: 14px; }
+  .dd-cal-weekday-label { font-size: 14px; }
+  .dd-cal-daynum { font-size: 19px; }
+  .dd-cal-legend-2col .dd-cal-legend-item, .dd-daytype-legend .dd-cal-legend-item, .dd-cal-legend-item { font-size: 14px; }
+}
+/* Tablet and desktop: Day … Custom in one row. */
+@media (min-width: 700px) {
+  .dd-range-rows { display: flex; gap: 4px; margin-bottom: 8px; }
+  .dd-range-rows .dd-range-row2, .dd-range-rows .dd-range-pills { display: contents; }
+  .dd-range-rows .dd-range-pill { flex: 1 1 0; min-width: 0; padding-left: 2px; padding-right: 2px; }
+}
+/* Print: the Trend Analysis box may run across pages, so its title stays with it. */
+@media print {
+  .dd-panel.dd-ta-panel { break-inside: auto; page-break-inside: auto; }
+  .dd-ta-head { break-after: avoid; page-break-after: avoid; }
+}
+/* Narrowest tablets: slightly smaller pill text so all ten equal pills still fit their labels. */
+@media (min-width: 700px) and (max-width: 799px) { .dd-range-rows .dd-range-pill { font-size: 12px; letter-spacing: -0.1px; } }
+@media (min-width: 700px) and (max-width: 739px) { .dd-range-rows .dd-range-pill { font-size: 10.5px; padding-left: 1px; padding-right: 1px; } }
