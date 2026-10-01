@@ -1425,3 +1425,76 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space
 /* Students' Watchlist: period dropdown at the right end of the title row. */
 .dd-watch-period { margin-left: auto; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; font-weight: 600; color: #1B2A41; background: #fff; border: 1px solid #C9C4B4; border-radius: 999px; padding: 5px 26px 5px 12px; -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%231B2A41' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>"); background-repeat: no-repeat; background-position: right 10px center; cursor: pointer; }
 @media (min-width: 700px) { .dd-watch-period { font-size: 13px; } }
+
+/* Watchlist: tier went up / down since the previous period. */
+.dd-watch-move { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 13px; margin-left: 2px; cursor: help; }
+.dd-watch-up { color: #A3372B; }
+.dd-watch-down { color: #2D7A3E; }
+
+/* Settings → Start of Year checklist. */
+.dd-soy-step { border: 1px solid #E4E1D4; border-radius: 6px; padding: 12px; margin-bottom: 12px; background: #FFFEFA; }
+.dd-soy-head { display: flex; align-items: center; gap: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 700; color: #1B2A41; margin-bottom: 8px; }
+.dd-soy-num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; background: #1B2A41; color: #fff; font-size: 12px; }
+.dd-soy-done .dd-soy-num { background: #2D7A3E; }
+.dd-soy-text { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.45; color: #4A4536; margin-bottom: 8px; }
+.dd-soy-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.dd-soy-btns .dd-add-btn { flex: 1 1 140px; }
+.dd-soy-btn-plain { background: #fff !important; color: #1B2A41 !important; border: 1px solid #1B2A41 !important; }
+.dd-soy-q { margin-top: 10px; }
+.dd-soy-left { margin-top: 8px; }
+.dd-soy-bar { margin-bottom: 12px; padding: 10px 12px; border: 1px solid #9FB0C6; background: #E6ECF3; color: #1B2A41; border-radius: 4px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; cursor: pointer; }
+/* Tablet and desktop: the warning bars, Watchlist arrows and Start of Year
+   checklist follow the same sizing steps as the rest of the dashboard. */
+@media (min-width: 700px) {
+  .dd-backup-warning { font-size: 14px; }
+  .dd-soy-bar { font-size: 14px; }
+  .dd-watch-move { font-size: 15px; }
+  .dd-soy-head { font-size: 16px; }
+  .dd-soy-num { width: 24px; height: 24px; flex-basis: 24px; font-size: 13px; }
+  .dd-soy-text, .dd-soy-body .dd-mono-muted[style*="font-size:13px"] { font-size: 14px !important; }
+  .dd-soy-btns .dd-add-btn { font-size: 15px; }
+}
+@media (min-width: 1300px) {
+  .dd-backup-warning { font-size: 15px; }
+  .dd-soy-bar { font-size: 15px; }
+  .dd-watch-move { font-size: 16px; }
+  .dd-soy-head { font-size: 17px; }
+  .dd-soy-text, .dd-soy-body .dd-mono-muted[style*="font-size:13px"] { font-size: 15px !important; }
+  .dd-soy-btns .dd-add-btn { font-size: 16px; }
+}
+
+/* Annual Summary Reports: each year opens to its three summaries. */
+.dd-rep-kinds { background: #FBFAF6; border-top: 1px solid #E4E1D4; }
+.dd-rep-kind-row { display: flex; align-items: center; border-bottom: 1px solid #EEEBE1; }
+.dd-rep-kind-row:last-child { border-bottom: none; }
+.dd-rep-kind-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 14px 12px 26px; background: none; border: none; text-align: left; cursor: pointer;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1B2A41;
+}
+.dd-rep-kind-open:active { background: #F2EFE6; }
+.dd-rep-kind-open:disabled { cursor: default; color: #A39E8A; }
+.dd-rep-lock { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin-right: 6px; border: none; background: none; color: #8A8571; cursor: pointer; border-radius: 50%; }
+.dd-rep-lock:active { background: #F2EFE6; }
+.dd-rep-lock-open { color: #2D7A3E; }
+.dd-rep-lock-static { cursor: default; }
+.dd-rep-inprogress { font-size: 12px; margin: -4px 0 10px; }
+@media (min-width: 700px) {
+  .dd-rep-kind-open { font-size: 15px; }
+  .dd-rep-inprogress { font-size: 13px; }
+}
+@media (min-width: 1300px) { .dd-rep-kind-open { font-size: 16px; } }
+
+/* Report: one-line findings under a section title (after a step,
+   concentration, parent meetings by room), the ↺ mark, and the
+   Supervision tables. */
+.dd-rep-insight { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; line-height: 1.5; color: #4A4536; margin: 2px 0 8px; }
+.dd-rep-insight b { color: #1B2A41; }
+.dd-rep-insight-sub { margin-top: -6px; color: #6B6553; }
+.dd-rep-again { color: #A3372B; font-weight: 700; font-size: 0.9em; }
+.dd-rt-sup { margin-bottom: 10px; }
+.dd-rt-sup tbody th { text-align: left; font-weight: 500; }
+@media (min-width: 700px) { .dd-rep-insight { font-size: 13.5px; } }
+@media (min-width: 1300px) { .dd-rep-insight { font-size: 14px; } }
+html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
+@media print { .dd-rep-insight { font-size: 11px; } }

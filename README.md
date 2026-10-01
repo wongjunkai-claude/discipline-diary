@@ -208,6 +208,36 @@ tier they qualify for.
 The rules live in `riskTierFor()` in `app.js`. The plain-language list in the
 app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
 
+**Movement arrows.** Next to a student's name, ↑ (red) or ↓ (green) shows
+a higher or lower tier than in the previous period: Semester 1 against
+last year's Semester 2, Semester 2 against this year's Semester 1, Whole
+Year against last year. "Up" includes having no entries before. Across
+years it only follows a confirmed "same student" answer (no arrow while
+the question is unanswered; a student with no same-name record last year
+counts as having none). Not shown for Till Date. Hovering shows the
+previous tier; the ⓘ box explains the arrows.
+
+## Start of Year
+
+Settings → **Start of Year** (Admins and the Owner only), with a badge for
+what's outstanding (`computeStartOfYear()`):
+
+1. **Classes for the year**: done once the year has its own list. If last
+   year's list is being carried on, "Same as YYYY" saves it for this year in
+   one tap; "Review classes" opens Classes For The Year.
+2. **Same-name questions**: every student with entries this year whose
+   "is this the same student?" question (earlier year or class change) is
+   still unanswered, answered right there. Returning students are normally
+   asked when their first entry of the year is saved; this catches any
+   left over.
+3. **Left school**: last year's P6 students with entries, for information
+   (they drop off the Till Date Watchlist; records stay).
+
+Through Term 1 (or whenever the year's classes aren't set up at all) admins
+see a blue bar on the dashboard, "Start of YYYY: N things to sort out",
+until everything's done. Teachers keep the old "classes haven't been
+reviewed" note.
+
 ## Student view and level counters
 
 - Tapping a student's name opens their records for this year across all
@@ -298,6 +328,58 @@ app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
   `settings/*` writes need `isAdmin()`). The automatic holiday set-up and
   the yearly public-holiday fetch also only run for admins/the Owner.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
+
+## Report summaries and locks
+
+Settings → **Annual Summary Reports** lists the years collapsed. Tapping a
+year opens its three summaries: **YYYY Semester 1 Report Summary**,
+**YYYY Semester 2 Report Summary** and **YYYY Annual Report Summary**
+(`renderReportYearList()`).
+
+- Semester 1 = 1 Jan to the day before Term 3 starts (June holidays
+  included); Semester 2 = Term 3 to 31 Dec (September and year-end
+  holidays included). A semester summary is the same eight sections
+  counted over that semester: its two terms, its months, and "compared
+  with" the same semester a year earlier (`withReportPeriod()` narrows the
+  logs while the report, its PDF, Print and Excel are built; the wording
+  reads "semester").
+- **Locks:** Semester 1 opens on the first day of Term 1, Semester 2 on the
+  first day of Term 3, the Annual summary on the Saturday of Term 4's last
+  week (`reportOpenDate()`). Until then the row shows a lock and can't be
+  opened. Admins and the Owner can tap the lock to open it early on their
+  own screen (the lock shows open); it locks again by itself 5 seconds
+  after the lock was last tapped, or when tapped again. An opened summary
+  stays open. Teachers see the lock only.
+- A summary still running shows "Up to today — the semester/year is still
+  in progress."
+- Titles, the PDF/Print footer and file names use the summary's name, e.g.
+  "2026 Semester 1 Report Summary.pdf". Excel's "All logs" covers the
+  same period.
+
+**Findings woven into the sections** (each also in Trend Analysis, and in
+the Excel "Report tables"):
+
+- **After a step** (`computeAfterStep()`): under All Suspensions, All
+  Time-Outs (also by type) and Parent Meet Count, how many of the students
+  had another grooming entry, suspension or time out within 8 school weeks
+  of the step ending. Students whose 8 weeks aren't up yet, with nothing
+  since, are "too recent to tell" and left out of the share. ↺ marks those
+  students in the lists. Entries early the next year count through a
+  confirmed "same student" link.
+- **Concentration** (`computeConcentration()`): above Most Challenging
+  Classes, the share of all entries from the 10 students with the most.
+- **Grooming follow-through** (`computeGroomingFollowThrough()`): in
+  Grooming Escalation Rate, 1st → 2nd and 2nd → Final rates, average days
+  to fix, the share fixed by the deadline of the warning they were on, and
+  the issue type most likely to escalate.
+- **Supervision** (`computeSupervision()`): a section after All
+  Time-Outs with in-school suspension and time out days by room and by
+  supervising staff (days booked ahead included); Parent Meet Count adds
+  meetings by room.
+- New recommendations appear only when the numbers call for them (e.g. a
+  lower repeat rate after parent meetings than after time outs, a small
+  group behind a large share of entries, one staff member covering 40%+ of
+  supervised days).
 
 ## Annual Summary Report layout
 
@@ -482,5 +564,7 @@ school (past P6); each semester of each year gets its own tier, then,
 counting back from the student's latest year for at least 2 years in a
 row: High = a High semester every year, or Medium+ in both semesters;
 Medium = a Medium+ semester every year, or Low+ in both semesters;
-everyone else with entries is Low. The ⓘ box shows these rules in the Till
+everyone else with entries is Low. A student with only one year on record
+is placed as in Whole Year, so Till Date matches Whole Year until a second
+year of data exists. The ⓘ box shows these rules in the Till
 Date view.
