@@ -329,6 +329,42 @@ reviewed" note.
   the yearly public-holiday fetch also only run for admins/the Owner.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
 
+## Pop-up buttons
+
+Entry forms (Grooming new/edit, Suspension, Time Out, Parent Meet), the
+holiday / school closure / HBL pop-ups in Settings and the dashboard's
+Custom range have **Cancel** beside the save button (no ✕). Cancel (or a
+tap outside) closes without saving; if anything was changed it first asks
+"Discard the changes?" (Yes/No; No goes back with the edits kept). The
+Parent Meet link list's Cancel does the same. Changes are spotted by
+comparing the pop-up's draft and field values with how it opened
+(`captureModalBaselines()` / `modalDirty()`).
+
+## Parent meeting ↔ suspension / time out link prompts
+
+- After a **new parent meeting** is saved, that student's suspensions and
+  time outs dated on the meeting day or up to 4 weeks after it, not yet
+  linked to a meeting, are offered: Yes/No for one, tick boxes (Confirm /
+  None of these) for several.
+- After a **new suspension or time out** is saved without a tagged meeting,
+  that student's latest parent meeting on or up to 4 weeks before its start
+  is offered (Yes/No) — only if the meeting has nothing linked yet and no
+  other suspension or time out of that student falls between them.
+- Yes links both ways (`linkedSuspensionIds` / `linkedTimeOutIds` on the
+  meeting, `linkedPmIds` on the case, with a history line). No is
+  remembered (`declinedCaseIds` on the meeting, `declinedPmIds` on the
+  case) and never asked again. Cancelled meetings are skipped; a postponed
+  one counts on its new date. Edits don't prompt.
+- Linked meetings / cases show in a "Linked …" box on the expanded cards.
+- **Link icon after the student's name.** Parent Meet cards: a link icon
+  (linked) or struck-out link icon (not linked); tapping it lists the
+  student's suspensions and time outs on or after the meeting date (linked
+  ones ticked; cases linked to another meeting left out). ✓ saves after the
+  usual Yes/No confirmation listing what will be linked/unlinked (no
+  confirmation if nothing changed); Cancel closes without saving.
+  Suspension and Time Out cards show the link icon (display only) when
+  linked to a meeting.
+
 ## Report summaries and locks
 
 Settings → **Annual Summary Reports** lists the years collapsed. Tapping a
@@ -359,15 +395,11 @@ year opens its three summaries: **YYYY Semester 1 Report Summary**,
 **Findings woven into the sections** (each also in Trend Analysis, and in
 the Excel "Report tables"):
 
-- **After a step** (`computeAfterStep()`): under All Suspensions, All
-  Time-Outs (also by type) and Parent Meet Count, how many of the students
-  had another grooming entry, suspension or time out within 8 school weeks
-  of the step ending. Students whose 8 weeks aren't up yet, with nothing
-  since, are "too recent to tell" and left out of the share. ↺ marks those
-  students in the lists. Entries early the next year count through a
-  confirmed "same student" link.
 - **Concentration** (`computeConcentration()`): above Most Challenging
-  Classes, the share of all entries from the 10 students with the most.
+  Classes (all entries), All Suspensions (suspensions only) and All
+  Time-Outs (time outs only), the share that came from the students with
+  the most: 10 students, or the top fifth when fewer than 50 students are
+  involved. Not shown when no student has more than one.
 - **Grooming follow-through** (`computeGroomingFollowThrough()`): in
   Grooming Escalation Rate, 1st → 2nd and 2nd → Final rates, average days
   to fix, the share fixed by the deadline of the warning they were on, and
@@ -377,9 +409,28 @@ the Excel "Report tables"):
   supervising staff (days booked ahead included); Parent Meet Count adds
   meetings by room.
 - New recommendations appear only when the numbers call for them (e.g. a
-  lower repeat rate after parent meetings than after time outs, a small
-  group behind a large share of entries, one staff member covering 40%+ of
-  supervised days).
+  small group behind a large share of entries, one staff member covering
+  40%+ of supervised days).
+
+**Trend Analysis** is short points under headings, each figure stated once:
+At a glance · Compared with · What changed since … · When · Who · Grooming ·
+Suspensions, time outs and parent meetings · Supervision
+(`computeYearInsights()`).
+
+- **What changed since** the previous period (last year for Annual,
+  Semester 1 for Semester 2, last year's Semester 2 for Semester 1):
+  suspension and time out reasons that rose or fell most (by 2+), the
+  level and class that changed most (by 3+), and how many students are
+  first time in the logs vs already in the logs (an entry earlier this
+  year, or confirmed as the same student as someone in an earlier year).
+- **When** also has suspensions + time outs as a share of each term's
+  cases, and weeks that were among a term's 3 busiest in most of the last
+  (up to 8) finished terms (`computeBusyWeekPattern()`, needs 3+ terms
+  with 5+ cases).
+"Compared with" is the year before (Annual), the same semester last year,
+and for Semester 2 also Semester 1 of the same year. While a summary is
+still running, the earlier period is counted over the same number of days
+from its start ("first N weeks of each"), so it's like for like.
 
 ## Annual Summary Report layout
 

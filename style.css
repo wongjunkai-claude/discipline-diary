@@ -319,16 +319,11 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-cal-legend { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #C9C4B4; }
 .dd-cal-legend-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .dd-daytype-legend { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 6px 10px; }
-.dd-trend-legend { display: flex; justify-content: center; flex-wrap: nowrap; gap: 4px 10px; }
-.dd-trend-legend .dd-cal-legend-item { white-space: nowrap; }
 /* Trend chart legend grows with the chart: the chart (an SVG) stretches to
    its box's width, so the legend text is a fixed share of that width
    (4.14% = 12px on a 390px phone, where the chart is 290px wide), with
    the swatch and spacing in em so they scale along with it. */
 .dd-area-chart-wrap { container-type: inline-size; }
-.dd-trend-legend { font-size: max(10px, 4.14cqi); gap: 0.33em 0.83em; }
-.dd-trend-legend .dd-cal-legend-item { font-size: inherit; gap: 0.58em; }
-.dd-trend-legend .dd-legend-swatch { width: 0.83em; height: 0.83em; }
 .dd-cal-legend-col { display: flex; flex-direction: column; gap: 6px; }
 .dd-cal-legend-item { display: flex; align-items: center; gap: 7px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #4A4536; }
 .dd-cal-legend-item .dd-cal-dot { width: 8px; height: 8px; flex-shrink: 0; }
@@ -384,9 +379,8 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 /* The "By term" table's second header row — R/L/CCA/LE sitting under the
    single "Time Out" group header above it. Shorter than a normal row since
    it's only carrying 4-letter abbreviations. */
-.dd-level-row-subheader .dd-level-cell-term, .dd-level-row-subheader .dd-level-cell-class { padding-top: 2px; padding-bottom: 2px; }
+
 .dd-level-cell-term-sub { font-size: 12px; }
-.dd-level-row-subheader .dd-level-cell-term-sub { font-size: 9px; }
 /* "By term" table: a faint tint per category (matching its colour
    elsewhere in the app) plus thin dividers between groups keep each row
    easy to scan. Column sizes are set by the grid rules further down. */
@@ -403,12 +397,6 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 .dd-level-breakdown-byterm .dd-level-row-total .dd-level-cell-term-total { background: #F2EFE6; }
 
 .dd-back-link { background: none; border: none; color: #1B2A41; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0; }
-.dd-rank-row { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #E4E1D4; padding-bottom: 6px; }
-.dd-rank-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 14px; color: #1B2A41; width: 40px; flex-shrink: 0; }
-.dd-rank-total { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 16px; color: #1B2A41; width: 28px; flex-shrink: 0; text-align: center; }
-.dd-rank-detail { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; color: #8A8571; flex: 1; }
-
-.dd-issue-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
 .dd-issue-tag-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .dd-issue-tag {
   font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; padding: 8px 12px; border-radius: 999px;
@@ -476,7 +464,6 @@ input[type="date"].dd-input, input[type="number"].dd-input, input[type="month"].
 /* Resolved/Escalate act as toggle buttons (tap again to undo) — this marks
    the pressed/selected state so it reads differently from a plain tap target. */
 .dd-issue-btn-selected { outline: 2px solid #1B2A41; outline-offset: 2px; }
-.dd-issue-card-head { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .dd-issue-card-label { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 600; font-size: 14px; color: #1B2A41; }
 .dd-issue-stage-badge { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: #F2EFE6; color: #B8863B; flex-shrink: 0; }
 .dd-issue-overdue { background: #FBEAE7; color: #A3372B; }
@@ -611,7 +598,7 @@ button.dd-date-icon-btn { padding: 0; cursor: pointer; color: #1B2A41; }
 }
 /* Export PDF renders the report the way it prints: these repeat the print
    rules above for the off-screen copy the PDF is drawn from. */
-html.dd-pdf-render .dd-header, html.dd-pdf-render .dd-print-hide, html.dd-pdf-render .dd-undo-toast, html.dd-pdf-render .dd-offline-bar, html.dd-pdf-render .dd-toast { display: none !important; }
+html.dd-pdf-render .dd-header, html.dd-pdf-render .dd-print-hide, html.dd-pdf-render .dd-undo-toast, html.dd-pdf-render .dd-toast{ display: none !important; }
 html.dd-pdf-render body, html.dd-pdf-render .dd-app, html.dd-pdf-render .dd-main { background: #fff !important; }
 html.dd-pdf-render #report-print-area { padding: 0; }
 html.dd-pdf-render .dd-report-main { padding: 0 !important; max-width: none !important; }
@@ -640,7 +627,6 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 .dd-ta-p { font-size: 13px; line-height: 1.55; margin: 0 0 6px; color: #1B2A41; }
 .dd-ta-list { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.55; color: #1B2A41; margin: 0 0 6px; padding-left: 20px; }
 .dd-ta-list li { margin-bottom: 4px; }
-.dd-ta-note { font-size: 11px; margin: 8px 0 0; }
 /* Print icon and its label side by side on one line, level with "← Years". */
 .dd-print-btn {
   display: flex; flex-direction: row; align-items: center; gap: 6px; background: none; border: none;
@@ -859,12 +845,7 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 
 /* Monthly figures table: five equal columns; month names and headers
    ("Suspension") each stay on one line, sized down on narrow phones. */
-.dd-level-breakdown-monthly .dd-level-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.dd-level-breakdown-monthly .dd-level-cell-class,
-.dd-level-breakdown-monthly .dd-level-cell-term { width: auto; min-width: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding-left: 2px; padding-right: 2px; box-sizing: border-box; white-space: nowrap; }
-.dd-level-breakdown-monthly .dd-level-cell-class { font-size: min(12px, 3.1vw); }
-.dd-level-breakdown-monthly .dd-level-row-header .dd-level-cell-term,
-.dd-level-breakdown-monthly .dd-level-row-header .dd-level-cell-class { font-size: min(10px, 2.3vw); letter-spacing: 0; }
+
 .dd-level-breakdown-byterm .dd-level-row:not(.dd-level-row-header) > * { font-size: 13px; line-height: 1.3; }
 /* The "Term"/"Total" label column is narrower now that Total is a 9th
    column, so it scales down with viewport width like the header row does. */
@@ -1028,41 +1009,25 @@ html.dd-pdf-render .dd-report-card { border: none !important; background: #fff !
 
 /* Annual Report line charts: two centred legend rows (suspensions on the
    second), each shrunk if needed to stay on one line. */
-.dd-report-lines-legends { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #C9C4B4; display: flex; flex-direction: column; gap: 4px; }
-.dd-report-lines-legend.dd-cal-legend { margin: 0; padding: 0; border: none; overflow: hidden; }
-.dd-report-lines-legend .dd-legend-line { width: 1.3em; height: 0.25em; }
+
 /* Sized to the chart's own width (like its axis labels), so it's the same
    on screen, in print and in the PDF: the chart's label size, but never
    below ~10px on a phone. */
-.dd-area-chart-wrap .dd-report-lines-legend,
-html.dd-pdf-render .dd-area-chart-wrap .dd-report-lines-legend { font-size: max(9px, min(10px, 3.4cqi), 2.5cqi); gap: 0.33em 0.9em; }
+
 /* The Discipline Load legend matches its month labels in the PDF and in
    print too (the screen rule above only covers tablet/desktop widths). */
-html.dd-pdf-render .dd-trend-legend { font-size: 2.5cqi; }
-@media print { .dd-trend-legend { font-size: 2.5cqi; } }
+
+
 
 /* Week × term grid under "By week of term" (Annual Report). */
-.dd-wg { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 10px; color: #1B2A41; background: #fff; border: 1px solid #E4E1D4; }
-.dd-wg th, .dd-wg td { text-align: center; padding: 4px 0; border: 1px solid #EFECE3; }
-.dd-wg thead th { font-weight: 600; color: #6B6652; background: #F7F5EE; }
-.dd-wg tbody th, .dd-wg tfoot th { font-weight: 700; background: #F7F5EE; width: 2.6em; }
-.dd-wg tfoot td, .dd-wg tfoot th { font-weight: 700; background: #F1EEE4; border-top: 1px solid #C9C4B4; }
-.dd-wg .dd-wg-tot { font-weight: 700; width: 3.2em; background: #F7F5EE; }
-.dd-wg tfoot .dd-wg-tot { background: #F1EEE4; }
-.dd-wg td.dd-wg-na { color: #C9C4B4; }
-@media (min-width: 700px) { .dd-wg { font-size: 11px; } }
-.dd-panel .dd-wg, .dd-report-page .dd-wg { break-inside: avoid; }
+
+
 /* A chart and the table that explains it stay on the same printed page. */
 .dd-keep-together { break-inside: avoid; page-break-inside: avoid; }
 
 /* Parent meetings page: victim/offender split under each reason's bar. */
 .dd-pm-reason { margin-bottom: 6px; break-inside: avoid; }
 .dd-pm-reason:last-child { margin-bottom: 0; }
-.dd-pm-reason-head { display: flex; justify-content: space-between; gap: 8px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11.5px; color: #1B2A41; margin-bottom: 2px; }
-.dd-pm-reason-n { font-weight: 700; }
-.dd-pm-reason-track { background: #F2EFE6; border-radius: 2px; overflow: hidden; height: 8px; }
-.dd-pm-reason-track > div { height: 100%; }
-.dd-pm-reason-roles { font-size: 10.5px; margin-top: 2px; }
 
 /* ================= Annual Report (8-page layout) ================= */
 .dd-rep-legend-wrap { container-type: normal; }
@@ -1485,16 +1450,29 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space
 }
 @media (min-width: 1300px) { .dd-rep-kind-open { font-size: 16px; } }
 
-/* Report: one-line findings under a section title (after a step,
-   concentration, parent meetings by room), the ↺ mark, and the
-   Supervision tables. */
+/* Report: one-line findings under a section title (concentration,
+   parent meetings by room) and the Supervision tables. */
 .dd-rep-insight { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; line-height: 1.5; color: #4A4536; margin: 2px 0 8px; }
 .dd-rep-insight b { color: #1B2A41; }
-.dd-rep-insight-sub { margin-top: -6px; color: #6B6553; }
-.dd-rep-again { color: #A3372B; font-weight: 700; font-size: 0.9em; }
 .dd-rt-sup { margin-bottom: 10px; }
 .dd-rt-sup tbody th { text-align: left; font-weight: 500; }
 @media (min-width: 700px) { .dd-rep-insight { font-size: 13.5px; } }
 @media (min-width: 1300px) { .dd-rep-insight { font-size: 14px; } }
 html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 @media print { .dd-rep-insight { font-size: 11px; } }
+
+/* "Link parent meeting?" pop-up. */
+.dd-pml-q { font-size: 14px; line-height: 1.5; color: #1B2A41; margin-bottom: 10px; }
+.dd-pml-case { font-size: 12px; margin: -4px 0 12px; }
+
+/* Link icon after the student's name: Parent Meet (button) and Suspension / Time Out (display only). */
+.dd-pm-link-btn { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; width: 26px; height: 26px; margin-left: 2px; padding: 0; border: none; background: none; border-radius: 50%; color: #A39E8A; cursor: pointer; }
+.dd-pm-link-btn.on { color: #2D6A4F; }
+.dd-pm-link-btn:active { background: #F2EFE6; }
+.dd-case-link-icon { display: inline-flex; vertical-align: middle; margin-left: 4px; color: #2D6A4F; }
+@media (min-width: 700px) { .dd-pm-link-btn svg, .dd-case-link-icon svg { width: 17px; height: 17px; } }
+
+/* Form pop-ups: Cancel beside the save button (no ✕). */
+.dd-form-actions { display: flex; gap: 8px; margin-top: 18px; }
+.dd-form-actions > .dd-btn-primary { flex: 1 1 0; min-width: 0; margin-top: 0; }
+.dd-btn-cancel { background: #8A8571; }
