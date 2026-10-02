@@ -208,14 +208,40 @@ tier they qualify for.
 The rules live in `riskTierFor()` in `app.js`. The plain-language list in the
 app's ⓘ box is `RISK_TIER_CRITERIA`; change both together.
 
-**Movement arrows.** Next to a student's name, ↑ (red) or ↓ (green) shows
-a higher or lower tier than in the previous period: Semester 1 against
-last year's Semester 2, Semester 2 against this year's Semester 1, Whole
-Year against last year. "Up" includes having no entries before. Across
-years it only follows a confirmed "same student" answer (no arrow while
-the question is unanswered; a student with no same-name record last year
-counts as having none). Not shown for Till Date. Hovering shows the
-previous tier; the ⓘ box explains the arrows.
+**Recent direction symbols.** Next to a student's name, a yellow ! in a
+red circle (worsening) or a white thumbs up in a green circle (improving),
+whatever period is chosen (`recentDirection()`). Entries are weighted
+grooming 1, time out 2, suspension 3; the last 4 school weeks are compared
+with the 4 school weeks before. ! if the score rose by 2+ and by 50%+, or
+the student moved up a risk level this semester within the last 4 school
+weeks (from Low or above). Thumbs up if the earlier 4 weeks had entries
+and the last 4 have none or half as much. Hovering says why.
+
+## Behavioural Trends
+
+On the dashboard between the Grooming Follow-Up List and Pending Parent
+Meeting Date (`renderBehaviourTrends()` / `computeBehaviourTrends()`).
+"Comparing:" By Month / By Term / By Semester / By Year (phones under
+400px show Month / Term / Semester / Year). Pills: Improving / Needs
+Support, each student a collapsible row (closes when the period changes)
+showing Grooming, Suspension, Time Out, Parent Meet per period from the
+student's first entry (oldest first, 0s greyed). By Month leaves out
+empty months; the others merge a run of empty periods into one "No entries
+recorded" row. Years join only through confirmed "same student" answers;
+students past P6 are left out.
+
+Scoring: grooming 1, time out 2, suspension 3, parent meetings shown but
+not counted; per school week, scaled to a standard period (month 4, term
+10, semester 20, year 40 weeks). Periods with under 2 school weeks aren't
+scored; the period still running counts once half of it has passed.
+- **Needs Support** (checked first): High Risk this semester and the one
+  before; up two periods in a row (by 1+ each, latest 2+ points); latest
+  1.5× the earlier average and 2+ higher (latest 2+ points); first
+  suspension after only grooming entries.
+- **Improving**: down two periods in a row (from 2+); latest at most half
+  the earlier average and 2+ lower (with entries in the last 3 periods);
+  no entries in the last full period (or since) right after a period with
+  2+ points.
 
 ## Start of Year
 
@@ -329,6 +355,12 @@ reviewed" note.
   the yearly public-holiday fetch also only run for admins/the Owner.
 - **Authorised Teachers List:** who can sign in (see "Sign-in and access").
 
+## No zooming
+
+The viewport meta in `index.html` has `maximum-scale=1, user-scalable=no`,
+so phones don't zoom in when a dropdown or text box is tapped (iOS zooms
+into any field with text under 16px otherwise).
+
 ## Pop-up buttons
 
 Entry forms (Grooming new/edit, Suspension, Time Out, Parent Meet), the
@@ -404,17 +436,19 @@ the Excel "Report tables"):
   Grooming Escalation Rate, 1st → 2nd and 2nd → Final rates, average days
   to fix, the share fixed by the deadline of the warning they were on, and
   the issue type most likely to escalate.
-- **Supervision** (`computeSupervision()`): a section after All
-  Time-Outs with in-school suspension and time out days by room and by
-  supervising staff (days booked ahead included); Parent Meet Count adds
-  meetings by room.
-- New recommendations appear only when the numbers call for them (e.g. a
-  small group behind a large share of entries, one staff member covering
-  40%+ of supervised days).
+- **Recommendations** appear only when the numbers call for them. Ones
+  about particular children name them (class and count): suspended more
+  than once, suspended again within a month, more than one time out, and
+  the students behind most entries. They draw on established school
+  psychology and counselling approaches — PBIS tiers, functional behaviour
+  assessment, Check-In/Check-Out, restorative practice, social-emotional
+  learning, self-determination theory, family partnership (ecological
+  systems), solution-focused talk — and age-appropriate focus by level.
+  Up to eight are shown.
 
 **Trend Analysis** is short points under headings, each figure stated once:
 At a glance · Compared with · What changed since … · When · Who · Grooming ·
-Suspensions, time outs and parent meetings · Supervision
+Suspensions, time outs and parent meetings
 (`computeYearInsights()`).
 
 - **What changed since** the previous period (last year for Annual,

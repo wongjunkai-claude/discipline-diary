@@ -1392,9 +1392,8 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space
 @media (min-width: 700px) { .dd-watch-period { font-size: 13px; } }
 
 /* Watchlist: tier went up / down since the previous period. */
-.dd-watch-move { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 13px; margin-left: 2px; cursor: help; }
-.dd-watch-up { color: #A3372B; }
-.dd-watch-down { color: #2D7A3E; }
+.dd-watch-move { display: inline-flex; vertical-align: -3px; margin-left: 3px; cursor: help; }
+.dd-watch-move svg { width: 16px; height: 16px; }
 
 /* Settings → Start of Year checklist. */
 .dd-soy-step { border: 1px solid #E4E1D4; border-radius: 6px; padding: 12px; margin-bottom: 12px; background: #FFFEFA; }
@@ -1413,7 +1412,7 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space
 @media (min-width: 700px) {
   .dd-backup-warning { font-size: 14px; }
   .dd-soy-bar { font-size: 14px; }
-  .dd-watch-move { font-size: 15px; }
+  .dd-watch-move svg { width: 18px; height: 18px; }
   .dd-soy-head { font-size: 16px; }
   .dd-soy-num { width: 24px; height: 24px; flex-basis: 24px; font-size: 13px; }
   .dd-soy-text, .dd-soy-body .dd-mono-muted[style*="font-size:13px"] { font-size: 14px !important; }
@@ -1422,7 +1421,7 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space
 @media (min-width: 1300px) {
   .dd-backup-warning { font-size: 15px; }
   .dd-soy-bar { font-size: 15px; }
-  .dd-watch-move { font-size: 16px; }
+  .dd-watch-move svg { width: 19px; height: 19px; }
   .dd-soy-head { font-size: 17px; }
   .dd-soy-text, .dd-soy-body .dd-mono-muted[style*="font-size:13px"] { font-size: 15px !important; }
   .dd-soy-btns .dd-add-btn { font-size: 16px; }
@@ -1450,12 +1449,9 @@ html.dd-pdf-render .dd-rep-note-1line { font-size: 9.5px !important; white-space
 }
 @media (min-width: 1300px) { .dd-rep-kind-open { font-size: 16px; } }
 
-/* Report: one-line findings under a section title (concentration,
-   parent meetings by room) and the Supervision tables. */
+/* Report: one-line findings under a section title (concentration). */
 .dd-rep-insight { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; line-height: 1.5; color: #4A4536; margin: 2px 0 8px; }
 .dd-rep-insight b { color: #1B2A41; }
-.dd-rt-sup { margin-bottom: 10px; }
-.dd-rt-sup tbody th { text-align: left; font-weight: 500; }
 @media (min-width: 700px) { .dd-rep-insight { font-size: 13.5px; } }
 @media (min-width: 1300px) { .dd-rep-insight { font-size: 14px; } }
 html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
@@ -1476,3 +1472,33 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 .dd-form-actions { display: flex; gap: 8px; margin-top: 18px; }
 .dd-form-actions > .dd-btn-primary { flex: 1 1 0; min-width: 0; margin-top: 0; }
 .dd-btn-cancel { background: #8A8571; }
+
+/* Behavioural Trends (dashboard). */
+.dd-trend-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; }
+.dd-trend-head > span:first-child { white-space: nowrap; }
+.dd-trend-cmp { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.dd-trend-cmp > span { font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 500; color: #8A8571; white-space: nowrap; }
+.dd-trend-cmp .dd-watch-period { padding: 4px 21px 4px 9px; background-position: right 8px center; }
+@media (max-width: 400px) {
+  .dd-trend-cmp > span { font-size: 10px; }
+  .dd-trend-cmp .dd-watch-period { font-size: 11.5px; }
+}
+@media (max-width: 380px) { .dd-trend-head { gap: 4px; } .dd-trend-cmp { gap: 3px; } .dd-trend-cmp > span { font-size: 9.5px; } .dd-trend-cmp .dd-watch-period { font-size: 11px; padding-left: 8px; padding-right: 19px; background-position: right 7px center; } }
+.dd-trend-cmp .dd-watch-period { margin-left: 0; }
+.dd-trend-list { margin-top: 10px; }
+.dd-trend-row { align-items: flex-start; padding: 10px 12px; }
+.dd-trend-who { display: block; min-width: 0; }
+.dd-trend-name { font-size: 14px; }
+.dd-trend-why { display: block; font-size: 12px; color: #8A8571; margin-top: 2px; }
+.dd-trend-body { padding: 0 12px 12px; background: #FBFAF6; }
+.dd-trend-table { margin-top: 0; }
+.dd-trend-table tbody th { white-space: nowrap; }
+.dd-trend-table thead th:first-child { width: 24%; }
+.dd-trend-open { display: inline-block; margin-top: 8px; font-size: 13px; }
+@media (min-width: 700px) {
+  .dd-trend-cmp > span { font-size: 12px; }
+  .dd-trend-name { font-size: 15px; }
+  .dd-trend-why { font-size: 13px; }
+  .dd-trend-table { font-size: 12px; }
+  .dd-trend-table thead th { font-size: 11px; }
+}

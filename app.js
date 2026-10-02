@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.58.1";
+const APP_VERSION = "3.60.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4817,7 +4817,6 @@ function computeYearInsights(year) {
   const esc = computeEscalationRate(year);
   const gft = computeGroomingFollowThrough(year);
   const conc = computeConcentration(year);
-  const sv = computeSupervision(year);
   const suspIntervals = computeRepeatSuspensionIntervals(year);
   const suspRoster = computeYearSuspensionRoster(year);
   const toRoster = computeYearTimeOutRoster(year);
@@ -4970,45 +4969,61 @@ function computeYearInsights(year) {
   if (pmTop) serious.push(`Top reason for parent meetings: ${pmTop.cat} (${pmTop.count}).`);
   if (serious.length) sections.push({ title: "Suspensions, time outs and parent meetings", points: serious });
 
-  // Supervision
-  const topStaff = sv.staff.find((x) => x.name !== "(not recorded)");
-  const topRoom = sv.rooms.find((x) => x.name !== "(no room recorded)");
-  if (sv.total > 0) {
-    const sup = [`${plural(sv.total, "day")} of in-school suspension and time out supervised.`];
-    if (topStaff) sup.push(`Most by one staff member: ${topStaff.name} (${topStaff.total}, ${pctOf(topStaff.total, sv.total)}%).`);
-    if (topRoom) sup.push(`Busiest room: ${topRoom.name} (${plural(topRoom.total, "day")}).`);
-    sections.push({ title: "Supervision", points: sup });
-  }
 
-  // Recommendations — only where the numbers call for it.
-  const suspRepeatShare = pctOf(suspRepeatCount, ru.suspension.totalCount);
-  if (ru.suspension.repeatStudents > 0 && suspRepeatShare >= 30) recs.push(`Put an individual support plan in place for the ${plural(ru.suspension.repeatStudents, "student")} suspended more than once — they account for ${suspRepeatShare}% of this ${word}'s suspensions. For example: regular check-ins with one named staff member, and involving parents early.`);
-  if (minGap !== null && minGap <= 30) recs.push(`At least one student was suspended again within ${plural(minGap, "day")}. Consider a re-entry meeting after every suspension and closer follow-up in the first weeks back.`);
-  if (conc.students >= 20 && conc.pct >= 40) recs.push(`The ${plural(conc.top, "student")} with the most entries made up ${conc.pct}% of all entries. Targeted support for this small group may reduce cases more than school-wide measures.`);
+  // Recommendations — only where the numbers call for them, naming the
+  // children concerned, and drawing on established approaches in
+  // educational psychology and school counselling (PBIS tiers, functional
+  // behaviour assessment, Check-In/Check-Out, restorative practice,
+  // social-emotional learning, self-determination theory, ecological
+  // systems / family partnership, solution-focused talk).
+  const names = (list, fmt, max = 5) => list.slice(0, max).map(fmt).join(", ") + (list.length > max ? ` and ${list.length - max} more` : "");
+  const repeatSusp = suspRoster.filter((r) => r.count > 1);
+  if (repeatSusp.length) recs.push(`Suspended more than once: ${names(repeatSusp, (r) => `${r.name} (${r.cls || "no class"}, ${r.count} times)`)}. For each child, an individual (Tier 3) support plan led by the school counsellor: a functional behaviour assessment to understand what the behaviour helps the child get or avoid, then teach and reward a replacement behaviour. Pair it with one trusted adult who checks in daily — a steady relationship is protective (relatedness, self-determination theory).`);
+  const quickAgain = suspIntervals.filter((r) => r.shortestGap <= 30);
+  if (quickAgain.length) recs.push(`Suspended again within a month: ${names(quickAgain, (r) => `${r.name} (${r.studentClass || "no class"}, ${plural(r.shortestGap, "day")} apart)`)}. A quick repeat usually means the underlying need hasn't been met. Hold a restorative re-entry meeting on the first day back (what happened, who was affected, how to put it right) and agree one or two clear goals with the family, with weekly feedback.`);
+  const suspNames = new Set(repeatSusp.map((r) => normalizeName(r.name)));
+  const repeatTo = toRoster.filter((r) => r.count > 1 && !suspNames.has(normalizeName(r.name)));
+  if (repeatTo.length) recs.push(`More than one time out: ${names(repeatTo, (r) => `${r.name} (${r.cls || "no class"}, ${r.count} times)`)}. Try Check-In/Check-Out (Tier 2): a morning check-in on one daily goal, brief teacher feedback after lessons and a check-out with praise at the end of the day. Teach a calm-down routine (e.g. Zones of Regulation) so the child can ask for a break before things escalate.`);
+  if (conc.students >= 20 && conc.pct >= 40) {
+    const others = conc.topList.filter((r) => !suspNames.has(normalizeName(r.name)) && !repeatTo.some((t) => normalizeName(t.name) === normalizeName(r.name)));
+    if (others.length) recs.push(`Most entries also came from: ${names(others, (r) => `${r.name} (${r.cls || "no class"}, ${r.n})`)}. Rather than more consequences, a small-group social-emotional learning programme on self-management and relationship skills, or mentoring by a teacher they trust, is likely to help more than school-wide measures.`);
+  }
   const STRUCTURE = {
     Recess: "a fixed supervised room and a recess duty roster",
     Lesson: "a set place and a timetabled duty teacher for students taken out of lessons",
     CCA: "a set place and a named supervisor for students kept out of CCA",
     LearningExperience: "a set plan for who supervises students kept out of learning experiences",
   };
-  toStats.types.filter((t) => t.count > 0 && t.perWeek >= 1).forEach((t) => recs.push(`Time outs from ${t.from} averaged ${Math.round(t.perWeek * 10) / 10} a school week${t.maxSameDay >= 2 ? `, with up to ${t.maxSameDay} students on the same day` : ""}. At that frequency, a standing arrangement — ${STRUCTURE[t.key]} — may work better than arranging each one as it comes.`));
-  if (totals.suspension > 0 && totals.parentMeeting < totals.suspension) recs.push(`Only ${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} logged against ${plural(totals.suspension, "suspension")}. Consider meeting parents after every suspension, and logging the meeting so it counts here.`);
-  if (esc && esc.pctFinal < 20 && gft && gft.to2 >= 5 && gft.pct2to3 >= 40) recs.push(`Once at 2nd Warning, ${gft.pct2to3}% of grooming issues went on to Final. Contacting parents at 2nd Warning may stop more of them.`);
-  if (topStaff && sv.total >= 10 && pctOf(topStaff.total, sv.total) >= 40) recs.push(`${topStaff.name} supervised ${pctOf(topStaff.total, sv.total)}% of in-school suspension and time out days (${topStaff.total} of ${sv.total}). Sharing this across more staff would spread the load.`);
-  if (esc && esc.pctFinal >= 20) recs.push(`${esc.pctFinal}% of grooming issues went all the way to Final Warning. Contacting parents earlier, at 1st or 2nd Warning, may stop more of them before they escalate.`);
-  if (topIssue && esc && topIssue.count >= 3 && pctOf(topIssue.count, esc.total) >= 30) recs.push(`${topIssue.type} made up ${pctOf(topIssue.count, esc.total)}% of grooming issues. A reminder about it before each term starts (at assembly or through form teachers) could cut repeat cases.`);
-  if (suspReasons.length && suspReasons[0].count >= 2 && pctOf(suspReasons[0].count, totals.suspension) >= 40) recs.push(`${suspReasons[0].reason} was behind ${pctOf(suspReasons[0].count, totals.suspension)}% of suspensions. A programme aimed at this behaviour${/fight|assault|aggress|bully/i.test(suspReasons[0].reason) ? " (for example conflict resolution or peer mediation)" : ""} could be worth planning.`);
-  if (posTotal >= 5 && pctOf(pv, posTotal) >= 45) recs.push(pk === "Late" ? `${pctOf(pv, posTotal)}% of incidents came in the last third of a term. Plan extra reminders and supervision for the final weeks of each term.` : pk === "Early" ? `${pctOf(pv, posTotal)}% of incidents came in the first third of a term. Setting expectations clearly in the first week back may help.` : `${pctOf(pv, posTotal)}% of incidents came mid-term. Keep reminders going through the middle weeks, not just at the start.`);
-  if (weekTotal >= 5 && pctOf(busiestDay.count, weekTotal) >= 30) recs.push(`${DAY[busiestDay.day]} had ${pctOf(busiestDay.count, weekTotal)}% of weekday incidents. It may help to look at what's different on ${DAY[busiestDay.day]}s — for example the timetable, PE or CCA, or recess arrangements.`);
-  if (classes[0] && classes[0].total >= 5 && pctOf(classes[0].total, rankedCases) >= 20) recs.push(`${classes[0].label} accounted for ${pctOf(classes[0].total, rankedCases)}% of cases. Consider a class-level plan with its form teachers.`);
-  if (levels[0] && levels[0].total >= 5 && pctOf(levels[0].total, rankedCases) >= 30) recs.push(`${levels[0].label} accounted for ${pctOf(levels[0].total, rankedCases)}% of cases. A level-wide talk or programme may reach more students than following up case by case.`);
+  toStats.types.filter((t) => t.count > 0 && t.perWeek >= 1).forEach((t) => recs.push(`Time outs from ${t.from} averaged ${Math.round(t.perWeek * 10) / 10} a school week${t.maxSameDay >= 2 ? `, with up to ${t.maxSameDay} students on the same day` : ""}. A standing arrangement — ${STRUCTURE[t.key]} — would help. Make the time out a calm space with a short guided reflection (what happened, what I felt, what I'll do next time), so it teaches and not only removes.`));
+  if (totals.suspension > 0 && totals.parentMeeting < totals.suspension) recs.push(`Only ${plural(totals.parentMeeting, "parent meeting")} ${totals.parentMeeting === 1 ? "was" : "were"} logged against ${plural(totals.suspension, "suspension")}. Families are a key part of a child's support (ecological systems theory): meet parents for every suspension and agree on the same expectations and praise at home and in school.`);
+  if (esc && esc.pctFinal < 20 && gft && gft.to2 >= 5 && gft.pct2to3 >= 40) recs.push(`Once at 2nd Warning, ${gft.pct2to3}% of grooming issues went on to Final. At 2nd Warning, a short solution-focused chat ("What would help you remember?") and a call home are more likely to work than another warning alone.`);
+  if (esc && esc.pctFinal >= 20) recs.push(`${esc.pctFinal}% of grooming issues went all the way to Final Warning. Teach and model the expectation, acknowledge students who meet it (about four positive comments to every correction), and contact parents at 1st or 2nd Warning.`);
+  if (topIssue && esc && topIssue.count >= 3 && pctOf(topIssue.count, esc.total) >= 30) recs.push(`${topIssue.type} made up ${pctOf(topIssue.count, esc.total)}% of grooming issues. Pre-teach it before each term (show what's expected, remind, and recognise students who get it right) rather than relying on warnings afterwards.`);
+  if (suspReasons.length && suspReasons[0].count >= 2 && pctOf(suspReasons[0].count, totals.suspension) >= 40) {
+    const r0 = suspReasons[0].reason;
+    const how = /bully/i.test(r0) ? "a whole-school anti-bullying approach: clear ways to report, support for the child who was targeted, and restorative work with the child who bullied"
+      : /fight|assault|aggress|hurt/i.test(r0) ? "social-emotional learning on recognising anger and resolving conflict, with peer mediation for upper primary"
+      : /theft|steal/i.test(r0) ? "talking with each child about what led to it (need, peer pressure or impulse) and a restorative conversation about making it right"
+      : "explicitly teaching the expected behaviour that should replace it, and recognising it when it happens";
+    recs.push(`${r0} was behind ${pctOf(suspReasons[0].count, totals.suspension)}% of suspensions. Consider ${how}.`);
+  }
+  if (posTotal >= 5 && pctOf(pv, posTotal) >= 45) recs.push(pk === "Late" ? `${pctOf(pv, posTotal)}% of incidents came in the last third of a term, when tiredness and assessment stress build up. Plan short movement or calm-down breaks and more positive reminders in the final weeks.` : pk === "Early" ? `${pctOf(pv, posTotal)}% of incidents came in the first third of a term. Re-teach routines and expectations in the first week back — children need structure after the holidays.` : `${pctOf(pv, posTotal)}% of incidents came mid-term. Keep reminders and recognition going through the middle weeks, not just at the start.`);
+  if (weekTotal >= 5 && pctOf(busiestDay.count, weekTotal) >= 30) recs.push(busiestDay.day === "Mon"
+    ? `Monday had ${pctOf(busiestDay.count, weekTotal)}% of weekday incidents. Greeting students at the door and a short class check-in on Monday mornings help them settle back after the weekend.`
+    : `${DAY[busiestDay.day]} had ${pctOf(busiestDay.count, weekTotal)}% of weekday incidents. Look at what's different that day (timetable, PE, CCA or long lessons) and plan more structure or breaks around it.`);
+  if (classes[0] && classes[0].total >= 5 && pctOf(classes[0].total, rankedCases) >= 20) recs.push(`${classes[0].label} accounted for ${pctOf(classes[0].total, rankedCases)}% of cases. Work with its form teachers on a class plan: class agreements written with the students (ownership), regular restorative circles, and consistent praise for expected behaviour.`);
+  if (levels[0] && levels[0].total >= 5 && pctOf(levels[0].total, rankedCases) >= 30) {
+    const lv = parseInt(levels[0].label.slice(1), 10);
+    const focus = lv <= 2 ? "routines, self-regulation and basic social skills" : lv <= 4 ? "friendships, managing peer conflict and empathy" : "peer influence, responsible decision-making and coping with exam stress";
+    recs.push(`${levels[0].label} accounted for ${pctOf(levels[0].total, rankedCases)}% of cases. A level programme matched to that age — ${focus} — may reach more students than following up case by case.`);
+  }
   const busiestTerm = terms.slice().sort((a, b) => b.cases - a.cases)[0];
   if (busiestTerm && terms.length >= 2 && cases >= 5 && pctOf(busiestTerm.cases, cases) >= 40) recs.push(`${busiestTerm.label} had ${pctOf(busiestTerm.cases, cases)}% of the ${word}'s cases. Plan ahead for the same period next year.`);
   if (hasLast && !soFar && casesLast > 0 && cases > casesLast && pctOf(cases - casesLast, casesLast) >= 20) recs.push(`Cases rose ${pctOf(cases - casesLast, casesLast)}% on ${rpPrev(year)}. It's worth reviewing what changed between the two (programmes, staffing or the cohort).`);
-  if (weekPat && weekPat.busy.length) recs.push(`${weekPat.busy.length === 1 ? `Week ${weekPat.busy[0].w} is` : `Weeks ${weekPat.busy.map((x) => x.w).sort((a, b) => a - b).join(", ")} are`} busy term after term. Plan extra supervision and reminders for ${weekPat.busy.length === 1 ? "that week" : "those weeks"} each term.`);
+  if (weekPat && weekPat.busy.length) recs.push(`${weekPat.busy.length === 1 ? `Week ${weekPat.busy[0].w} is` : `Weeks ${(() => { const ws = weekPat.busy.map((x) => x.w).sort((a, b) => a - b); return `${ws.slice(0, -1).join(", ")} and ${ws[ws.length - 1]}`; })()} are`} busy term after term. Plan extra supervision for ${weekPat.busy.length === 1 ? "that week" : "those weeks"}, and re-teach expectations and step up recognition the week before.`);
   if (!recs.length) recs.push(`Nothing in the numbers stands out as needing a change. Keep logging consistently so the next comparison is meaningful.`);
-  // Listed most-important first; kept to the top seven so it stays actionable.
-  return { sections, recs: recs.slice(0, 7) };
+  // The child-specific ones come first; kept to eight so it stays actionable.
+  return { sections, recs: recs.slice(0, 8) };
 }
 function renderTrendAnalysis(year) {
   const ins = computeYearInsights(year);
@@ -5467,12 +5482,6 @@ function annualReportSheets(year) {
   // Students
   out.push(sheet("Suspensions by Student", [N("Student", 26), N("Class", 8), N("Suspensions", 12)], computeYearSuspensionRoster(year).map((r) => [r.name, r.cls || "", r.count])));
   out.push(sheet("Time Outs by Student", [N("Student", 26), N("Class", 8), N("Time Outs", 12)], computeYearTimeOutRoster(year).map((r) => [r.name, r.cls || "", r.count])));
-  // Supervision
-  const sv = computeSupervision(year);
-  const svCols = (h) => [N(h, 26), N("Suspension days", 16), N("Time Out days", 14), N("Total", 9)];
-  out.push(sheet("Supervision by Room", svCols("Room"), sv.rooms.map((r) => [r.name, r.susp, r.to, r.total])));
-  out.push(sheet("Supervision by Staff", svCols("Staff"), sv.staff.map((r) => [r.name, r.susp, r.to, r.total])));
-  out.push(sheet("Parent Meets by Room", [N("Room", 26), N("Meetings", 10)], sv.pmRooms.map(([room, n]) => [room, n])));
   return out;
 }
 // Year-end archive: every entry of the year from all four logs, one sheet
@@ -5853,17 +5862,18 @@ function yearStudentKey(y, name, cls) { return `${y}|${normalizeName(name)}|${no
 // count that log only. The top group is 10 students, or the top fifth when
 // fewer than 50 students are involved.
 function computeConcentration(year, which = "all") {
-  const per = new Map();
-  const add = (r, d) => { if (!r.deleted && inReportWindow(d, year)) { const k = yearStudentKey(year, r.studentName, r.studentClass); per.set(k, (per.get(k) || 0) + 1); } };
+  const per = new Map(), who = new Map();
+  const add = (r, d) => { if (!r.deleted && inReportWindow(d, year)) { const k = yearStudentKey(year, r.studentName, r.studentClass); per.set(k, (per.get(k) || 0) + 1); if (!who.has(k) || d >= who.get(k).d) who.set(k, { name: r.studentName, cls: r.studentClass || "", d }); } };
   if (which === "all") state.incidents.forEach((r) => add(r, r.date));
   if (which === "all" || which === "suspension") state.suspensions.forEach((r) => add(r, r.startDate));
   if (which === "all" || which === "timeOut") state.timeOuts.forEach((r) => add(r, r.startDate));
   if (which === "all") state.parentMeetings.forEach((m) => { if (isPmCounted(m)) add(m, pmDate(m)); });
-  const counts = [...per.values()].sort((a, b) => b - a);
+  const ranked = [...per.entries()].map(([k, n]) => ({ ...who.get(k), n })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  const counts = ranked.map((r) => r.n);
   const total = counts.reduce((a, b) => a + b, 0);
   const top = counts.length >= 50 ? 10 : Math.max(1, Math.round(counts.length / 5));
   const topEntries = counts.slice(0, top).reduce((a, b) => a + b, 0);
-  return { students: counts.length, total, top, topEntries, pct: pctOf(topEntries, total), sharePct: pctOf(top, counts.length) };
+  return { students: counts.length, total, top, topEntries, pct: pctOf(topEntries, total), sharePct: pctOf(top, counts.length), topList: ranked.slice(0, top) };
 }
 function renderConcentrationLine(c, one, many) {
   // Nothing to say when no student has more than one.
@@ -5892,29 +5902,6 @@ function computeGroomingFollowThrough(year) {
   const worst = Object.entries(byType).filter(([, b]) => b.n >= 3 && b.up > 0).map(([type, b]) => ({ type, pct: pctOf(b.up, b.n), n: b.n })).sort((a, b) => b.pct - a.pct || b.n - a.n)[0] || null;
   return { total, to2, to3, pct1to2: pctOf(to2, total), pct2to3: pctOf(to3, to2), fixed, avgDays: fixed ? Math.round(dayTotal / fixed) : null, pctOnTime: pctOf(onTime, fixed), worst };
 }
-// Supervised days in the period: in-school suspension days and time out
-// days, by room and by supervising staff; parent meetings by room.
-function computeSupervision(year) {
-  const rooms = {}, staff = {};
-  const add = (map, k, field) => { const r = map[k] = map[k] || { susp: 0, to: 0 }; r[field]++; };
-  state.suspensions.forEach((s) => { if (s.deleted || !inReportWindow(s.startDate, year)) return; suspensionDayEntries(s).forEach((e) => { if (e.type !== "ISS") return; add(rooms, (e.venue || "").trim() || "(no room recorded)", "susp"); add(staff, (e.administrator || "").trim() || "(not recorded)", "susp"); }); });
-  state.timeOuts.forEach((t) => { if (t.deleted || !inReportWindow(t.startDate, year)) return; suspensionDayEntries(t).forEach((e) => { add(rooms, (e.venue || "").trim() || "(no room recorded)", "to"); add(staff, (e.administrator || "").trim() || "(not recorded)", "to"); }); });
-  const rows = (map) => Object.entries(map).map(([name, r]) => ({ name, ...r, total: r.susp + r.to })).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
-  const pmRooms = {};
-  state.parentMeetings.forEach((m) => { if (!isPmCounted(m) || !inReportWindow(pmDate(m), year)) return; const room = ((isPmRescheduled(m) ? m.postponedLocation : m.location) || m.location || "").trim() || "(no room recorded)"; pmRooms[room] = (pmRooms[room] || 0) + 1; });
-  const total = Object.values(rooms).reduce((a, r) => a + r.susp + r.to, 0);
-  return { rooms: rows(rooms), staff: rows(staff), total, pmRooms: Object.entries(pmRooms).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])) };
-}
-function renderSupervisionTables(sv) {
-  if (!sv.total) return `<div class="dd-dash-empty">No in-school suspension or time out days this year.</div>`;
-  const table = (head, rows) => `
-      <table class="dd-rt dd-rt-sup">
-        <thead><tr><th>${head}</th><th style="color:${CHART_COLORS.suspension}"><span class="dd-rt-long">Suspension</span><span class="dd-rt-short">Susp</span></th><th style="color:${CHART_COLORS.timeOut}">Time Out</th><th>Total</th></tr></thead>
-        <tbody>${rows.map((r) => `<tr><th>${escapeHtml(r.name)}</th><td>${r.susp}</td><td>${r.to}</td><td class="dd-rt-tot">${r.total}</td></tr>`).join("")}</tbody>
-      </table>`;
-  return `${table("Room", sv.rooms)}${table("Staff", sv.staff)}
-      <div class="dd-mono-muted dd-rep-foot">Days supervised in school: in-school suspension days and time out days, including days booked ahead.</div>`;
-}
 function renderAnnualReportPages(year) {
   const page = (n, html) => `<div class="dd-report-page" data-page="${n}">${html}</div>`;
   // Page 1 — Annual summary tiles, By Term, By Weeks in a Term (4 graphs)
@@ -5938,7 +5925,6 @@ function renderAnnualReportPages(year) {
       ${renderReportDayOfWeek(year)}`;
   // Page 4 — Top reasons (suspension, time out), then Parent meetings at the bottom
   const pmCounts = computeReportPmCounts(year);
-  const sv = computeSupervision(year);
   const p4 = `
       ${reportSectionTitle("Top Reasons for Suspension")}
       ${renderReportReasonsTable(computeReportReasonsByLevel(state.suspensions, year), "No suspensions this year.")}
@@ -5948,8 +5934,7 @@ function renderAnnualReportPages(year) {
       ${renderReportPmBars(computeReportPmMonthly(year))}
       ${reportSectionTitle("Parent Meet Count")}
       ${renderReportGroupedGrid(groupByCount(pmCounts), (n, k) => `${plainCount(n, "meeting", "meetings")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No parent meetings this year.")}
-      ${pmCounts.length ? `<div class="dd-mono-muted dd-rep-foot">Meetings held up to ${formatDate(todayISO() < reportWindowFor(year, reportKind()).end ? todayISO() : reportWindowFor(year, reportKind()).end)}. Meetings booked for later dates aren't counted yet.</div>` : ""}
-      ${sv.pmRooms.length ? `<div class="dd-rep-insight">By room: ${sv.pmRooms.map(([room, n]) => `${escapeHtml(room)} <b>${n}</b>`).join(" · ")}.</div>` : ""}`;
+      ${pmCounts.length ? `<div class="dd-mono-muted dd-rep-foot">Meetings held up to ${formatDate(todayISO() < reportWindowFor(year, reportKind()).end ? todayISO() : reportWindowFor(year, reportKind()).end)}. Meetings booked for later dates aren't counted yet.</div>` : ""}`;
   // Page 5 — Repeat vs. unique + Grooming escalation rate + repeat intervals
   const ru = computeRepeatVsUnique(year);
   const esc = computeEscalationRate(year);
@@ -5997,9 +5982,7 @@ function renderAnnualReportPages(year) {
       ${renderReportGroupedGrid(groupByCount(computeYearSuspensionRoster(year)), (n, k) => `${plainCount(n, "suspension", "suspensions")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No suspensions this year.")}
       ${reportSectionTitle("All Time-Outs This Year")}
       ${renderConcentrationLine(computeConcentration(year, "timeOut"), "time out", "time outs")}
-      ${renderReportGroupedGrid(groupByCount(computeYearTimeOutRoster(year)), (n, k) => `${plainCount(n, "time out", "time outs")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No time outs this year.")}
-      ${reportSectionTitle("Supervision")}
-      ${renderSupervisionTables(sv)}`;
+      ${renderReportGroupedGrid(groupByCount(computeYearTimeOutRoster(year)), (n, k) => `${plainCount(n, "time out", "time outs")} <span class="dd-rep-group-n">· ${plainCount(k, "student", "students")}</span>`, studentCell, "No time outs this year.")}`;
   // Page 8 — Trend analysis, with the Recommendations right after it
   const p8 = renderTrendAnalysis(year) + renderReportRecommendations(year);
   return rpWording([p1, p2, p3, p4, p5, p6, p7, p8].map((h, i) => page(i + 1, h)).join(""));
@@ -7431,6 +7414,241 @@ function renderNewEntryRow() {
       <button class="dd-newbtn dd-newbtn-compact" id="btn-new-pm-only" style="flex:1">+ Parent Meet</button>
     </div>`;
 }
+// Semester risk tier (same limits as the Watchlist's riskTierFor).
+function riskTierOf(c) {
+  if (c.suspension >= 2 || c.third >= 3 || c.second >= 7 || c.timeOut >= 4) return "high";
+  if (c.suspension === 1 || (c.second >= 4 && c.second <= 6) || c.third === 2 || (c.timeOut >= 2 && c.timeOut <= 3)) return "medium";
+  if ((c.second >= 1 && c.second <= 3) || c.third === 1 || c.timeOut === 1) return "low";
+  return null;
+}
+// ---------- Behavioural Trends + recent direction ----------
+// One key per child across school years (follows confirmed "same student"
+// links back to the earliest year, and a confirmed class change).
+function chainKeyFor(name, cls, date) {
+  let y = parseInt(String(date).slice(0, 4), 10), c = cls || "";
+  for (let hop = 0; hop < 12 && c; hop++) {
+    const d = linkDecision(y, name, c);
+    if (!d || d.decision !== "linked" || !d.toYear || !d.toClass) break;
+    y = d.toYear; c = d.toClass;
+  }
+  return `${y}|${normalizeName(name)}|${normCls(c ? sameYearGroup(y, name, c)[0] : "")}`;
+}
+const TREND_WEIGHT = { grooming: 1, timeOut: 2, suspension: 3, pm: 0 };
+// Every entry (parent meetings only once held), with its child key and weight.
+function trendEntries() {
+  const today = todayISO();
+  const out = [];
+  const add = (kind, r, d) => { if (r.deleted || !d || d > today || !r.studentName) return; out.push({ kind, r, d, key: chainKeyFor(r.studentName, r.studentClass, d) }); };
+  state.incidents.forEach((r) => add("grooming", r, r.date));
+  state.suspensions.forEach((r) => add("suspension", r, r.startDate));
+  state.timeOuts.forEach((r) => add("timeOut", r, r.startDate));
+  state.parentMeetings.forEach((m) => { if (isPmCounted(m)) add("pm", m, pmDate(m)); });
+  return out;
+}
+const schoolDayCache = new Map();
+function schoolDaysBetween(a, b) {
+  const k = `${a}|${b}`;
+  if (schoolDayCache.has(k)) return schoolDayCache.get(k);
+  let n = 0;
+  for (let d = a; d <= b; d = addDays(d, 1)) if (!isNonSchoolDay(d, null)) n++;
+  schoolDayCache.set(k, n);
+  return n;
+}
+// The last n school days up to today (newest first).
+function recentSchoolDays(n) {
+  const out = [];
+  for (let d = todayISO(), guard = 0; out.length < n && guard < 400; d = addDays(d, -1), guard++) if (!isNonSchoolDay(d, null)) out.push(d);
+  return out;
+}
+// Watchlist symbol: the last 4 school weeks against the 4 before (weighted
+// 1 grooming / 2 time out / 3 suspension), or a move up a risk level this
+// semester within the last 4 school weeks.
+function recentDirection(entries, key) {
+  const days = recentSchoolDays(40);
+  if (days.length < 40) return null;
+  const recStart = days[19], prevStart = days[39], prevEnd = addDays(recStart, -1), today = todayISO();
+  let rec = 0, prev = 0;
+  entries.forEach((e) => { if (e.key !== key) return; const w = TREND_WEIGHT[e.kind]; if (e.d >= recStart && e.d <= today) rec += w; else if (e.d >= prevStart && e.d <= prevEnd) prev += w; });
+  // Risk level now vs 4 school weeks ago, within this semester.
+  const y = parseInt(today.slice(0, 4), 10), t3 = computeMoeCalendar(y).terms[2].start;
+  const semStart = today < t3 ? `${y}-01-01` : t3;
+  const tierAt = (end) => {
+    const c = { suspension: 0, timeOut: 0, second: 0, third: 0 };
+    entries.forEach((e) => {
+      if (e.key !== key || e.d < semStart || e.d > end) return;
+      if (e.kind === "suspension") c.suspension++;
+      else if (e.kind === "timeOut") c.timeOut++;
+      else if (e.kind === "grooming" && Array.isArray(e.r.issues)) { const st = groomingEntryMaxStage(e.r); if (st >= 3) c.third++; else if (st >= 2) c.second++; }
+    });
+    return riskTierOf(c);
+  };
+  const RK = { high: 3, medium: 2, low: 1 }, LBL = { high: "High Risk", medium: "Medium Risk", low: "Low Risk" };
+  const before = recStart > semStart ? tierAt(addDays(recStart, -1)) : null, now = tierAt(today);
+  if (before && now && RK[now] > RK[before]) return { dir: "up", title: `Up from ${LBL[before]} in the last 4 school weeks` };
+  if (rec - prev >= 2 && rec >= prev * 1.5) return { dir: "up", title: "More entries in the last 4 school weeks than in the 4 before" };
+  if (prev > 0 && (rec === 0 || rec <= prev / 2)) return { dir: "down", title: rec === 0 ? "No entries in the last 4 school weeks" : "Fewer entries in the last 4 school weeks than in the 4 before" };
+  return null;
+}
+// Periods for Behavioural Trends.
+const TREND_MODES = [["month", "By Month"], ["term", "By Term"], ["sem", "By Semester"], ["year", "By Year"]];
+const TREND_STD_WEEKS = { month: 4, term: 10, sem: 20, year: 40 };
+function trendPeriodOf(d, mode) {
+  const y = parseInt(d.slice(0, 4), 10);
+  if (mode === "month") return `${d.slice(0, 7)}`;
+  if (mode === "year") return String(y);
+  const ts = computeMoeCalendar(y).terms;
+  if (mode === "sem") return `${y}-S${d < ts[2].start ? 1 : 2}`;
+  let n = 1;
+  ts.forEach((t, i) => { if (d >= t.start) n = i + 1; });
+  return `${y}-T${n}`;
+}
+function trendPeriodNext(p, mode) {
+  if (mode === "month") { const [y, m] = p.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`; }
+  if (mode === "year") return String(+p + 1);
+  const y = +p.slice(0, 4), n = +p.slice(-1), max = mode === "sem" ? 2 : 4;
+  return n === max ? `${y + 1}-${mode === "sem" ? "S" : "T"}1` : `${y}-${mode === "sem" ? "S" : "T"}${n + 1}`;
+}
+function trendPeriodRange(p, mode) {
+  if (mode === "month") { const [y, m] = p.split("-").map(Number); return { start: `${p}-01`, end: `${p}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}` }; }
+  if (mode === "year") return { start: `${p}-01-01`, end: `${p}-12-31` };
+  const y = +p.slice(0, 4), n = +p.slice(-1), ts = computeMoeCalendar(y).terms;
+  if (mode === "sem") return n === 1 ? { start: `${y}-01-01`, end: addDays(ts[2].start, -1) } : { start: ts[2].start, end: `${y}-12-31` };
+  return { start: n === 1 ? `${y}-01-01` : ts[n - 1].start, end: n === 4 ? `${y}-12-31` : addDays(ts[n].start, -1) };
+}
+function trendPeriodLabel(p, mode) {
+  if (mode === "month") return `${MONTH_ABBR[+p.slice(5, 7) - 1]} ${p.slice(0, 4)}`;
+  if (mode === "year") return p;
+  return mode === "sem" ? `Sem ${p.slice(-1)} ${p.slice(0, 4)}` : `T${p.slice(-1)} ${p.slice(0, 4)}`;
+}
+// For each child: their periods from the first entry to now, a score per
+// period (weighted entries per school week, scaled to a standard period),
+// and whether they're Improving or Need Support.
+function computeBehaviourTrends(mode) {
+  const today = todayISO(), cur = trendPeriodOf(today, mode), entries = trendEntries();
+  const byKey = new Map();
+  entries.forEach((e) => { (byKey.get(e.key) || byKey.set(e.key, []).get(e.key)).push(e); });
+  const thisYear = parseInt(today.slice(0, 4), 10);
+  const out = { improving: [], support: [] };
+  byKey.forEach((list, key) => {
+    list.sort((a, b) => a.d.localeCompare(b.d));
+    const latest = list[list.length - 1];
+    const lvl = classLevel(latest.r.studentClass);
+    if (lvl !== 999 && lvl + (thisYear - parseInt(latest.d.slice(0, 4), 10)) > 6) return; // left school
+    if (!list.some((e) => e.kind !== "pm")) return;
+    const periods = [];
+    for (let p = trendPeriodOf(list[0].d, mode), guard = 0; guard < 200; p = trendPeriodNext(p, mode), guard++) {
+      const rg = trendPeriodRange(p, mode), end = p === cur ? today : rg.end;
+      const row = { p, grooming: 0, suspension: 0, timeOut: 0, pm: 0, done: p !== cur, weeks: schoolDaysBetween(rg.start, end) / 5 };
+      list.forEach((e) => { if (e.d >= rg.start && e.d <= rg.end) row[e.kind]++; });
+      row.points = row.grooming + row.timeOut * 2 + row.suspension * 3;
+      periods.push(row);
+      if (p === cur) break;
+    }
+    // The period still running only counts once at least half of it is done.
+    const curRow = periods[periods.length - 1];
+    if (curRow && !curRow.done) { const rg = trendPeriodRange(curRow.p, mode); const full = schoolDaysBetween(rg.start, rg.end) / 5; curRow.half = full > 0 && curRow.weeks >= full / 2; }
+    const scored = periods.filter((r) => r.weeks >= 2 && (r.done || r.half));
+    if (scored.length < 2) return;
+    const S = TREND_STD_WEEKS[mode];
+    scored.forEach((r) => { r.s = (r.points / r.weeks) * S; });
+    const n = scored.length, L = scored[n - 1], prior = scored.slice(0, -1);
+    const W = { month: "month", term: "term", sem: "semester", year: "year" }[mode];
+    const Lname = trendPeriodLabel(L.p, mode) + (L.done ? "" : " so far");
+    const avg = prior.reduce((a, r) => a + r.s, 0) / prior.length;
+    let support = null, improving = null;
+    // High Risk two semesters in a row (this semester and the one before).
+    const semTier = (y, half) => {
+      const rg = trendPeriodRange(`${y}-S${half}`, "sem");
+      const c = { suspension: 0, timeOut: 0, second: 0, third: 0 };
+      list.forEach((e) => {
+        if (e.d < rg.start || e.d > rg.end) return;
+        if (e.kind === "suspension") c.suspension++;
+        else if (e.kind === "timeOut") c.timeOut++;
+        else if (e.kind === "grooming" && Array.isArray(e.r.issues)) { const st = groomingEntryMaxStage(e.r); if (st >= 3) c.third++; else if (st >= 2) c.second++; }
+      });
+      return riskTierOf(c);
+    };
+    const curSem = trendPeriodOf(today, "sem"), cy = +curSem.slice(0, 4), ch = +curSem.slice(-1);
+    const prevSem = ch === 2 ? [cy, 1] : [cy - 1, 2];
+    if (semTier(cy, ch) === "high" && semTier(prevSem[0], prevSem[1]) === "high") support = "High Risk two semesters in a row";
+    else if (n >= 3 && L.points >= 2 && scored[n - 3].s + 1 <= scored[n - 2].s && scored[n - 2].s + 1 <= L.s) support = `Up two ${W}s in a row`;
+    else if (L.suspension > 0 && !periods.slice(0, periods.indexOf(L)).some((r) => r.suspension || r.timeOut) && periods.slice(0, periods.indexOf(L)).some((r) => r.grooming)) support = "First suspension after grooming entries";
+    else if (L.points >= 2 && L.s >= avg * 1.5 && L.s - avg >= 2) support = `More entries in ${Lname} than in earlier ${W}s`;
+    if (!support) {
+      const lastDone = [...periods].reverse().find((r) => r.done);
+      const recent = scored.slice(-3).some((r) => r.points > 0);
+      if (n >= 3 && scored[n - 3].s >= 2 && scored[n - 3].s >= scored[n - 2].s + 1 && scored[n - 2].s >= L.s + 1) improving = `Down two ${W}s in a row`;
+      else if (recent && avg > 0 && L.s <= avg / 2 && avg - L.s >= 2) improving = `Fewer entries in ${Lname} than in earlier ${W}s`;
+      else if (lastDone) {
+        const i = periods.indexOf(lastDone), before = periods[i - 1], curP = periods[periods.length - 1];
+        if (lastDone.points === 0 && (curP === lastDone || curP.points === 0) && before && before.points >= 2) improving = `No entries in ${trendPeriodLabel(lastDone.p, mode)}`;
+      }
+    }
+    if (!support && !improving) return;
+    const row = { key, name: latest.r.studentName, cls: latest.r.studentClass || "", year: latest.d.slice(0, 4), periods, reason: support || improving };
+    (support ? out.support : out.improving).push(row);
+  });
+  const sortFn = (a, b) => a.name.localeCompare(b.name);
+  out.support.sort(sortFn); out.improving.sort(sortFn);
+  return out;
+}
+function renderTrendRows(periods, mode) {
+  const rows = [];
+  let gap = [];
+  const flushGap = () => {
+    if (!gap.length) return;
+    if (mode !== "month") rows.push(`<tr><th>${gap.length === 1 ? trendPeriodLabel(gap[0].p, mode) : `${trendPeriodLabel(gap[0].p, mode)} – ${trendPeriodLabel(gap[gap.length - 1].p, mode)}`}</th><td colspan="4" class="dd-rt-zero">No entries recorded</td></tr>`);
+    gap = [];
+  };
+  periods.forEach((r) => {
+    if (!(r.grooming + r.suspension + r.timeOut + r.pm)) { gap.push(r); return; }
+    flushGap();
+    const td = (v) => `<td${v ? "" : ' class="dd-rt-zero"'}>${v}</td>`;
+    rows.push(`<tr><th>${trendPeriodLabel(r.p, mode)}</th>${td(r.grooming)}${td(r.suspension)}${td(r.timeOut)}${td(r.pm)}</tr>`);
+  });
+  flushGap();
+  return rows.join("");
+}
+function renderBehaviourTrends() {
+  const mode = state.trendMode || "term";
+  const t = computeBehaviourTrends(mode);
+  const tab = state.trendTab || "support";
+  const list = tab === "improving" ? t.improving : t.support;
+  const open = state.trendOpen || {};
+  return `
+    <div class="dd-panel" style="margin-bottom:16px">
+      <div class="dd-dash-title dd-trend-head" style="color:#1B2A41">
+        <span>Behavioural Trends</span>
+        <label class="dd-trend-cmp"><span>Comparing:</span>
+          <select class="dd-watch-period" id="trend-mode" aria-label="Comparing">${TREND_MODES.map(([k, l]) => `<option value="${k}" ${mode === k ? "selected" : ""}>${window.innerWidth < 400 ? l.replace("By ", "") : l}</option>`).join("")}</select>
+        </label>
+      </div>
+      <div class="dd-range-pills" style="flex-wrap:nowrap;margin-top:10px">
+        <button type="button" class="dd-range-pill${tab === "improving" ? " active" : ""}" style="flex:1" data-action="set-trend-tab" data-tab="improving">Improving (${t.improving.length})</button>
+        <button type="button" class="dd-range-pill${tab === "support" ? " active" : ""}" style="flex:1" data-action="set-trend-tab" data-tab="support">Needs Support (${t.support.length})</button>
+      </div>
+      ${list.length === 0 ? `<div class="dd-dash-empty" style="margin-top:10px">No students here.</div>` : `
+      <div class="dd-settings-menu-group dd-trend-list">
+        ${list.map((r) => `
+        <div class="dd-student-year">
+          <button type="button" class="dd-settings-menu-row dd-trend-row" data-action="toggle-trend-row" data-key="${escapeHtml(r.key)}" aria-expanded="${!!open[r.key]}">
+            <span class="dd-trend-who"><span class="dd-trend-name">${escapeHtml(truncateName(r.name))}</span>${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(r.cls)}</span>` : ""} <span class="dd-watch-move" title="${escapeHtml(r.reason)}">${tab === "improving" ? ICON_BETTER : ICON_WORSE}</span><span class="dd-trend-why">${escapeHtml(r.reason)}</span></span>
+            <span class="dd-settings-chevron">${open[r.key] ? "⌄" : "›"}</span>
+          </button>
+          ${open[r.key] ? `
+          <div class="dd-trend-body">
+            <table class="dd-rt dd-rt-reasons dd-trend-table">
+              <thead><tr><th>${mode === "month" ? "Month" : mode === "term" ? "Term" : mode === "sem" ? "Semester" : "Year"}</th><th style="color:${CHART_COLORS.discipline}">Grooming</th><th style="color:${CHART_COLORS.suspension}">Suspension</th><th style="color:${CHART_COLORS.timeOut}">Time Out</th><th style="color:${CHART_COLORS.parentMeeting}">Parent Meet</th></tr></thead>
+              <tbody>${renderTrendRows(r.periods, mode)}</tbody>
+            </table>
+            <button type="button" class="dd-back-link dd-trend-open" data-action="view-student" data-name="${escapeHtml(r.name)}" data-class="${escapeHtml(r.cls)}" data-year="${r.year}">Open student ›</button>
+          </div>` : ""}
+        </div>`).join("")}
+      </div>`}
+    </div>`;
+}
+const ICON_WORSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#C62828"/><rect x="10.6" y="5" width="2.8" height="9.5" rx="1.4" fill="#FFD43B"/><circle cx="12" cy="18" r="1.7" fill="#FFD43B"/></svg>`;
+const ICON_BETTER = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#2E7D32"/><path transform="translate(-0.72 -0.03)" d="M7.2 11h2.3v6.6H7.2zM10.4 17.6V11.2l2.5-4.6c.3-.6 1.2-.6 1.5.1.2.4.2.9.1 1.3l-.7 2.5h3.1c.9 0 1.5.8 1.3 1.7l-1 4.3c-.2.8-.9 1.4-1.7 1.4z" fill="#fff"/></svg>`;
 function renderDashboardSection() {
   const activeIncidents = state.incidents.filter((i) => !i.deleted);
   const activeSusp = state.suspensions.filter((s) => !s.deleted);
@@ -7549,53 +7767,11 @@ function renderDashboardSection() {
     if (run((a, b) => Math.max(a, b) >= 2 || Math.min(a, b) >= 1) >= 2) return "medium";
     return "low";
   };
-  // Movement since the previous period: Semester 1 is compared with last
-  // year's Semester 2, Semester 2 with this year's Semester 1, and Whole
-  // Year with last year. Across years only along a confirmed "same
-  // student" answer (no answer yet, no arrow). Not shown for Till Date.
-  const baseKey = (name, cls, date) => {
-    const y = parseInt(String(date).slice(0, 4), 10);
-    const grp = cls ? sameYearGroup(y, name, cls) : [""];
-    return `${y}|${normalizeName(name)}|${normCls(grp[0])}`;
-  };
-  const prevWin = tillDate ? null : (() => {
-    if (watchPeriod === "sem2") return { start: moeNow.terms[0].start, end: moeNow.terms[1].end, label: `Semester 1 ${thisYear}`, sameYear: true };
-    const m = computeMoeCalendar(thisYear - 1);
-    if (watchPeriod === "sem1") return { start: m.terms[2].start, end: m.terms[3].end, label: `Semester 2 ${thisYear - 1}` };
-    return { start: `${thisYear - 1}-01-01`, end: `${thisYear - 1}-12-31`, label: String(thisYear - 1) };
-  })();
-  const prevCounts = {};
-  if (prevWin) {
-    const add = (name, cls, date, field) => {
-      if (!date || date < prevWin.start || date > prevWin.end) return;
-      const k = baseKey(name, cls, date);
-      (prevCounts[k] = prevCounts[k] || { suspension: 0, timeOut: 0, second: 0, third: 0 })[field]++;
-    };
-    activeIncidents.forEach((i) => {
-      const st = Array.isArray(i.issues) ? groomingEntryMaxStage(i) : 0;
-      if (st >= 3) add(i.studentName, i.studentClass, i.date, "third"); else if (st >= 2) add(i.studentName, i.studentClass, i.date, "second");
-    });
-    activeSusp.forEach((x) => add(x.studentName, x.studentClass, x.startDate, "suspension"));
-    activeTo.forEach((x) => add(x.studentName, x.studentClass, x.startDate, "timeOut"));
-  }
-  const TIER_LABEL = { high: "High Risk", medium: "Medium Risk", low: "Low Risk" };
-  const movementFor = (key, tier) => {
-    if (!prevWin || !tier) return null;
-    let pk = null;
-    if (prevWin.sameYear) pk = key;
-    else {
-      const name = watchName[key] || "", cls = watchClass[key] || "";
-      const d = cls ? linkDecision(thisYear, name, cls) : null;
-      if (d && d.decision === "linked" && d.toYear && d.toClass) pk = d.toYear === thisYear - 1 ? baseKey(name, d.toClass, `${d.toYear}-01-01`) : "";
-      else if (d && d.decision === "new") pk = "";
-      else if (cls && !linkCandidates(thisYear, name, cls)) pk = "";
-      else return null; // not answered yet: can't tell
-    }
-    const pc = pk ? prevCounts[pk] : null;
-    const prevTier = pc ? (watchPeriod === "year" ? riskTierForAvg(pc) : riskTierFor(pc)) : null;
-    const a = RANK[tier] || 0, b = RANK[prevTier] || 0;
-    if (a === b) return null;
-    return { dir: a > b ? "up" : "down", title: `${a > b ? "Up" : "Down"} from ${prevTier ? TIER_LABEL[prevTier] : "no entries"} in ${prevWin.label}` };
+  // Recent direction (last 4 school weeks against the 4 before).
+  const recentEntries = trendEntries();
+  const movementFor = (key) => {
+    const name = watchName[key] || "", cls = watchClass[key] || "";
+    return recentDirection(recentEntries, chainKeyFor(name, cls, watchDate[key] || todayISO()));
   };
   const watchTier = state.watchTier || "high";
   // Till Date leaves out students who have left (past P6 by now).
@@ -7609,7 +7785,7 @@ function renderDashboardSection() {
     .filter(([key]) => stillInSchool(key))
     .map(([key, c]) => ({ key, name: watchName[key] || key, studentClass: watchClass[key] || "", ...c, tier: tillDate ? riskTierTillDate(key) : watchPeriod === "year" ? riskTierForAvg(c) : riskTierFor(c) }))
     .filter((t) => t.tier === watchTier)
-    .map((t) => ({ ...t, move: movementFor(t.key, t.tier) }));
+    .map((t) => ({ ...t, move: movementFor(t.key) }));
   watchlist = watchlist.sort((a, b) => b.suspension - a.suspension || b.third - a.third || b.second - a.second);
 
   return `
@@ -7626,6 +7802,8 @@ function renderDashboardSection() {
         ${renderNewEntryRow()}
 
         ${renderGroomingFollowUpList()}
+
+        ${renderBehaviourTrends()}
 
         ${renderPendingPmDates()}
 
@@ -7653,7 +7831,7 @@ function renderDashboardSection() {
             ${RISK_TIER_CRITERIA.map((t) => `
             <div class="dd-risk-info-tier">${t.tier}</div>
             <ul class="dd-risk-info-list">${t.criteria.map((c) => `<li>${c}</li>`).join("")}</ul>`).join("")}
-            <div class="dd-risk-info-note" style="margin-top:8px"><span class="dd-watch-up" style="font-weight:700">↑</span> / <span class="dd-watch-down" style="font-weight:700">↓</span> = a higher / lower tier than in ${prevWin.label}.</div>`}
+            <div class="dd-risk-info-note" style="margin-top:8px"><span class="dd-watch-move">${ICON_WORSE}</span> worsening / <span class="dd-watch-move">${ICON_BETTER}</span> improving: the last 4 school weeks compared with the 4 before, or a move up a risk level in the last 4 school weeks.</div>`}
           </div>` : ""}
           <div class="dd-range-pills" style="flex-wrap:nowrap">
             <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>
@@ -7670,7 +7848,7 @@ function renderDashboardSection() {
               if (t.second > 0) stats.push(`${t.second} 2nd warning${t.second === 1 ? "" : "s"}`);
               return `
               <div style="border-bottom:1px solid #E4E1D4;padding-bottom:8px">
-                <div class="dd-sans" style="font-size:14px"><span class="dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}" data-year="${new Date().getFullYear()}">${escapeHtml(truncateName(t.name))}</span>${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}${t.move ? ` <span class="dd-watch-move dd-watch-${t.move.dir}" title="${escapeHtml(t.move.title)}" aria-label="${escapeHtml(t.move.title)}">${t.move.dir === "up" ? "↑" : "↓"}</span>` : ""}</div>
+                <div class="dd-sans" style="font-size:14px"><span class="dd-card-student-link" data-action="view-student" data-name="${escapeHtml(t.name)}" data-class="${escapeHtml(t.studentClass || "")}" data-year="${new Date().getFullYear()}">${escapeHtml(truncateName(t.name))}</span>${t.studentClass ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(t.studentClass)}</span>` : ""}${t.move ? ` <span class="dd-watch-move" title="${escapeHtml(t.move.title)}" aria-label="${escapeHtml(t.move.title)}">${t.move.dir === "up" ? ICON_WORSE : ICON_BETTER}</span>` : ""}</div>
                 ${stats.map((s) => `<div class="dd-mono-muted" style="font-size:12px;margin-top:2px">${s}</div>`).join("")}
               </div>`;
             }).join("")}
@@ -9732,6 +9910,12 @@ function attachMainListeners() {
       state[`${el.dataset.page}SelectedClass`] = null;
       renderKeepingPageScroll();
     }));
+  const trendSel = document.getElementById("trend-mode");
+  if (trendSel) trendSel.addEventListener("change", () => { state.trendMode = trendSel.value; state.trendOpen = {}; renderKeepingPageScroll(); });
+  document.querySelectorAll('[data-action="set-trend-tab"]').forEach((el) =>
+    el.addEventListener("click", () => { state.trendTab = el.dataset.tab; renderKeepingPageScroll(); }));
+  document.querySelectorAll('[data-action="toggle-trend-row"]').forEach((el) =>
+    el.addEventListener("click", () => { const k = el.dataset.key; state.trendOpen = { ...(state.trendOpen || {}), [k]: !(state.trendOpen || {})[k] }; renderKeepingPageScroll(); }));
   const watchPeriodSel = document.getElementById("watch-period");
   if (watchPeriodSel) watchPeriodSel.addEventListener("change", () => { state.watchPeriod = watchPeriodSel.value; render(); });
   document.querySelectorAll('[data-action="select-class-pill"]').forEach((el) =>
