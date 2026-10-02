@@ -195,8 +195,9 @@ Pills: Day / Week / Month / Year, then Term 1–4 / All / Custom.
 
 ## Students' Watchlist
 
-This semester's records only: Terms 1–2 until Term 3 starts (so through
-the June holidays), then Terms 3–4. Grooming entries count
+This semester's records only: 1 Jan to the end of Term 2, then from the
+June holidays to 31 Dec (an entry in a school holiday belongs to the term
+after it). Grooming entries count
 once each, at the highest warning any of their issues reached. A student
 needs to meet just **one** criterion in a tier and is shown in the highest
 tier they qualify for.
@@ -215,7 +216,9 @@ grooming 1, time out 2, suspension 3; the last 4 school weeks are compared
 with the 4 school weeks before. ! if the score rose by 2+ and by 50%+, or
 the student moved up a risk level this semester within the last 4 school
 weeks (from Low or above). Thumbs up if the earlier 4 weeks had entries
-and the last 4 have none or half as much. Hovering says why.
+and the last 4 have none or half as much. A single entry in those 8 school
+weeks (e.g. one time out or one suspension) is a one-off: no symbol.
+Hovering says why.
 
 ## Behavioural Trend (student profile)
 
@@ -224,26 +227,13 @@ At the bottom of each student's profile (`renderStudentTrend()` /
 Semester / By Year on the title line (phones under 400px show Month / Term
 / Semester / Year). A table lists Grooming, Suspension, Time Out and Parent
 Meet per period from the student's first entry (oldest first, 0s greyed).
-By Month leaves out empty months; the others merge a run of empty periods
-into one "No entries recorded" row. Years join only through confirmed
+A run of empty periods becomes one "No entries recorded" row with a short
+one-line label (T2-T3 2026, Mar-Jul 2026, Sem 1-2 2026, 2024-2025; the
+run crossing into a new year is split at the year); labels always stay on
+one line. Years join only through confirmed
 "same student" answers; for students past P6 the table stops at their last
-entry and no status is shown. Above the table, only when it applies: the
-red ! "Needs Support" or thumbs-up "Improving" with a one-line reason.
-Otherwise there's no indication.
-
-Scoring: grooming 1, time out 2, suspension 3, parent meetings shown but
-not counted; per school week, scaled to a standard period (month 4, term
-10, semester 20, year 40 weeks). Periods with under 2 school weeks aren't
-scored; the period still running counts once half of it has passed.
-- **Needs Support** (checked first): High Risk this semester and the one
-  before; up two periods in a row (by 1+ each, latest 2+ points); latest
-  1.5× the earlier average and 2+ higher (latest 2+ points); first
-  suspension after only grooming entries.
-- **Improving** (only with entries in at least two earlier periods, so a
-  one-off entry followed by nothing doesn't count): down two periods in a row (from 2+); latest at most half
-  the earlier average and 2+ lower (with entries in the last 3 periods);
-  no entries in the last full period (or since) right after a period with
-  2+ points.
+entry. The table only lists the numbers; there's no improving / needs
+support analysis (that's left to the Watchlist symbols).
 
 ## Start of Year
 
@@ -259,7 +249,7 @@ what's outstanding (`computeStartOfYear()`):
    asked when their first entry of the year is saved; this catches any
    left over.
 3. **Left school**: last year's P6 students with entries, for information
-   (they drop off the Till Date Watchlist; records stay).
+   (records stay).
 
 Through Term 1 (or whenever the year's classes aren't set up at all) admins
 see a blue bar on the dashboard, "Start of YYYY: N things to sort out",
@@ -406,9 +396,10 @@ year opens its three summaries: **YYYY Semester 1 Report Summary**,
 **YYYY Semester 2 Report Summary** and **YYYY Annual Report Summary**
 (`renderReportYearList()`).
 
-- Semester 1 = 1 Jan to the day before Term 3 starts (June holidays
-  included); Semester 2 = Term 3 to 31 Dec (September and year-end
-  holidays included). A semester summary is the same eight sections
+- Semester 1 = 1 Jan to the last day of Term 2; Semester 2 = the June
+  holidays to 31 Dec. Entries logged in a school holiday belong to the term
+  after it, since that's when they're dealt with (the year-end holiday stays
+  with Term 4). A semester summary is the same eight sections
   counted over that semester: its two terms, its months, and "compared
   with" the same semester a year earlier (`withReportPeriod()` narrows the
   logs while the report, its PDF, Print and Excel are built; the wording
@@ -475,7 +466,9 @@ Eight sections, each starting on a new sheet when printed or exported
 (in-school and out-of-school together).
 
 1. **Annual Summary** tiles · **By Term** table (Groom, Susp, Time Out by
-   type, Meet, Total — the total includes parent meetings) · **By Weeks in a
+   type, Meet, Total — the total includes parent meetings; entries logged in a
+   school holiday count towards the term after it (year-end: Term 4), so the table adds up
+   to the tiles) · **By Weeks in a
    Term**: four small line graphs (Term 1–4, W1–W10, same scale), 4 lines —
    Grooming, Suspension, Time Out, Parent Meet — with one shared legend.
 2. **Discipline Load by Month**: stacked vertical bars (Grooming /
@@ -641,17 +634,8 @@ Parent Meetings chart has none). Print and PDF drop squeezed letter
 spacing, which drew some words with odd gaps.
 
 Students' Watchlist period: a dropdown at the right of the title picks
-Semester 1, Semester 2, Whole Year (this year) or Till Date (every year a
-student has been in school). It opens on the current semester. Whole Year
-halves the year's totals (average per semester) and places them with the
-semester limits (any entry at all is at least Low). Till Date joins a
-student's years only where they've been confirmed as the same student
-(student view / Student Links) and leaves out students who have left
-school (past P6); each semester of each year gets its own tier, then,
-counting back from the student's latest year for at least 2 years in a
-row: High = a High semester every year, or Medium+ in both semesters;
-Medium = a Medium+ semester every year, or Low+ in both semesters;
-everyone else with entries is Low. A student with only one year on record
-is placed as in Whole Year, so Till Date matches Whole Year until a second
-year of data exists. The ⓘ box shows these rules in the Till
-Date view.
+Semester 1, Semester 2 or Whole Year (this year). It opens on the current
+semester. Whole Year halves the year's totals (average per semester) and
+places them with the semester limits (any entry at all is at least Low).
+The period only breaks the year down; the symbols beside names always
+cover the last 8 school weeks.

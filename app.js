@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.61.0";
+const APP_VERSION = "3.62.3";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4486,10 +4486,14 @@ function reportKind() { return RP ? RP.kind : "year"; }
 function reportAll() { return (RP && RP.all) || state; }
 function inReportWindow(d, year) { const w = reportWindowFor(year, reportKind()); return !!d && d >= w.start && d <= w.end; }
 function isSemReport() { return reportKind() !== "year"; }
+// Entries logged in a school holiday belong to the term after it (they're
+// dealt with when school restarts), so Semester 1 ends on the last day of
+// Term 2 and the June holiday is part of Semester 2. The December holiday
+// has no term after it in the year, so it stays with Term 4.
 function reportWindowFor(year, kind) {
   if (kind === "sem1" || kind === "sem2") {
-    const t3 = computeMoeCalendar(year).terms[2].start;
-    return kind === "sem1" ? { start: `${year}-01-01`, end: addDays(t3, -1) } : { start: t3, end: `${year}-12-31` };
+    const t2End = computeMoeCalendar(year).terms[1].end;
+    return kind === "sem1" ? { start: `${year}-01-01`, end: t2End } : { start: addDays(t2End, 1), end: `${year}-12-31` };
   }
   return { start: `${year}-01-01`, end: `${year}-12-31` };
 }
@@ -4514,7 +4518,10 @@ function reportTermsFor(year) {
 function reportMonthNums(year) {
   if (!isSemReport()) return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
   const w = reportWindowFor(year, reportKind());
-  const a = parseInt(w.start.slice(5, 7), 10), b = parseInt(w.end.slice(5, 7), 10);
+  // Semester 2 starts in the June holiday; its months start with the month it
+  // mostly covers (a window starting in the last days of May starts at June).
+  const startM = reportKind() === "sem2" && w.start.slice(8) > "25" ? addDays(w.start, 10) : w.start;
+  const a = parseInt(startM.slice(5, 7), 10), b = parseInt(w.end.slice(5, 7), 10);
   return Array.from({ length: b - a + 1 }, (_, i) => a + i);
 }
 function withReportPeriod(year, kind, fn) {
@@ -4614,16 +4621,23 @@ function computeYearMonthlyTrend(year) {
   state.parentMeetings.forEach((m) => { if (!isPmCounted(m)) return; const k = monthKey(pmDate(m)); if (counts[k]) counts[k].parentMeeting++; });
   return keys.map((k) => ({ label: monthLabelFromKey(k), ...counts[k] }));
 }
+// Entries logged in a school holiday count towards the term after it (the
+// December holiday stays with Term 4), so the term totals add up to the
+// report's totals.
 function computeYearTermTrend(year) {
-  return reportTermsFor(year).map((t) => {
-    const termTimeOuts = state.timeOuts.filter((x) => !x.deleted && x.startDate >= t.start && x.startDate <= t.end);
+  const terms = reportTermsFor(year), win = reportWindowFor(year, reportKind());
+  return terms.map((t, i) => {
+    const from = i === 0 ? win.start : addDays(terms[i - 1].end, 1);
+    const to = i === terms.length - 1 ? win.end : t.end;
+    const inT = (d) => !!d && d >= from && d <= to;
+    const termTimeOuts = state.timeOuts.filter((x) => !x.deleted && inT(x.startDate));
     return {
       label: t.label, start: t.start, end: t.end,
-      discipline: state.incidents.filter((i) => !i.deleted && i.date >= t.start && i.date <= t.end).length,
-      suspension: state.suspensions.filter((s) => !s.deleted && s.startDate >= t.start && s.startDate <= t.end).length,
+      discipline: state.incidents.filter((i) => !i.deleted && inT(i.date)).length,
+      suspension: state.suspensions.filter((s) => !s.deleted && inT(s.startDate)).length,
       timeOut: termTimeOuts.length,
       timeOutByType: timeOutTypeBreakdown(termTimeOuts),
-      parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && pmDate(m) >= t.start && pmDate(m) <= t.end).length,
+      parentMeeting: state.parentMeetings.filter((m) => isPmCounted(m) && inT(pmDate(m))).length,
     };
   });
 }
@@ -6112,12 +6126,12 @@ function renderStartOfYear() {
         <div class="dd-soy-btns"><button type="button" class="dd-add-btn" data-action="settings-open-classes">Set up classes</button></div>`;
   const qInner = r.questions.length === 0
     ? `<div class="dd-mono-muted" style="font-size:13px">Nothing to answer. Every student with entries in ${year} whose name matches an earlier record has been answered.</div>`
-    : `<div class="dd-soy-text">Returning students are asked about when their first entry of the year is saved. These are still unanswered. Answering joins their years together (used by Till Date and the student view).</div>
+    : `<div class="dd-soy-text">Returning students are asked about when their first entry of the year is saved. These are still unanswered. Answering joins their years together (used by the student view and its Behavioural Trend).</div>
        ${r.questions.map((q, i) => `<div class="dd-link-q-card dd-soy-q">${renderLinkQuestion(q, `soy${i}`)}</div>`).join("")}`;
   const leftOpen = !!state.soyLeftOpen;
   const leftInner = r.left.length === 0
     ? `<div class="dd-mono-muted" style="font-size:13px">No P6 students had entries in ${year - 1}.</div>`
-    : `<div class="dd-soy-text">${r.left.length} P6 student${r.left.length === 1 ? "" : "s"} from ${year - 1} had entries. They've left, so they no longer show on the Till Date Watchlist. Their records stay in the logs and past Annual Summaries. Nothing to do here.</div>
+    : `<div class="dd-soy-text">${r.left.length} P6 student${r.left.length === 1 ? "" : "s"} from ${year - 1} had entries. They've left. Their records stay in the logs and past Annual Summaries. Nothing to do here.</div>
        <button type="button" class="dd-back-link" data-action="soy-toggle-left" style="display:inline;text-decoration:underline">${leftOpen ? "Hide list" : "Show list"}</button>
        ${leftOpen ? `<div class="dd-soy-left">${r.left.map((x) => `
          <button type="button" class="dd-dc-row" data-action="view-student" data-name="${escapeHtml(x.name)}" data-class="${escapeHtml(x.cls)}" data-year="${year - 1}" data-open-year="1">
@@ -7467,11 +7481,13 @@ function recentDirection(entries, key) {
   const days = recentSchoolDays(40);
   if (days.length < 40) return null;
   const recStart = days[19], prevStart = days[39], prevEnd = addDays(recStart, -1), today = todayISO();
-  let rec = 0, prev = 0;
-  entries.forEach((e) => { if (e.key !== key) return; const w = TREND_WEIGHT[e.kind]; if (e.d >= recStart && e.d <= today) rec += w; else if (e.d >= prevStart && e.d <= prevEnd) prev += w; });
+  let rec = 0, prev = 0, count = 0;
+  entries.forEach((e) => { if (e.key !== key || e.kind === "pm") return; const w = TREND_WEIGHT[e.kind]; if (e.d >= recStart && e.d <= today) { rec += w; count++; } else if (e.d >= prevStart && e.d <= prevEnd) { prev += w; count++; } });
+  // A single entry in those 8 school weeks is a one-off, not a trend.
+  if (count < 2) return null;
   // Risk level now vs 4 school weeks ago, within this semester.
-  const y = parseInt(today.slice(0, 4), 10), t3 = computeMoeCalendar(y).terms[2].start;
-  const semStart = today < t3 ? `${y}-01-01` : t3;
+  const y = parseInt(today.slice(0, 4), 10), s2 = reportWindowFor(y, "sem2").start;
+  const semStart = today < s2 ? `${y}-01-01` : s2;
   const tierAt = (end) => {
     const c = { suspension: 0, timeOut: 0, second: 0, third: 0 };
     entries.forEach((e) => {
@@ -7491,7 +7507,6 @@ function recentDirection(entries, key) {
 }
 // Periods for Behavioural Trends.
 const TREND_MODES = [["month", "By Month"], ["term", "By Term"], ["sem", "By Semester"], ["year", "By Year"]];
-const TREND_STD_WEEKS = { month: 4, term: 10, sem: 20, year: 40 };
 function trendPeriodOf(d, mode) {
   const y = parseInt(d.slice(0, 4), 10);
   if (mode === "month") return `${d.slice(0, 7)}`;
@@ -7542,67 +7557,36 @@ function computeStudentTrend(key, mode) {
     periods.push(row);
     if (p === stop) break;
   }
-  const res = { periods, status: null, reason: "" };
-  if (left || !list.some((e) => e.kind !== "pm")) return res;
-  // The period still running only counts once at least half of it is done.
-  const curRow = periods[periods.length - 1];
-  if (curRow && !curRow.done) { const rg = trendPeriodRange(curRow.p, mode); const full = schoolDaysBetween(rg.start, rg.end) / 5; curRow.half = full > 0 && curRow.weeks >= full / 2; }
-  const scored = periods.filter((r) => r.weeks >= 2 && (r.done || r.half));
-  if (scored.length < 2) return res;
-  const S = TREND_STD_WEEKS[mode];
-  scored.forEach((r) => { r.s = (r.points / r.weeks) * S; });
-  const n = scored.length, L = scored[n - 1], prior = scored.slice(0, -1);
-  const W = { month: "month", term: "term", sem: "semester", year: "year" }[mode];
-  const Lname = trendPeriodLabel(L.p, mode) + (L.done ? "" : " so far");
-  const avg = prior.reduce((a, r) => a + r.s, 0) / prior.length;
-  const semTier = (y, half) => {
-    const rg = trendPeriodRange(`${y}-S${half}`, "sem");
-    const c = { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    list.forEach((e) => {
-      if (e.d < rg.start || e.d > rg.end) return;
-      if (e.kind === "suspension") c.suspension++;
-      else if (e.kind === "timeOut") c.timeOut++;
-      else if (e.kind === "grooming" && Array.isArray(e.r.issues)) { const st = groomingEntryMaxStage(e.r); if (st >= 3) c.third++; else if (st >= 2) c.second++; }
-    });
-    return riskTierOf(c);
-  };
-  const curSem = trendPeriodOf(today, "sem"), cy = +curSem.slice(0, 4), ch = +curSem.slice(-1);
-  const prevSem = ch === 2 ? [cy, 1] : [cy - 1, 2];
-  const beforeL = periods.slice(0, periods.indexOf(L));
-  let support = null, improving = null;
-  if (semTier(cy, ch) === "high" && semTier(prevSem[0], prevSem[1]) === "high") support = "High Risk two semesters in a row";
-  else if (n >= 3 && L.points >= 2 && scored[n - 3].s + 1 <= scored[n - 2].s && scored[n - 2].s + 1 <= L.s) support = `Up two ${W}s in a row`;
-  else if (L.suspension > 0 && !beforeL.some((r) => r.suspension || r.timeOut) && beforeL.some((r) => r.grooming)) support = "First suspension after grooming entries";
-  else if (L.points >= 2 && L.s >= avg * 1.5 && L.s - avg >= 2) support = `More entries in ${Lname} than in earlier ${W}s`;
-  // Improving needs an earlier pattern (entries in at least two earlier
-  // periods), so a one-off entry followed by nothing isn't "improving".
-  if (!support && beforeL.filter((r) => r.points > 0).length >= 2) {
-    const lastDone = [...periods].reverse().find((r) => r.done);
-    const recent = scored.slice(-3).some((r) => r.points > 0);
-    if (n >= 3 && scored[n - 3].s >= 2 && scored[n - 3].s >= scored[n - 2].s + 1 && scored[n - 2].s >= L.s + 1) improving = `Down two ${W}s in a row`;
-    else if (recent && avg > 0 && L.s <= avg / 2 && avg - L.s >= 2) improving = `Fewer entries in ${Lname} than in earlier ${W}s`;
-    else if (lastDone) {
-      const i = periods.indexOf(lastDone), before = periods[i - 1], curP = periods[periods.length - 1];
-      if (lastDone.points === 0 && (curP === lastDone || curP.points === 0) && before && before.points >= 2) improving = `No entries in ${trendPeriodLabel(lastDone.p, mode)}`;
-    }
-  }
-  res.status = support ? "support" : improving ? "improving" : null;
-  res.reason = support || improving || "";
-  return res;
+  return { periods };
+}
+// A run of periods as one short label: "T2-T3 2026", "Mar-Jul 2026",
+// "Sem 1-2 2026", "2024-2025" (the year is repeated only across years).
+function trendRangeLabel(a, b, mode) {
+  if (a === b) return trendPeriodLabel(a, mode);
+  if (mode === "year") return `${a}-${b}`;
+  const ya = a.slice(0, 4), yb = b.slice(0, 4);
+  if (ya !== yb) return `${trendPeriodLabel(a, mode)}-${trendPeriodLabel(b, mode)}`;
+  const short = (p) => (mode === "month" ? MONTH_ABBR[+p.slice(5, 7) - 1] : mode === "sem" ? p.slice(-1) : `T${p.slice(-1)}`);
+  return mode === "sem" ? `Sem ${short(a)}-${short(b)} ${ya}` : `${short(a)}-${short(b)} ${ya}`;
 }
 function renderTrendRows(periods, mode) {
   const rows = [];
   let gap = [];
+  const th = (label) => `<th><span class="dd-trend-period" data-fit="">${label}</span></th>`;
+  // A run of empty periods that crosses into a new year is split at the
+  // year, so every label stays short ("T2-T4 2025", "T1-T3 2026").
   const flushGap = () => {
     if (!gap.length) return;
-    if (mode !== "month") rows.push(`<tr><th>${gap.length === 1 ? trendPeriodLabel(gap[0].p, mode) : `${trendPeriodLabel(gap[0].p, mode)} –<br>${trendPeriodLabel(gap[gap.length - 1].p, mode)}`}</th><td colspan="4" class="dd-rt-zero">No entries recorded</td></tr>`);
+    const runs = [];
+    gap.forEach((r) => { const last = runs[runs.length - 1]; if (mode !== "year" && last && last[0].p.slice(0, 4) === r.p.slice(0, 4)) last.push(r); else if (mode === "year" && last) last.push(r); else runs.push([r]); });
+    runs.forEach((run) => rows.push(`<tr>${th(trendRangeLabel(run[0].p, run[run.length - 1].p, mode))}<td colspan="4" class="dd-rt-zero">No entries recorded</td></tr>`));
     gap = [];
   };
   periods.forEach((r) => {
     if (!(r.grooming + r.suspension + r.timeOut + r.pm)) { gap.push(r); return; }
     flushGap();
     const td = (v) => `<td${v ? "" : ' class="dd-rt-zero"'}>${v}</td>`;
-    rows.push(`<tr><th>${trendPeriodLabel(r.p, mode)}</th>${td(r.grooming)}${td(r.suspension)}${td(r.timeOut)}${td(r.pm)}</tr>`);
+    rows.push(`<tr>${th(trendPeriodLabel(r.p, mode))}${td(r.grooming)}${td(r.suspension)}${td(r.timeOut)}${td(r.pm)}</tr>`);
   });
   flushGap();
   return rows.join("");
@@ -7619,7 +7603,6 @@ function renderStudentTrend(key) {
             <select class="dd-watch-period" id="trend-mode" aria-label="Comparing">${TREND_MODES.map(([k, l]) => `<option value="${k}" ${mode === k ? "selected" : ""}>${window.innerWidth < 400 ? l.replace("By ", "") : l}</option>`).join("")}</select>
           </label>
         </div>
-        ${t.status ? `<div class="dd-trend-status"><span class="dd-watch-move">${t.status === "improving" ? ICON_BETTER : ICON_WORSE}</span><b>${t.status === "improving" ? "Improving" : "Needs Support"}</b> · ${escapeHtml(t.reason)}</div>` : ""}
         <table class="dd-rt dd-rt-reasons dd-trend-table">
           <thead><tr><th>${mode === "month" ? "Month" : mode === "term" ? "Term" : mode === "sem" ? "Semester" : "Year"}</th><th style="color:${CHART_COLORS.discipline}">Grooming</th><th style="color:${CHART_COLORS.suspension}">Suspension</th><th style="color:${CHART_COLORS.timeOut}">Time Out</th><th style="color:${CHART_COLORS.parentMeeting}">Parent Meet</th></tr></thead>
           <tbody>${renderTrendRows(t.periods, mode)}</tbody>
@@ -7633,17 +7616,12 @@ function renderDashboardSection() {
   const activeTo = state.timeOuts.filter((t) => !t.deleted);
   const activePm = state.parentMeetings.filter((m) => !m.deleted);
 
-  // Watchlist period (dropdown): Semester 1, Semester 2, Whole Year (this
-  // year), or Till Date (every year the student has been in school).
+  // Watchlist period (dropdown): Semester 1, Semester 2 or Whole Year (this year).
   const thisYear = new Date().getFullYear();
   const moeNow = computeMoeCalendar(thisYear);
-  const curSem = todayISO() < moeNow.terms[2].start ? "sem1" : "sem2";
-  const watchPeriod = state.watchPeriod || curSem;
-  const semester = watchPeriod === "sem1" ? { start: moeNow.terms[0].start, end: moeNow.terms[1].end }
-    : watchPeriod === "sem2" ? { start: moeNow.terms[2].start, end: moeNow.terms[3].end }
-    : watchPeriod === "year" ? { start: `${thisYear}-01-01`, end: `${thisYear}-12-31` }
-    : { start: "0000-00-00", end: "9999-12-31" };
-  const tillDate = watchPeriod === "all";
+  const curSem = todayISO() <= moeNow.terms[1].end ? "sem1" : "sem2";
+  const watchPeriod = ["sem1", "sem2", "year"].includes(state.watchPeriod) ? state.watchPeriod : curSem;
+  const semester = watchPeriod === "year" ? { start: `${thisYear}-01-01`, end: `${thisYear}-12-31` } : reportWindowFor(thisYear, watchPeriod);
   const watchCounts = {};
   const watchClass = {};
   const watchName = {};
@@ -7651,38 +7629,20 @@ function renderDashboardSection() {
   // is counted once, shown under their latest class.
   const watchDate = {};
   const watchKey = (name, cls, date) => {
-    let y = parseInt(String(date).slice(0, 4), 10);
-    let c = cls;
-    // Till Date: follow the confirmed "same student" links back to the
-    // earliest year, so one student's years count together.
-    if (tillDate && c) {
-      for (let hop = 0; hop < 12; hop++) {
-        const d = linkDecision(y, name, c);
-        if (!d || d.decision !== "linked" || !d.toYear || !d.toClass) break;
-        y = d.toYear; c = d.toClass;
-      }
-    }
+    const y = parseInt(String(date).slice(0, 4), 10);
+    const c = cls;
     const grp = c ? sameYearGroup(y, name, c) : [""];
     return `${y}|${normalizeName(name)}|${normCls(grp[0])}`;
   };
   const noteClass = (key, cls, date) => { if (cls && (!watchDate[key] || date >= watchDate[key])) { watchClass[key] = cls; watchDate[key] = date; } };
-  // Till Date: the same counts kept per school year and semester (Semester 1
-  // = up to the start of Term 3, Semester 2 = from Term 3).
-  const perSem = {};
-  const semOf = (date) => { const y = parseInt(String(date).slice(0, 4), 10); return `${y}|${date < computeMoeCalendar(y).terms[2].start ? 1 : 2}`; };
-  const bump = (key, date, field) => {
-    if (!tillDate) return;
-    const b = ((perSem[key] = perSem[key] || {})[semOf(date)] = perSem[key][semOf(date)] || { suspension: 0, timeOut: 0, second: 0, third: 0 });
-    b[field]++;
-  };
   activeIncidents.forEach((i) => {
     if (i.date < semester.start || i.date > semester.end) return;
     const isLegacy = !Array.isArray(i.issues);
     const maxStage = isLegacy ? 0 : groomingEntryMaxStage(i);
     const key = watchKey(i.studentName, i.studentClass, i.date);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    if (maxStage >= 3) { watchCounts[key].third++; bump(key, i.date, "third"); }
-    else if (maxStage >= 2) { watchCounts[key].second++; bump(key, i.date, "second"); }
+    if (maxStage >= 3) watchCounts[key].third++;
+    else if (maxStage >= 2) watchCounts[key].second++;
     noteClass(key, i.studentClass, i.date);
     watchName[key] = i.studentName || watchName[key];
   });
@@ -7690,7 +7650,7 @@ function renderDashboardSection() {
     if (s.startDate < semester.start || s.startDate > semester.end) return;
     const key = watchKey(s.studentName, s.studentClass, s.startDate);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    watchCounts[key].suspension++; bump(key, s.startDate, "suspension");
+    watchCounts[key].suspension++;
     noteClass(key, s.studentClass, s.startDate);
     watchName[key] = s.studentName || watchName[key];
   });
@@ -7700,7 +7660,7 @@ function renderDashboardSection() {
     if (t.startDate < semester.start || t.startDate > semester.end) return;
     const key = watchKey(t.studentName, t.studentClass, t.startDate);
     watchCounts[key] = watchCounts[key] || { suspension: 0, timeOut: 0, second: 0, third: 0 };
-    watchCounts[key].timeOut++; bump(key, t.startDate, "timeOut");
+    watchCounts[key].timeOut++;
     noteClass(key, t.studentClass, t.startDate);
     watchName[key] = t.studentName || watchName[key];
   });
@@ -7724,27 +7684,6 @@ function renderDashboardSection() {
     if (a.suspension > 0 || a.second > 0 || a.third > 0 || a.timeOut > 0) return "low";
     return null;
   };
-  // Till Date: each semester of each year gets its own tier. Counting back
-  // from the student's latest year, at least 2 years in a row where
-  //   High:   a High semester every year, or Medium (or higher) in both semesters;
-  //   Medium: a Medium (or higher) semester every year, or Low (or higher) in both.
-  // Anyone else with entries is Low.
-  const RANK = { high: 3, medium: 2, low: 1 };
-  const riskTierTillDate = (key) => {
-    const sems = perSem[key] || {};
-    const years = [...new Set(Object.keys(sems).map((k) => parseInt(k, 10)))];
-    if (!years.length) return null;
-    // Only one year on record: there's no "years in a row" to compare yet,
-    // so it's placed the same way as Whole Year (that year's totals averaged
-    // per semester).
-    if (years.length === 1) return riskTierForAvg(watchCounts[key]);
-    const last = Math.max(...years);
-    const rank = (y, n) => (sems[`${y}|${n}`] ? RANK[riskTierFor(sems[`${y}|${n}`])] || 0 : 0);
-    const run = (ok) => { let n = 0; for (let y = last; ok(rank(y, 1), rank(y, 2)); y--) n++; return n; };
-    if (run((a, b) => Math.max(a, b) >= 3 || Math.min(a, b) >= 2) >= 2) return "high";
-    if (run((a, b) => Math.max(a, b) >= 2 || Math.min(a, b) >= 1) >= 2) return "medium";
-    return "low";
-  };
   // Recent direction (last 4 school weeks against the 4 before).
   const recentEntries = trendEntries();
   const movementFor = (key) => {
@@ -7752,16 +7691,8 @@ function renderDashboardSection() {
     return recentDirection(recentEntries, chainKeyFor(name, cls, watchDate[key] || todayISO()));
   };
   const watchTier = state.watchTier || "high";
-  // Till Date leaves out students who have left (past P6 by now).
-  const stillInSchool = (key) => {
-    if (!tillDate) return true;
-    const lvl = classLevel(watchClass[key]);
-    if (lvl === 999) return true;
-    return lvl + (thisYear - parseInt(String(watchDate[key] || thisYear).slice(0, 4), 10)) <= 6;
-  };
   let watchlist = Object.entries(watchCounts)
-    .filter(([key]) => stillInSchool(key))
-    .map(([key, c]) => ({ key, name: watchName[key] || key, studentClass: watchClass[key] || "", ...c, tier: tillDate ? riskTierTillDate(key) : watchPeriod === "year" ? riskTierForAvg(c) : riskTierFor(c) }))
+    .map(([key, c]) => ({ key, name: watchName[key] || key, studentClass: watchClass[key] || "", ...c, tier: watchPeriod === "year" ? riskTierForAvg(c) : riskTierFor(c) }))
     .filter((t) => t.tier === watchTier)
     .map((t) => ({ ...t, move: movementFor(t.key) }));
   watchlist = watchlist.sort((a, b) => b.suspension - a.suspension || b.third - a.third || b.second - a.second);
@@ -7790,24 +7721,16 @@ function renderDashboardSection() {
             Students' Watchlist
             <button type="button" class="dd-info-icon-btn" data-action="toggle-watchlist-info" title="How risk is worked out">i</button>
             <select class="dd-watch-period" id="watch-period" aria-label="Watchlist period">
-              ${[["sem1", "Semester 1"], ["sem2", "Semester 2"], ["year", "Whole Year"], ["all", "Till Date"]].map(([k, l]) => `<option value="${k}" ${watchPeriod === k ? "selected" : ""}>${l}</option>`).join("")}
+              ${[["sem1", "Semester 1"], ["sem2", "Semester 2"], ["year", "Whole Year"]].map(([k, l]) => `<option value="${k}" ${watchPeriod === k ? "selected" : ""}>${l}</option>`).join("")}
             </select>
           </div>
           ${state.showWatchlistInfo ? `
           <div class="dd-risk-info">
-            ${tillDate ? `
-            <div class="dd-risk-info-note">Each semester of each year is placed in a tier first, using the semester limits. Counting back from the student's latest year, for at least 2 years in a row:</div>
-            <div class="dd-risk-info-tier">High Risk</div>
-            <ul class="dd-risk-info-list"><li>High Risk in at least one semester every year, or</li><li>Medium Risk (or higher) in both semesters every year</li></ul>
-            <div class="dd-risk-info-tier">Medium Risk</div>
-            <ul class="dd-risk-info-list"><li>Medium Risk (or higher) in at least one semester every year, or</li><li>Low Risk (or higher) in both semesters every year</li></ul>
-            <div class="dd-risk-info-tier">Low Risk</div>
-            <ul class="dd-risk-info-list"><li>Everyone else with at least one entry</li></ul>` : `
             <div class="dd-risk-info-note">Counted over the period chosen on the right. A student only needs to meet <b>any one</b> of the criteria in a tier (and/or) — and is shown in the highest tier they qualify for.</div>
             ${RISK_TIER_CRITERIA.map((t) => `
             <div class="dd-risk-info-tier">${t.tier}</div>
             <ul class="dd-risk-info-list">${t.criteria.map((c) => `<li>${c}</li>`).join("")}</ul>`).join("")}
-            <div class="dd-risk-info-note" style="margin-top:8px"><span class="dd-watch-move">${ICON_WORSE}</span> worsening / <span class="dd-watch-move">${ICON_BETTER}</span> improving: the last 4 school weeks compared with the 4 before, or a move up a risk level in the last 4 school weeks.</div>`}
+            <div class="dd-risk-info-note" style="margin-top:8px"><span class="dd-watch-move">${ICON_WORSE}</span> worsening / <span class="dd-watch-move">${ICON_BETTER}</span> improving: the last 4 school weeks compared with the 4 before, or a move up a risk level in the last 4 school weeks. The same whichever period is chosen. Not shown for a single entry.</div>
           </div>` : ""}
           <div class="dd-range-pills" style="flex-wrap:nowrap">
             <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>
