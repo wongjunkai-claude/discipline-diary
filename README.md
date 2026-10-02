@@ -217,18 +217,19 @@ the student moved up a risk level this semester within the last 4 school
 weeks (from Low or above). Thumbs up if the earlier 4 weeks had entries
 and the last 4 have none or half as much. Hovering says why.
 
-## Behavioural Trends
+## Behavioural Trend (student profile)
 
-On the dashboard between the Grooming Follow-Up List and Pending Parent
-Meeting Date (`renderBehaviourTrends()` / `computeBehaviourTrends()`).
-"Comparing:" By Month / By Term / By Semester / By Year (phones under
-400px show Month / Term / Semester / Year). Pills: Improving / Needs
-Support, each student a collapsible row (closes when the period changes)
-showing Grooming, Suspension, Time Out, Parent Meet per period from the
-student's first entry (oldest first, 0s greyed). By Month leaves out
-empty months; the others merge a run of empty periods into one "No entries
-recorded" row. Years join only through confirmed "same student" answers;
-students past P6 are left out.
+At the bottom of each student's profile (`renderStudentTrend()` /
+`computeStudentTrend()`), with "Comparing:" By Month / By Term / By
+Semester / By Year on the title line (phones under 400px show Month / Term
+/ Semester / Year). A table lists Grooming, Suspension, Time Out and Parent
+Meet per period from the student's first entry (oldest first, 0s greyed).
+By Month leaves out empty months; the others merge a run of empty periods
+into one "No entries recorded" row. Years join only through confirmed
+"same student" answers; for students past P6 the table stops at their last
+entry and no status is shown. Above the table, only when it applies: the
+red ! "Needs Support" or thumbs-up "Improving" with a one-line reason.
+Otherwise there's no indication.
 
 Scoring: grooming 1, time out 2, suspension 3, parent meetings shown but
 not counted; per school week, scaled to a standard period (month 4, term
@@ -238,7 +239,8 @@ scored; the period still running counts once half of it has passed.
   before; up two periods in a row (by 1+ each, latest 2+ points); latest
   1.5× the earlier average and 2+ higher (latest 2+ points); first
   suspension after only grooming entries.
-- **Improving**: down two periods in a row (from 2+); latest at most half
+- **Improving** (only with entries in at least two earlier periods, so a
+  one-off entry followed by nothing doesn't count): down two periods in a row (from 2+); latest at most half
   the earlier average and 2+ lower (with entries in the last 3 periods);
   no entries in the last full period (or since) right after a period with
   2+ points.

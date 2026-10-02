@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.60.0";
+const APP_VERSION = "3.61.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -7520,84 +7520,82 @@ function trendPeriodLabel(p, mode) {
   if (mode === "year") return p;
   return mode === "sem" ? `Sem ${p.slice(-1)} ${p.slice(0, 4)}` : `T${p.slice(-1)} ${p.slice(0, 4)}`;
 }
-// For each child: their periods from the first entry to now, a score per
-// period (weighted entries per school week, scaled to a standard period),
-// and whether they're Improving or Need Support.
-function computeBehaviourTrends(mode) {
-  const today = todayISO(), cur = trendPeriodOf(today, mode), entries = trendEntries();
-  const byKey = new Map();
-  entries.forEach((e) => { (byKey.get(e.key) || byKey.set(e.key, []).get(e.key)).push(e); });
+// One child's trend: their periods from the first entry to now (or to
+// their last entry if they've left school), a score per period (weighted
+// entries per school week, scaled to a standard period), and whether they
+// Need Support or are Improving (otherwise nothing is shown).
+function computeStudentTrend(key, mode) {
+  const today = todayISO(), cur = trendPeriodOf(today, mode);
+  const list = trendEntries().filter((e) => e.key === key).sort((a, b) => a.d.localeCompare(b.d));
+  if (!list.length) return null;
+  const latest = list[list.length - 1];
   const thisYear = parseInt(today.slice(0, 4), 10);
-  const out = { improving: [], support: [] };
-  byKey.forEach((list, key) => {
-    list.sort((a, b) => a.d.localeCompare(b.d));
-    const latest = list[list.length - 1];
-    const lvl = classLevel(latest.r.studentClass);
-    if (lvl !== 999 && lvl + (thisYear - parseInt(latest.d.slice(0, 4), 10)) > 6) return; // left school
-    if (!list.some((e) => e.kind !== "pm")) return;
-    const periods = [];
-    for (let p = trendPeriodOf(list[0].d, mode), guard = 0; guard < 200; p = trendPeriodNext(p, mode), guard++) {
-      const rg = trendPeriodRange(p, mode), end = p === cur ? today : rg.end;
-      const row = { p, grooming: 0, suspension: 0, timeOut: 0, pm: 0, done: p !== cur, weeks: schoolDaysBetween(rg.start, end) / 5 };
-      list.forEach((e) => { if (e.d >= rg.start && e.d <= rg.end) row[e.kind]++; });
-      row.points = row.grooming + row.timeOut * 2 + row.suspension * 3;
-      periods.push(row);
-      if (p === cur) break;
+  const lvl = classLevel(latest.r.studentClass);
+  const left = lvl !== 999 && lvl + (thisYear - parseInt(latest.d.slice(0, 4), 10)) > 6;
+  const stop = left ? trendPeriodOf(latest.d, mode) : cur;
+  const periods = [];
+  for (let p = trendPeriodOf(list[0].d, mode), guard = 0; guard < 400; p = trendPeriodNext(p, mode), guard++) {
+    const rg = trendPeriodRange(p, mode), end = p === cur ? today : rg.end;
+    const row = { p, grooming: 0, suspension: 0, timeOut: 0, pm: 0, done: p !== cur, weeks: schoolDaysBetween(rg.start, end) / 5 };
+    list.forEach((e) => { if (e.d >= rg.start && e.d <= rg.end) row[e.kind]++; });
+    row.points = row.grooming + row.timeOut * 2 + row.suspension * 3;
+    periods.push(row);
+    if (p === stop) break;
+  }
+  const res = { periods, status: null, reason: "" };
+  if (left || !list.some((e) => e.kind !== "pm")) return res;
+  // The period still running only counts once at least half of it is done.
+  const curRow = periods[periods.length - 1];
+  if (curRow && !curRow.done) { const rg = trendPeriodRange(curRow.p, mode); const full = schoolDaysBetween(rg.start, rg.end) / 5; curRow.half = full > 0 && curRow.weeks >= full / 2; }
+  const scored = periods.filter((r) => r.weeks >= 2 && (r.done || r.half));
+  if (scored.length < 2) return res;
+  const S = TREND_STD_WEEKS[mode];
+  scored.forEach((r) => { r.s = (r.points / r.weeks) * S; });
+  const n = scored.length, L = scored[n - 1], prior = scored.slice(0, -1);
+  const W = { month: "month", term: "term", sem: "semester", year: "year" }[mode];
+  const Lname = trendPeriodLabel(L.p, mode) + (L.done ? "" : " so far");
+  const avg = prior.reduce((a, r) => a + r.s, 0) / prior.length;
+  const semTier = (y, half) => {
+    const rg = trendPeriodRange(`${y}-S${half}`, "sem");
+    const c = { suspension: 0, timeOut: 0, second: 0, third: 0 };
+    list.forEach((e) => {
+      if (e.d < rg.start || e.d > rg.end) return;
+      if (e.kind === "suspension") c.suspension++;
+      else if (e.kind === "timeOut") c.timeOut++;
+      else if (e.kind === "grooming" && Array.isArray(e.r.issues)) { const st = groomingEntryMaxStage(e.r); if (st >= 3) c.third++; else if (st >= 2) c.second++; }
+    });
+    return riskTierOf(c);
+  };
+  const curSem = trendPeriodOf(today, "sem"), cy = +curSem.slice(0, 4), ch = +curSem.slice(-1);
+  const prevSem = ch === 2 ? [cy, 1] : [cy - 1, 2];
+  const beforeL = periods.slice(0, periods.indexOf(L));
+  let support = null, improving = null;
+  if (semTier(cy, ch) === "high" && semTier(prevSem[0], prevSem[1]) === "high") support = "High Risk two semesters in a row";
+  else if (n >= 3 && L.points >= 2 && scored[n - 3].s + 1 <= scored[n - 2].s && scored[n - 2].s + 1 <= L.s) support = `Up two ${W}s in a row`;
+  else if (L.suspension > 0 && !beforeL.some((r) => r.suspension || r.timeOut) && beforeL.some((r) => r.grooming)) support = "First suspension after grooming entries";
+  else if (L.points >= 2 && L.s >= avg * 1.5 && L.s - avg >= 2) support = `More entries in ${Lname} than in earlier ${W}s`;
+  // Improving needs an earlier pattern (entries in at least two earlier
+  // periods), so a one-off entry followed by nothing isn't "improving".
+  if (!support && beforeL.filter((r) => r.points > 0).length >= 2) {
+    const lastDone = [...periods].reverse().find((r) => r.done);
+    const recent = scored.slice(-3).some((r) => r.points > 0);
+    if (n >= 3 && scored[n - 3].s >= 2 && scored[n - 3].s >= scored[n - 2].s + 1 && scored[n - 2].s >= L.s + 1) improving = `Down two ${W}s in a row`;
+    else if (recent && avg > 0 && L.s <= avg / 2 && avg - L.s >= 2) improving = `Fewer entries in ${Lname} than in earlier ${W}s`;
+    else if (lastDone) {
+      const i = periods.indexOf(lastDone), before = periods[i - 1], curP = periods[periods.length - 1];
+      if (lastDone.points === 0 && (curP === lastDone || curP.points === 0) && before && before.points >= 2) improving = `No entries in ${trendPeriodLabel(lastDone.p, mode)}`;
     }
-    // The period still running only counts once at least half of it is done.
-    const curRow = periods[periods.length - 1];
-    if (curRow && !curRow.done) { const rg = trendPeriodRange(curRow.p, mode); const full = schoolDaysBetween(rg.start, rg.end) / 5; curRow.half = full > 0 && curRow.weeks >= full / 2; }
-    const scored = periods.filter((r) => r.weeks >= 2 && (r.done || r.half));
-    if (scored.length < 2) return;
-    const S = TREND_STD_WEEKS[mode];
-    scored.forEach((r) => { r.s = (r.points / r.weeks) * S; });
-    const n = scored.length, L = scored[n - 1], prior = scored.slice(0, -1);
-    const W = { month: "month", term: "term", sem: "semester", year: "year" }[mode];
-    const Lname = trendPeriodLabel(L.p, mode) + (L.done ? "" : " so far");
-    const avg = prior.reduce((a, r) => a + r.s, 0) / prior.length;
-    let support = null, improving = null;
-    // High Risk two semesters in a row (this semester and the one before).
-    const semTier = (y, half) => {
-      const rg = trendPeriodRange(`${y}-S${half}`, "sem");
-      const c = { suspension: 0, timeOut: 0, second: 0, third: 0 };
-      list.forEach((e) => {
-        if (e.d < rg.start || e.d > rg.end) return;
-        if (e.kind === "suspension") c.suspension++;
-        else if (e.kind === "timeOut") c.timeOut++;
-        else if (e.kind === "grooming" && Array.isArray(e.r.issues)) { const st = groomingEntryMaxStage(e.r); if (st >= 3) c.third++; else if (st >= 2) c.second++; }
-      });
-      return riskTierOf(c);
-    };
-    const curSem = trendPeriodOf(today, "sem"), cy = +curSem.slice(0, 4), ch = +curSem.slice(-1);
-    const prevSem = ch === 2 ? [cy, 1] : [cy - 1, 2];
-    if (semTier(cy, ch) === "high" && semTier(prevSem[0], prevSem[1]) === "high") support = "High Risk two semesters in a row";
-    else if (n >= 3 && L.points >= 2 && scored[n - 3].s + 1 <= scored[n - 2].s && scored[n - 2].s + 1 <= L.s) support = `Up two ${W}s in a row`;
-    else if (L.suspension > 0 && !periods.slice(0, periods.indexOf(L)).some((r) => r.suspension || r.timeOut) && periods.slice(0, periods.indexOf(L)).some((r) => r.grooming)) support = "First suspension after grooming entries";
-    else if (L.points >= 2 && L.s >= avg * 1.5 && L.s - avg >= 2) support = `More entries in ${Lname} than in earlier ${W}s`;
-    if (!support) {
-      const lastDone = [...periods].reverse().find((r) => r.done);
-      const recent = scored.slice(-3).some((r) => r.points > 0);
-      if (n >= 3 && scored[n - 3].s >= 2 && scored[n - 3].s >= scored[n - 2].s + 1 && scored[n - 2].s >= L.s + 1) improving = `Down two ${W}s in a row`;
-      else if (recent && avg > 0 && L.s <= avg / 2 && avg - L.s >= 2) improving = `Fewer entries in ${Lname} than in earlier ${W}s`;
-      else if (lastDone) {
-        const i = periods.indexOf(lastDone), before = periods[i - 1], curP = periods[periods.length - 1];
-        if (lastDone.points === 0 && (curP === lastDone || curP.points === 0) && before && before.points >= 2) improving = `No entries in ${trendPeriodLabel(lastDone.p, mode)}`;
-      }
-    }
-    if (!support && !improving) return;
-    const row = { key, name: latest.r.studentName, cls: latest.r.studentClass || "", year: latest.d.slice(0, 4), periods, reason: support || improving };
-    (support ? out.support : out.improving).push(row);
-  });
-  const sortFn = (a, b) => a.name.localeCompare(b.name);
-  out.support.sort(sortFn); out.improving.sort(sortFn);
-  return out;
+  }
+  res.status = support ? "support" : improving ? "improving" : null;
+  res.reason = support || improving || "";
+  return res;
 }
 function renderTrendRows(periods, mode) {
   const rows = [];
   let gap = [];
   const flushGap = () => {
     if (!gap.length) return;
-    if (mode !== "month") rows.push(`<tr><th>${gap.length === 1 ? trendPeriodLabel(gap[0].p, mode) : `${trendPeriodLabel(gap[0].p, mode)} – ${trendPeriodLabel(gap[gap.length - 1].p, mode)}`}</th><td colspan="4" class="dd-rt-zero">No entries recorded</td></tr>`);
+    if (mode !== "month") rows.push(`<tr><th>${gap.length === 1 ? trendPeriodLabel(gap[0].p, mode) : `${trendPeriodLabel(gap[0].p, mode)} –<br>${trendPeriodLabel(gap[gap.length - 1].p, mode)}`}</th><td colspan="4" class="dd-rt-zero">No entries recorded</td></tr>`);
     gap = [];
   };
   periods.forEach((r) => {
@@ -7609,43 +7607,23 @@ function renderTrendRows(periods, mode) {
   flushGap();
   return rows.join("");
 }
-function renderBehaviourTrends() {
+// Student profile: Behavioural Trend section at the bottom.
+function renderStudentTrend(key) {
   const mode = state.trendMode || "term";
-  const t = computeBehaviourTrends(mode);
-  const tab = state.trendTab || "support";
-  const list = tab === "improving" ? t.improving : t.support;
-  const open = state.trendOpen || {};
+  const t = key ? computeStudentTrend(key, mode) : null;
+  if (!t || !t.periods.some((r) => r.grooming + r.suspension + r.timeOut + r.pm)) return "";
   return `
-    <div class="dd-panel" style="margin-bottom:16px">
-      <div class="dd-dash-title dd-trend-head" style="color:#1B2A41">
-        <span>Behavioural Trends</span>
-        <label class="dd-trend-cmp"><span>Comparing:</span>
-          <select class="dd-watch-period" id="trend-mode" aria-label="Comparing">${TREND_MODES.map(([k, l]) => `<option value="${k}" ${mode === k ? "selected" : ""}>${window.innerWidth < 400 ? l.replace("By ", "") : l}</option>`).join("")}</select>
-        </label>
-      </div>
-      <div class="dd-range-pills" style="flex-wrap:nowrap;margin-top:10px">
-        <button type="button" class="dd-range-pill${tab === "improving" ? " active" : ""}" style="flex:1" data-action="set-trend-tab" data-tab="improving">Improving (${t.improving.length})</button>
-        <button type="button" class="dd-range-pill${tab === "support" ? " active" : ""}" style="flex:1" data-action="set-trend-tab" data-tab="support">Needs Support (${t.support.length})</button>
-      </div>
-      ${list.length === 0 ? `<div class="dd-dash-empty" style="margin-top:10px">No students here.</div>` : `
-      <div class="dd-settings-menu-group dd-trend-list">
-        ${list.map((r) => `
-        <div class="dd-student-year">
-          <button type="button" class="dd-settings-menu-row dd-trend-row" data-action="toggle-trend-row" data-key="${escapeHtml(r.key)}" aria-expanded="${!!open[r.key]}">
-            <span class="dd-trend-who"><span class="dd-trend-name">${escapeHtml(truncateName(r.name))}</span>${r.cls ? ` <span class="dd-mono-muted" style="font-size:11px">${escapeHtml(r.cls)}</span>` : ""} <span class="dd-watch-move" title="${escapeHtml(r.reason)}">${tab === "improving" ? ICON_BETTER : ICON_WORSE}</span><span class="dd-trend-why">${escapeHtml(r.reason)}</span></span>
-            <span class="dd-settings-chevron">${open[r.key] ? "⌄" : "›"}</span>
-          </button>
-          ${open[r.key] ? `
-          <div class="dd-trend-body">
-            <table class="dd-rt dd-rt-reasons dd-trend-table">
-              <thead><tr><th>${mode === "month" ? "Month" : mode === "term" ? "Term" : mode === "sem" ? "Semester" : "Year"}</th><th style="color:${CHART_COLORS.discipline}">Grooming</th><th style="color:${CHART_COLORS.suspension}">Suspension</th><th style="color:${CHART_COLORS.timeOut}">Time Out</th><th style="color:${CHART_COLORS.parentMeeting}">Parent Meet</th></tr></thead>
-              <tbody>${renderTrendRows(r.periods, mode)}</tbody>
-            </table>
-            <button type="button" class="dd-back-link dd-trend-open" data-action="view-student" data-name="${escapeHtml(r.name)}" data-class="${escapeHtml(r.cls)}" data-year="${r.year}">Open student ›</button>
-          </div>` : ""}
-        </div>`).join("")}
-      </div>`}
-    </div>`;
+        <div class="dd-dash-title dd-trend-head" style="color:#1B2A41;font-size:14px;margin:28px 0 8px">
+          <span>Behavioural Trend</span>
+          <label class="dd-trend-cmp"><span>Comparing:</span>
+            <select class="dd-watch-period" id="trend-mode" aria-label="Comparing">${TREND_MODES.map(([k, l]) => `<option value="${k}" ${mode === k ? "selected" : ""}>${window.innerWidth < 400 ? l.replace("By ", "") : l}</option>`).join("")}</select>
+          </label>
+        </div>
+        ${t.status ? `<div class="dd-trend-status"><span class="dd-watch-move">${t.status === "improving" ? ICON_BETTER : ICON_WORSE}</span><b>${t.status === "improving" ? "Improving" : "Needs Support"}</b> · ${escapeHtml(t.reason)}</div>` : ""}
+        <table class="dd-rt dd-rt-reasons dd-trend-table">
+          <thead><tr><th>${mode === "month" ? "Month" : mode === "term" ? "Term" : mode === "sem" ? "Semester" : "Year"}</th><th style="color:${CHART_COLORS.discipline}">Grooming</th><th style="color:${CHART_COLORS.suspension}">Suspension</th><th style="color:${CHART_COLORS.timeOut}">Time Out</th><th style="color:${CHART_COLORS.parentMeeting}">Parent Meet</th></tr></thead>
+          <tbody>${renderTrendRows(t.periods, mode)}</tbody>
+        </table>`;
 }
 const ICON_WORSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#C62828"/><rect x="10.6" y="5" width="2.8" height="9.5" rx="1.4" fill="#FFD43B"/><circle cx="12" cy="18" r="1.7" fill="#FFD43B"/></svg>`;
 const ICON_BETTER = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#2E7D32"/><path transform="translate(-0.72 -0.03)" d="M7.2 11h2.3v6.6H7.2zM10.4 17.6V11.2l2.5-4.6c.3-.6 1.2-.6 1.5.1.2.4.2.9.1 1.3l-.7 2.5h3.1c.9 0 1.5.8 1.3 1.7l-1 4.3c-.2.8-.9 1.4-1.7 1.4z" fill="#fff"/></svg>`;
@@ -7802,8 +7780,6 @@ function renderDashboardSection() {
         ${renderNewEntryRow()}
 
         ${renderGroomingFollowUpList()}
-
-        ${renderBehaviourTrends()}
 
         ${renderPendingPmDates()}
 
@@ -8491,6 +8467,7 @@ function renderStudentView() {
         ${pastHtml}
         ${state.linkError && state.section === "studentView" ? `<div class="dd-error" style="margin-top:8px">${escapeHtml(state.linkError)}</div>` : ""}
         ${linkNotes ? `<div class="dd-link-notes">${linkNotes}</div>` : ""}
+        ${(() => { const recs = [...byYear.values()].flatMap((g) => [...g.grooming.map((r) => r.date), ...g.susp.map((r) => r.startDate), ...g.to.map((r) => r.startDate), ...g.pm.map((r) => pmDate(r) || r.date)]).filter(Boolean).sort(); const lastY = recs.length ? parseInt(recs[recs.length - 1].slice(0, 4), 10) : null; const lastCls = lastY ? ((classesByYear.get(lastY) || [])[0] || cls) : cls; return recs.length ? renderStudentTrend(chainKeyFor(name, lastCls, recs[recs.length - 1])) : ""; })()}
       </div>
       ${state.editingIncidentId ? renderEditIncidentForm() : ""}
       ${state.editingSuspensionId ? renderSuspForm(true) : ""}
@@ -9911,11 +9888,7 @@ function attachMainListeners() {
       renderKeepingPageScroll();
     }));
   const trendSel = document.getElementById("trend-mode");
-  if (trendSel) trendSel.addEventListener("change", () => { state.trendMode = trendSel.value; state.trendOpen = {}; renderKeepingPageScroll(); });
-  document.querySelectorAll('[data-action="set-trend-tab"]').forEach((el) =>
-    el.addEventListener("click", () => { state.trendTab = el.dataset.tab; renderKeepingPageScroll(); }));
-  document.querySelectorAll('[data-action="toggle-trend-row"]').forEach((el) =>
-    el.addEventListener("click", () => { const k = el.dataset.key; state.trendOpen = { ...(state.trendOpen || {}), [k]: !(state.trendOpen || {})[k] }; renderKeepingPageScroll(); }));
+  if (trendSel) trendSel.addEventListener("change", () => { state.trendMode = trendSel.value; renderKeepingPageScroll(); });
   const watchPeriodSel = document.getElementById("watch-period");
   if (watchPeriodSel) watchPeriodSel.addEventListener("change", () => { state.watchPeriod = watchPeriodSel.value; render(); });
   document.querySelectorAll('[data-action="select-class-pill"]').forEach((el) =>
