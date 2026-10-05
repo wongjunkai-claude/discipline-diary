@@ -68,6 +68,17 @@ audit trail (every create, edit and status change, with who and when).
   1st / 2nd / Final Warning stage and deadline. Deadlines always fall on a
   school day: one that would land on a weekend, holiday or the student's
   HBL/closure day moves to the next school day (`computeGroomingDeadline()`).
+  **Repeats** (`issueStartStage()`, every issue; Others = same description):
+  1st / 2nd / 3rd+ time in a term → starts at 1st / 2nd / Final Warning; if
+  the student had the same issue in the semester's earlier term (T1 for T2,
+  T3 for T4), the term starts at 2nd and the 2nd time onwards is Final. A
+  school-holiday entry belongs to the term after it; each semester starts
+  afresh at 1st Warning. Escalation
+  stats count from the warning an issue started at.
+  **Permed Hair** (`remindOnly`) has no Resolved/Escalate: 1st and 2nd
+  Warning show FT Contact Parents (1st: don't perm again or it must be
+  straightened; 2nd: straighten it over the weekend), Final shows the
+  facilitated call; the teacher taps **Reminded**.
   Escalating an issue to its next stage requires a follow-up note explaining
   what happened at the stage being left — it's stored on that stage
   transition in the issue's own history. Escalate is a toggle: tapping it

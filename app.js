@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.62.3";
+const APP_VERSION = "3.64.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -406,7 +406,7 @@ function isPmCounted(m) {
 // Teachers/SH-SM to do enforced facilitated calling; "shsm-only" means
 // SH/SM just calls the parent directly, no facilitated-calling step.
 const GROOMING_ISSUE_TYPES = [
-  "Long Hair", "Coloured Hair", "Dirtied Uniform", "Missing Name Tag",
+  "Long Hair", "Coloured Hair", "Permed Hair", "Dirtied Uniform", "Missing Name Tag",
   "Improper Socks", "Improper Shoes", "Smartwatch/Handphone",
   "Improper Earrings/Hair Accessories", "Make Up/Improper Facial Patches",
   "Religious Items", "Others",
@@ -414,6 +414,17 @@ const GROOMING_ISSUE_TYPES = [
 const GROOMING_ISSUE_CONFIG = {
   "Long Hair": { days: [4, 4, 1], parentFrom: 2, finalAction: "facilitated" },
   "Coloured Hair": { days: [4, 4, 1], parentFrom: 1, finalAction: "facilitated" },
+  // Permed Hair: no countdown to escalate through. The parents are
+  // contacted and it's marked Reminded; like every issue, its warning level
+  // also comes from repeats (see issueStartStage).
+  "Permed Hair": {
+    days: [1, 1, 1], parentFrom: 1, finalAction: "facilitated", remindOnly: true,
+    instructions: [
+      "Do not perm again, or the hair must be straightened",
+      "Straighten the hair over the weekend",
+      "Straighten the hair over the weekend",
+    ],
+  },
   "Dirtied Uniform": { days: [7, 7, 1], parentFrom: 1, finalAction: "facilitated" },
   "Missing Name Tag": {
     days: [7, 7, 3], parentFrom: 2, finalAction: "facilitated",
@@ -2024,15 +2035,48 @@ function computeGroomingDeadline(cfg, stage, catchDate, level) {
   while (isNonSchoolDay(d, level)) d = nextSchoolDay(d, level);
   return d;
 }
-function freshGroomingIssue(type, othersText, catchDate, level) {
+function freshGroomingIssue(type, othersText, catchDate, level, startStage) {
   const cfg = GROOMING_ISSUE_CONFIG[type] || GROOMING_ISSUE_CONFIG.Others;
-  const deadline = computeGroomingDeadline(cfg, 1, catchDate, level);
+  const stage = startStage || 1;
+  const deadline = computeGroomingDeadline(cfg, stage, catchDate, level);
   return {
     id: uid(), type, othersText: type === "Others" ? (othersText || "") : "",
-    stage: 1, deadline, overriddenBy: null, resolved: false, resolvedAt: null,
-    parentContacted: cfg.parentFrom <= 1,
-    history: [{ stage: 1, deadline, action: "1st Warning issued", at: catchDate }],
+    stage, deadline, overriddenBy: null, resolved: false, resolvedAt: null,
+    parentContacted: cfg.parentFrom <= stage,
+    history: [{ stage, deadline, action: `${WARNING_STAGE_LABEL[stage]} issued`, at: catchDate }],
   };
+}
+// The school term a date belongs to ("2026-2" = Term 3). A date in a school
+// holiday belongs to the term after it; the year-end holiday stays in Term 4.
+function groomingTermKey(date) {
+  const y = parseInt(String(date).slice(0, 4), 10);
+  const terms = computeMoeCalendar(y).terms;
+  const i = terms.findIndex((t) => date <= t.end);
+  return `${y}-${i < 0 ? terms.length - 1 : i}`;
+}
+// Warning level a new grooming issue starts at, from how often the student
+// has had the same issue (Others: the same description) this semester:
+//   this term: 1st time → 1st Warning, 2nd time → 2nd Warning, 3rd+ → Final.
+//   If they already had it in the semester's earlier term, the term starts
+//   at 2nd Warning and the 2nd time onwards is Final. Each semester (and so
+//   each new year) starts afresh at 1st Warning.
+function sameGroomingIssue(x, type, othersText) {
+  if (x.type !== type) return false;
+  return type !== "Others" || normalizeName(x.othersText || "") === normalizeName(othersText || "");
+}
+function issueStartStage(type, name, cls, date, excludeId, othersText) {
+  if (!name || !date) return 1;
+  const key = chainKeyFor(name, cls, date), term = groomingTermKey(date), year = parseInt(String(date).slice(0, 4), 10);
+  const sem = reportWindowFor(year, date <= reportWindowFor(year, "sem1").end ? "sem1" : "sem2");
+  let thisTerm = 0, before = false;
+  state.incidents.forEach((it) => {
+    if (it.deleted || it.id === excludeId || !it.date || it.date > date || it.date < sem.start || !Array.isArray(it.issues)) return;
+    if (!it.issues.some((x) => sameGroomingIssue(x, type, othersText))) return;
+    if (chainKeyFor(it.studentName, it.studentClass, it.date) !== key) return;
+    if (groomingTermKey(it.date) === term) thisTerm++;
+    else before = true;
+  });
+  return Math.min(3, (before ? 2 : 1) + thisTerm);
 }
 function groomingIssueLabel(issue) {
   if (issue.type === "Others" && issue.othersText) return `Others — ${issue.othersText}`;
@@ -2057,7 +2101,7 @@ function resolveGroomingIssue(entryId, issueId) {
   const before = JSON.parse(JSON.stringify(entry.issues));
   issue.resolved = true;
   issue.resolvedAt = todayISO();
-  issue.history.push({ stage: issue.stage, action: "Resolved", at: todayISO(), by: teacherName() });
+  issue.history.push({ stage: issue.stage, action: (GROOMING_ISSUE_CONFIG[issue.type] || {}).remindOnly ? "Reminded" : "Resolved", at: todayISO(), by: teacherName() });
   saveIncidentIssueUpdate(entry, before);
 }
 // Tapping the (now pressed) Resolved button again un-resolves the issue,
@@ -2072,7 +2116,7 @@ function unresolveGroomingIssue(entryId, issueId) {
   const before = JSON.parse(JSON.stringify(entry.issues));
   issue.resolved = false;
   issue.resolvedAt = null;
-  if (issue.history[issue.history.length - 1]?.action === "Resolved") issue.history.pop();
+  if (["Resolved", "Reminded"].includes(issue.history[issue.history.length - 1]?.action)) issue.history.pop();
   saveIncidentIssueUpdate(entry, before);
 }
 // Escalate one issue to the next warning stage (or, if already at Final,
@@ -2237,7 +2281,7 @@ function findRelatedRecords(studentName) {
 // grooming entry's own "Related" box never showed the links even though the
 // suspension/meeting side had them.
 async function createIncidentDocForStudent(name, studentClass, date, selectedIssues, othersText, now, links) {
-  const issues = selectedIssues.map((type) => freshGroomingIssue(type, othersText, date, classLevel(studentClass)));
+  const issues = selectedIssues.map((type) => freshGroomingIssue(type, othersText, date, classLevel(studentClass), issueStartStage(type, name, studentClass, date, null, othersText)));
   const issueSummary = issues.map((x) => groomingIssueLabel(x)).join(", ");
   queueStudentLinkCheck(name, studentClass, date);
   const docRef = await addDoc(collection(db, "incidents"), {
@@ -2557,7 +2601,7 @@ async function submitEditIncident() {
     const existingIssues = Array.isArray(it.issues) ? it.issues : [];
     const keptIssues = existingIssues.filter((x) => d.selectedIssues.includes(x.type));
     const newTypes = d.selectedIssues.filter((type) => !existingIssues.some((x) => x.type === type));
-    const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date, classLevel(d.studentClass)));
+    const newIssues = newTypes.map((type) => freshGroomingIssue(type, d.othersText, d.date, classLevel(d.studentClass), issueStartStage(type, trimmedName, d.studentClass, d.date, it.id, d.othersText)));
     const finalIssues = [...keptIssues, ...newIssues].map((x) => x.type === "Others" ? { ...x, othersText: d.othersText || "" } : x);
     const now = Date.now();
     try {
@@ -4257,6 +4301,7 @@ function renderHelpModal() {
         <div class="dd-help-section">
           <div class="dd-help-heading">Grooming Log</div>
           <p>Pick one or more issues when logging an entry (Long Hair, Uniform, etc.) — each gets its own 1st/2nd/Final Warning countdown with its own deadline, and a "same day, over the weekend" rule automatically pushes a 4-day deadline to the next school day. Every deadline falls on a school day: one that would land on a weekend, holiday or the student's HBL/closure day moves to the next school day. Adding several students at once for the same issue(s) is one tap away ("+ Add another student") — each still gets their own independent entry. Resolve an issue any time, or mark it unresolved to escalate to the next warning; deadlines can be moved if the student or parent proposes a different date. Edit Entry lets you change the student, date, and which issues are selected. An entry only shows Resolved once every issue in it is resolved.</p>
+          <p>Repeats: the 1st time a student has an issue in a term it starts at 1st Warning, the 2nd time at 2nd Warning, the 3rd time onwards at Final Warning. If they already had the same issue in Term 1 (or Term 3), Term 2 (or Term 4) starts at 2nd Warning and the 2nd time onwards is Final. Each semester starts afresh at 1st Warning. Permed Hair has no countdown: the parents are contacted and the teacher taps Reminded.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Suspension Log</div>
@@ -5898,23 +5943,30 @@ function renderConcentrationLine(c, one, many) {
 // Final, how long fixed issues took, how many were fixed by the deadline
 // of the warning they were on, and which issue type escalated most.
 function computeGroomingFollowThrough(year) {
-  let total = 0, to2 = 0, to3 = 0, fixed = 0, onTime = 0, dayTotal = 0;
+  // Escalation is counted from the warning an issue started at: a repeat
+  // that started at 2nd or Final Warning didn't escalate to get there.
+  let total = 0, at2 = 0, to2 = 0, to3 = 0, fixed = 0, onTime = 0, dayTotal = 0;
   const byType = {};
   state.incidents.forEach((it) => {
     if (it.deleted || !inReportWindow(it.date, year) || !Array.isArray(it.issues)) return;
     it.issues.forEach((x) => {
-      total++;
-      if (x.stage >= 2) to2++;
-      if (x.stage >= 3) to3++;
-      const label = groomingIssueLabel({ ...x, othersText: "" });
-      const b = byType[label] = byType[label] || { n: 0, up: 0 };
-      b.n++; if (x.stage >= 2) b.up++;
+      // Permed Hair has no countdown (its level comes from repeats only).
+      if ((GROOMING_ISSUE_CONFIG[x.type] || {}).remindOnly) return;
+      const start = (x.history && x.history[0] && x.history[0].stage) || 1;
+      if (start === 1) {
+        total++;
+        if (x.stage >= 2) to2++;
+        const label = groomingIssueLabel({ ...x, othersText: "" });
+        const b = byType[label] = byType[label] || { n: 0, up: 0 };
+        b.n++; if (x.stage >= 2) b.up++;
+      }
+      if (start <= 2 && x.stage >= 2) { at2++; if (x.stage >= 3) to3++; }
       if (x.resolved && x.resolvedAt) { fixed++; dayTotal += Math.max(0, daysBetween(it.date, x.resolvedAt)); if (!x.deadline || x.resolvedAt <= x.deadline) onTime++; }
     });
   });
-  if (!total) return null;
+  if (!total && !at2) return null;
   const worst = Object.entries(byType).filter(([, b]) => b.n >= 3 && b.up > 0).map(([type, b]) => ({ type, pct: pctOf(b.up, b.n), n: b.n })).sort((a, b) => b.pct - a.pct || b.n - a.n)[0] || null;
-  return { total, to2, to3, pct1to2: pctOf(to2, total), pct2to3: pctOf(to3, to2), fixed, avgDays: fixed ? Math.round(dayTotal / fixed) : null, pctOnTime: pctOf(onTime, fixed), worst };
+  return { total, to2: at2, to3, pct1to2: pctOf(to2, total), pct2to3: pctOf(to3, at2), fixed, avgDays: fixed ? Math.round(dayTotal / fixed) : null, pctOnTime: pctOf(onTime, fixed), worst };
 }
 function renderAnnualReportPages(year) {
   const page = (n, html) => `<div class="dd-report-page" data-page="${n}">${html}</div>`;
@@ -8447,7 +8499,7 @@ function renderIncidentDetail(it) {
           // after Escalate — so a teacher can update it without scrolling
           // past earlier follow-ups. Expanding adds the completed stages
           // above it, oldest first, each with its note and who logged it.
-          const hasHistory = issue.stage > 1;
+          const hasHistory = issue.stage > 1 && !cfg.remindOnly;
           const issueOpen = hasHistory && !!state.issueExpanded[issue.id];
           const completedRows = [];
           if (issueOpen) for (let s = 1; s < issue.stage; s++) {
@@ -8511,18 +8563,19 @@ function renderIncidentDetail(it) {
               // to be spoken to. Final Warning always shows the escalated
               // action (facilitated call, or SH/SM contact for the
               // shsm-only issues) instead of either of those.
+              if (cfg.remindOnly) return `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${issue.stage === 3 ? "LST or SH/SM Enforced Facilitated Call" : "FT Contact Parents"}</div><div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`;
               if (issue.stage === 3) {
                 return `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${cfg.finalAction === "shsm-only" ? "SH/SM Contact Parents" : "LST or SH/SM Enforced Facilitated Call"}</div>`;
               }
               return `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${cfg.parentFrom <= issue.stage ? "FT Contact Parents" : "FT Remind Student"}</div>`;
             })()}
-            ${cfg.instructions ? (issue.stage === 1
+            ${cfg.instructions && !cfg.remindOnly ? (issue.stage === 1
               ? `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${escapeHtml(cfg.instructions[0] || "")}</div>`
               : `<div class="dd-mono-muted" style="font-size:11px;margin-top:2px">${escapeHtml(cfg.instructions[issue.stage - 1] || "")}</div>`) : ""}
             ${cfg.note ? `<div class="dd-issue-instruction" data-fit="" data-fit-min="10">${escapeHtml(cfg.note)}</div>` : ""}
             <div class="dd-issue-actions">
-              <button class="dd-add-btn" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
-              ${issue.stage < 3 ? `<button class="dd-add-btn${isEscalating ? " dd-issue-btn-selected" : ""}" style="background:#A3372B" data-action="start-escalate" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
+              <button class="dd-add-btn" data-action="resolve-issue" data-id="${it.id}" data-issue="${issue.id}">${cfg.remindOnly ? "Reminded" : "Resolved"}</button>
+              ${issue.stage < 3 && !cfg.remindOnly ? `<button class="dd-add-btn${isEscalating ? " dd-issue-btn-selected" : ""}" style="background:#A3372B" data-action="start-escalate" data-id="${it.id}" data-issue="${issue.id}">Escalate</button>` : ""}
             </div>
             ${isEscalating ? `
             <div class="dd-followup-form dd-issue-note-form" style="margin-top:8px">
@@ -8533,11 +8586,11 @@ function renderIncidentDetail(it) {
             ` : ""}
             ` : `
             <div class="dd-stage-row-head">
-              <span class="dd-issue-stage-badge dd-issue-resolved">Resolved</span>
+              <span class="dd-issue-stage-badge dd-issue-resolved">${cfg.remindOnly ? "Reminded" : "Resolved"}</span>
               <span class="dd-mono-muted" style="font-size:12px">${formatDate(issue.resolvedAt)} at ${WARNING_STAGE_LABEL[issue.stage]}</span>
             </div>
             <div class="dd-issue-actions">
-              <button class="dd-add-btn dd-issue-btn-selected" data-action="unresolve-issue" data-id="${it.id}" data-issue="${issue.id}">Resolved</button>
+              <button class="dd-add-btn dd-issue-btn-selected" data-action="unresolve-issue" data-id="${it.id}" data-issue="${issue.id}">${cfg.remindOnly ? "Reminded" : "Resolved"}</button>
             </div>
             `}
             </div>
@@ -8674,7 +8727,12 @@ function renderNewForm() {
         <div class="dd-mono-muted" style="font-size:11px;margin-top:10px">
           ${d.selectedIssues.map((type) => {
             const cfg = GROOMING_ISSUE_CONFIG[type] || GROOMING_ISSUE_CONFIG.Others;
-            return `${escapeHtml(type)}: 1st Warning due ${formatDate(addDays(d.date, cfg.days[0]))}${cfg.parentFrom <= 1 ? " — parents contacted immediately" : ""}`;
+            const kids = [{ name: d.studentName, studentClass: d.studentClass }, ...(d.extraStudents || [])].filter((x) => (x.name || "").trim() && x.studentClass);
+            const line = (stage, level) => cfg.remindOnly
+              ? `${WARNING_STAGE_LABEL[stage]} — ${stage === 3 ? "facilitated call" : "FT contact parents"}`
+              : `${WARNING_STAGE_LABEL[stage]} due ${formatDate(computeGroomingDeadline(cfg, stage, d.date, level))}${stage === 1 && cfg.parentFrom <= 1 ? " — parents contacted immediately" : ""}`;
+            if (!kids.length) return `${escapeHtml(type)}: ${line(1, classLevel(d.studentClass))}`;
+            return kids.map((x) => `${escapeHtml(type)}${kids.length > 1 ? ` (${escapeHtml(x.name.trim())})` : ""}: ${line(issueStartStage(type, x.name.trim().replace(/\s+/g, " "), x.studentClass, d.date, null, d.othersText), classLevel(x.studentClass))}`).join("<br>");
           }).join("<br>")}
         </div>` : ""}
         ${state.newIncidentFormError ? `<div class="dd-error">${escapeHtml(state.newIncidentFormError)}</div>` : ""}
