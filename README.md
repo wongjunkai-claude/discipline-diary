@@ -73,7 +73,9 @@ audit trail (every create, edit and status change, with who and when).
   the student had the same issue in the semester's earlier term (T1 for T2,
   T3 for T4), the term starts at 2nd and the 2nd time onwards is Final. A
   school-holiday entry belongs to the term after it; each semester starts
-  afresh at 1st Warning. Escalation
+  afresh at 1st Warning. A repeat issue shows the repeat icon (two looping
+  arrows, `repeatMark()`) beside its name on the issue card and in the
+  follow-up list. Escalation
   stats count from the warning an issue started at.
   **Permed Hair** (`remindOnly`) has no Resolved/Escalate: 1st and 2nd
   Warning show FT Contact Parents (1st: don't perm again or it must be

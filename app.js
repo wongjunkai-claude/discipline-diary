@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.64.1";
+const APP_VERSION = "3.65.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2042,7 +2042,7 @@ function freshGroomingIssue(type, othersText, catchDate, level, startStage) {
   return {
     id: uid(), type, othersText: type === "Others" ? (othersText || "") : "",
     stage, deadline, overriddenBy: null, resolved: false, resolvedAt: null,
-    parentContacted: cfg.parentFrom <= stage,
+    parentContacted: cfg.parentFrom <= stage, repeat: stage > 1,
     history: [{ stage, deadline, action: `${WARNING_STAGE_LABEL[stage]} issued`, at: catchDate }],
   };
 }
@@ -2077,6 +2077,14 @@ function issueStartStage(type, name, cls, date, excludeId, othersText) {
     else before = true;
   });
   return Math.min(3, (before ? 2 : 1) + thisTerm);
+}
+// A grooming issue that started above 1st Warning because it's a repeat.
+function isRepeatIssue(issue) {
+  return !!(issue && (issue.repeat || ((issue.history || [])[0] || {}).stage > 1));
+}
+const ICON_REPEAT = `<svg class="dd-repeat-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.6 13.6A4.2 4.2 0 0 1 8.6 6.4H16" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M15.2 2.6 21.6 6.4 15.2 10.2Z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><path d="M18.4 10.4A4.2 4.2 0 0 1 15.4 17.6H8" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M8.8 13.8 2.4 17.6 8.8 21.4Z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>`;
+function repeatMark(issue) {
+  return isRepeatIssue(issue) ? `<span class="dd-repeat-mark" title="Repeat" aria-label="Repeat">${ICON_REPEAT}</span>` : "";
 }
 function groomingIssueLabel(issue) {
   if (issue.type === "Others" && issue.othersText) return `Others — ${issue.othersText}`;
@@ -2228,7 +2236,7 @@ function computeGroomingFollowUpBuckets() {
       const row = {
         incidentId: it.id, issueId: issue.id,
         name: it.studentName, studentClass: it.studentClass,
-        issueLabel: groomingIssueLabel(issue), stage: issue.stage,
+        issueLabel: groomingIssueLabel(issue), repeat: isRepeatIssue(issue), stage: issue.stage,
         deadline: issue.deadline, entryDate: it.date,
       };
       // Today's bucket absorbs anything overdue too, so nothing due
@@ -7414,7 +7422,7 @@ function renderGroomingFollowUpList() {
         ${g.items.map((r) => `
         <div style="border-top:1px solid #E4E1D4;padding-top:6px">
           <div style="display:flex;justify-content:space-between;gap:8px">
-            <span class="dd-sans" style="font-size:12px">${escapeHtml(r.issueLabel)}</span>
+            <span class="dd-sans" style="font-size:12px">${escapeHtml(r.issueLabel)}${r.repeat ? repeatMark({ repeat: true }) : ""}</span>
             <span class="dd-issue-stage-badge ${r.deadline < today ? "dd-issue-overdue" : ""}">${WARNING_STAGE_LABEL[r.stage]}</span>
           </div>
           ${(() => {
@@ -8540,7 +8548,7 @@ function renderIncidentDetail(it) {
           return `
           <div class="dd-issue-card">
             <div class="dd-issue-card-top">
-              <div class="dd-issue-card-label">${escapeHtml(groomingIssueLabel(issue))}</div>
+              <div class="dd-issue-card-label">${escapeHtml(groomingIssueLabel(issue))}${repeatMark(issue)}</div>
               ${hasHistory ? `<button class="dd-expand-toggle" data-action="toggle-issue-expanded" data-issue="${issue.id}" title="${issueOpen ? "Hide earlier follow-ups" : "Show earlier follow-ups"}">${issueOpen ? "▲" : "▼"}</button>` : ""}
             </div>
             ${completedRows.join("")}

@@ -1496,4 +1496,5 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
   .dd-trend-table { font-size: 12px; }
   .dd-trend-table thead th { font-size: 11px; padding-left: 2px; padding-right: 2px; }
 }
-@media (min-width: 700px) { 
+.dd-repeat-mark { display: inline-flex; align-items: center; vertical-align: -0.18em; margin-left: 6px; color: #A3372B; }
+.dd-repeat-icon { width: 1.15em; height: 1.15em; display: block; }
