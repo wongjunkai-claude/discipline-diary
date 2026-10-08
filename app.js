@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.65.0";
+const APP_VERSION = "3.66.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4337,7 +4337,7 @@ function renderHelpModal() {
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Reports</div>
-          <p>The Annual Report (Settings → Annual Summary Reports) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat suspension and time out intervals, and day-of-week/term patterns. The Print/Export PDF button opens your device's own print dialog, so "Save as PDF" works the same on phone, tablet, or computer.</p>
+          <p>The Annual Report (Settings → Annual Summary Reports) breaks discipline load down by month, plus repeat-vs-unique students, escalation rate, repeat suspension and time out intervals, and day-of-week/term patterns. The printer icon opens your device's print dialog; the PDF icon downloads the report as a PDF and the XLSX icon as an Excel file.</p>
         </div>
         <div class="dd-help-section">
           <div class="dd-help-heading">Editing, removing, backups</div>
@@ -5283,6 +5283,13 @@ function renderDateRangeFields(idPrefix, startVal, endVal) {
 //   6. Parent meetings (by month, by term, reasons)
 //   7. Trend analysis + Recommendations
 const ICON_PRINTER = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"></path><rect x="4" y="9" width="16" height="8" rx="1.5"></rect><path d="M6 14h12v7H6z"></path></svg>`;
+// File icon with its type written across the bottom ("PDF", "XLSX").
+function iconFileType(label) {
+  const wide = label.length > 3;
+  return `<svg class="dd-file-icon" viewBox="0 0 34 32" width="31" height="29" aria-hidden="true"><path d="M11 28.5H9.6A2.6 2.6 0 0 1 7 25.9V5.6A2.6 2.6 0 0 1 9.6 3H17.6L24.5 9.9V16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M17.2 3.6V9a1.3 1.3 0 0 0 1.3 1.3H24Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><text x="12.4" y="29.8" textLength="${wide ? 21.2 : 17.2}" lengthAdjust="spacingAndGlyphs" font-family="'Geist', system-ui, sans-serif" font-weight="700" font-size="${wide ? 10 : 11.4}" fill="currentColor">${label}</text></svg>`;
+}
+const ICON_PDF = iconFileType("PDF");
+const ICON_XLSX = iconFileType("XLSX");
 const ICON_DOCUMENT = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h6"></path></svg>`;
 function reportSectionTitle(text) {
   return `<div class="dd-dash-title" style="color:#1B2A41;font-size:14px;margin:16px 0 8px">${text}</div>`;
@@ -6312,9 +6319,9 @@ function renderSettingsSection() {
       <div class="dd-print-hide dd-report-toolbar">
         ${backBtn("Years", "settings-back-to-years")}
         <div class="dd-report-actions">
-          <button type="button" class="dd-print-btn" id="btn-print-report" title="Print">${ICON_PRINTER}<span>Print</span></button>
-          <button type="button" class="dd-print-btn" id="btn-export-pdf" title="Export PDF">${ICON_DOCUMENT}<span>Export PDF</span></button>
-          <button type="button" class="dd-print-btn" id="btn-export-report-xlsx" title="Download Excel">${ICON_DOWNLOAD}<span>Excel</span></button>
+          <button type="button" class="dd-print-btn" id="btn-print-report" title="Print" aria-label="Print">${ICON_PRINTER}</button>
+          <button type="button" class="dd-print-btn" id="btn-export-pdf" title="Export PDF" aria-label="Export PDF">${ICON_PDF}</button>
+          <button type="button" class="dd-print-btn" id="btn-export-report-xlsx" title="Export Excel" aria-label="Export Excel">${ICON_XLSX}</button>
         </div>
       </div>
       ${state.reportExportError ? `<div class="dd-error dd-print-hide">${escapeHtml(state.reportExportError)}</div>` : ""}

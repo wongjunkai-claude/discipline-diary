@@ -1498,3 +1498,4 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 }
 .dd-repeat-mark { display: inline-flex; align-items: center; vertical-align: -0.18em; margin-left: 6px; color: #A3372B; }
 .dd-repeat-icon { width: 1.15em; height: 1.15em; display: block; }
+.dd-report-actions .dd-print-btn svg:not(.dd-file-icon) { width: 23px; height: 23px; }

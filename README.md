@@ -311,7 +311,8 @@ reviewed" note.
   within term + day of week, (4) repeat vs. unique students + grooming
   escalation rate + repeat suspension/time out intervals, (5) most challenging
   levels + classes (+ this year's suspension/time out lists), (6) trend
-  analysis + recommendations. **Print** opens the browser's print screen (each
+  analysis + recommendations. The toolbar is icons only (printer, PDF file,
+  XLSX file; `iconFileType()`), each with a tooltip. **Print** opens the browser's print screen (each
   page starts a new A4 sheet). **Export PDF** builds the same pages as an A4
   PDF in the app and downloads it (`Annual Summary YYYY.pdf`), using
   html2canvas and jsPDF bundled in `lib/` (MIT licence; loaded only when
