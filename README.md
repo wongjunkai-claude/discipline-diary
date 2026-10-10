@@ -532,7 +532,7 @@ are for the current year (`computeDataCheck()`).
 ## Download a log as Excel
 
 Each log tab (Grooming, Suspension, Time Out, Parent Meet) has a
-**Download Excel** button under the level counters. Pick From/To dates
+**Download Excel** button: the XLSX file icon to the right of the search bar. Pick From/To dates
 (default: 1 Jan this year to today) and it saves an `.xlsx` with one row
 per entry, oldest first, removed entries left out. Columns follow the
 Google Sheet sync (`exportLogTable()`); dates are real Excel dates, the

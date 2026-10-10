@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.66.0";
+const APP_VERSION = "3.66.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1929,9 +1929,9 @@ const ICON_CFY_PENCIL = `<svg viewBox="0 0 24 24" width="17" height="17" fill="n
 const ICON_CFY_TICK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>`;
 const ICON_CFY_X = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>`;
 const ICON_DOWNLOAD = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>`;
-// Right-aligned "Download Excel" button on each log tab.
+// "Download Excel" (XLSX icon) to the right of each log tab's search bar.
 function renderExportButton(kind) {
-  return `<div class="dd-export-row"><button type="button" class="dd-print-btn" data-action="open-export" data-kind="${kind}">${ICON_DOWNLOAD}<span>Download Excel</span></button></div>`;
+  return `<button type="button" class="dd-print-btn dd-search-export" data-action="open-export" data-kind="${kind}" title="Download Excel" aria-label="Download Excel">${ICON_XLSX}</button>`;
 }
 function renderExportModal() {
   const ex = state.exportDraft;
@@ -3952,7 +3952,14 @@ function fitOneLine() {
     fitCanvas = fitCanvas || document.createElement("canvas");
     const ctx = fitCanvas.getContext("2d");
     ctx.font = `400 16px ${cs.fontFamily}`;
-    const w16 = ctx.measureText(el.placeholder).width;
+    // On very narrow screens, fall back to shorter wordings (data-ph-short,
+    // "|"-separated) when the full one won't fit even at 10px.
+    if (el.dataset.phFull === undefined) el.dataset.phFull = el.placeholder;
+    const options = [el.dataset.phFull, ...(el.dataset.phShort ? el.dataset.phShort.split("|") : [])];
+    let text = options[0];
+    for (const t of options) { text = t; if ((avail / ctx.measureText(t).width) * 16 >= 10) break; }
+    if (el.placeholder !== text) el.placeholder = text;
+    const w16 = ctx.measureText(text).width;
     el.style.setProperty("--ph-size", `${Math.max(10, Math.min(16, Math.floor((avail / w16) * 16 * 2) / 2))}px`);
   });
 }
@@ -5286,9 +5293,11 @@ const ICON_PRINTER = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none
 // File icon with its type written across the bottom ("PDF", "XLSX").
 function iconFileType(label) {
   const wide = label.length > 3;
-  return `<svg class="dd-file-icon" viewBox="0 0 34 32" width="31" height="29" aria-hidden="true"><path d="M11 28.5H9.6A2.6 2.6 0 0 1 7 25.9V5.6A2.6 2.6 0 0 1 9.6 3H17.6L24.5 9.9V16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M17.2 3.6V9a1.3 1.3 0 0 0 1.3 1.3H24Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><text x="12.4" y="29.8" textLength="${wide ? 21.2 : 17.2}" lengthAdjust="spacingAndGlyphs" font-family="'Geist', system-ui, sans-serif" font-weight="700" font-size="${wide ? 10 : 11.4}" fill="currentColor">${label}</text></svg>`;
+  return `<svg class="dd-file-icon" viewBox="0 0 34 32" width="31" height="29" aria-hidden="true"><path d="M11 28.5H9.6A2.6 2.6 0 0 1 7 25.9V5.6A2.6 2.6 0 0 1 9.6 3H17.6L24.5 9.9V16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M17.2 3.6V9a1.3 1.3 0 0 0 1.3 1.3H24Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><text x="12.4" y="29.8" textLength="${wide ? 18.8 : 17.2}" lengthAdjust="spacingAndGlyphs" font-family="'Geist', system-ui, sans-serif" font-weight="700" font-size="${wide ? 9.4 : 11.4}" fill="currentColor">${label}</text></svg>`;
 }
 const ICON_PDF = iconFileType("PDF");
+// Printer drawn in the same box, line weight and height as the file icons.
+const ICON_PRINTER_TB = `<svg class="dd-file-icon" viewBox="0 0 34 32" width="31" height="29" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M11 10.5V3.6h12v6.9"/><path d="M11 23.5H8.8A2.4 2.4 0 0 1 6.4 21.1V12.9a2.4 2.4 0 0 1 2.4-2.4h16.4a2.4 2.4 0 0 1 2.4 2.4v8.2a2.4 2.4 0 0 1-2.4 2.4H23"/><path d="M11 18.6h12v10.6H11z"/></svg>`;
 const ICON_XLSX = iconFileType("XLSX");
 const ICON_DOCUMENT = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h6"></path></svg>`;
 function reportSectionTitle(text) {
@@ -6319,7 +6328,7 @@ function renderSettingsSection() {
       <div class="dd-print-hide dd-report-toolbar">
         ${backBtn("Years", "settings-back-to-years")}
         <div class="dd-report-actions">
-          <button type="button" class="dd-print-btn" id="btn-print-report" title="Print" aria-label="Print">${ICON_PRINTER}</button>
+          <button type="button" class="dd-print-btn" id="btn-print-report" title="Print" aria-label="Print">${ICON_PRINTER_TB}</button>
           <button type="button" class="dd-print-btn" id="btn-export-pdf" title="Export PDF" aria-label="Export PDF">${ICON_PDF}</button>
           <button type="button" class="dd-print-btn" id="btn-export-report-xlsx" title="Export Excel" aria-label="Export Excel">${ICON_XLSX}</button>
         </div>
@@ -7910,7 +7919,6 @@ function renderLogSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("discipline", state.incidents, "date")}
-        ${renderExportButton("discipline")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           <button class="dd-pill ${filter === "all" ? "active" : ""}" data-action="set-discipline-filter" data-filter="all">Show All</button>
           <button class="dd-pill ${filter === "Monitoring" ? "active" : ""}" data-action="set-discipline-filter" data-filter="Monitoring">In Progress (${c.Monitoring})</button>
@@ -7918,8 +7926,9 @@ function renderLogSection() {
         </div>
         ${state.disciplineExpandedLevel ? renderClassPillsRow("discipline", state.disciplineExpandedLevel) : ""}
         <div class="dd-panel">
-          <div class="dd-search-wrap">
-            <input class="dd-input dd-search" data-fit-placeholder id="search-input" placeholder="Search by name, class, issue, or teacher…" value="${escapeHtml(state.query)}" />
+          <div class="dd-search-wrap dd-search-with-export">
+            <input class="dd-input dd-search" data-fit-placeholder data-ph-short="Search name, class, issue, teacher…|Search name, class, issue…" id="search-input" placeholder="Search by name, class, issue, or teacher…" value="${escapeHtml(state.query)}" />
+            ${renderExportButton("discipline")}
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.incidents.length === 0 ? "No entries yet. Log the first grooming issue to start the record." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderIncidentDetail).join("")}</div>`}
@@ -8837,14 +8846,14 @@ function renderSuspensionSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("suspension", state.suspensions, "startDate")}
-        ${renderExportButton("suspension")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.suspTab === t ? "active" : ""}" data-action="set-susp-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
         ${state.suspensionExpandedLevel ? renderClassPillsRow("suspension", state.suspensionExpandedLevel) : ""}
         <div class="dd-panel">
-          <div class="dd-search-wrap">
-            <input class="dd-input dd-search" data-fit-placeholder id="susp-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.suspQuery)}" />
+          <div class="dd-search-wrap dd-search-with-export">
+            <input class="dd-input dd-search" data-fit-placeholder data-ph-short="Search name, class, reason, teacher…|Search name, class, reason…" id="susp-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.suspQuery)}" />
+            ${renderExportButton("suspension")}
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.suspensions.length === 0 ? "No suspensions logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderSuspensionDetail).join("")}</div>`}
@@ -9309,14 +9318,14 @@ function renderTimeOutSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("timeOut", state.timeOuts, "startDate")}
-        ${renderExportButton("timeOut")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.toTab === t ? "active" : ""}" data-action="set-to-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
         ${state.timeOutExpandedLevel ? renderClassPillsRow("timeOut", state.timeOutExpandedLevel) : ""}
         <div class="dd-panel">
-          <div class="dd-search-wrap">
-            <input class="dd-input dd-search" data-fit-placeholder id="to-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.toQuery)}" />
+          <div class="dd-search-wrap dd-search-with-export">
+            <input class="dd-input dd-search" data-fit-placeholder data-ph-short="Search name, class, reason, teacher…|Search name, class, reason…" id="to-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.toQuery)}" />
+            ${renderExportButton("timeOut")}
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.timeOuts.length === 0 ? "No time outs logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderTimeOutDetail).join("")}</div>`}
@@ -9636,14 +9645,14 @@ function renderParentMeetingSection() {
       <div class="dd-main">
         ${renderNewEntryRow()}
         ${renderLevelBreakdown("pm", state.parentMeetings.map((m) => ({ ...m, countDate: pmDate(m) })), "countDate", isPmCounted)}
-        ${renderExportButton("pm")}
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
           ${["All", "This Week", "Upcoming", "Completed"].map((t) => `<button class="dd-pill ${state.pmTab === t ? "active" : ""}" data-action="set-pm-tab" data-tab="${t}">${t}${t !== "All" ? ` (${c[t]})` : ""}</button>`).join("")}
         </div>
         ${state.pmExpandedLevel ? renderClassPillsRow("pm", state.pmExpandedLevel) : ""}
         <div class="dd-panel">
-          <div class="dd-search-wrap">
-            <input class="dd-input dd-search" data-fit-placeholder id="pm-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.pmQuery)}" />
+          <div class="dd-search-wrap dd-search-with-export">
+            <input class="dd-input dd-search" data-fit-placeholder data-ph-short="Search name, class, reason, teacher…|Search name, class, reason…" id="pm-search-input" placeholder="Search by name, class, reason, or teacher…" value="${escapeHtml(state.pmQuery)}" />
+            ${renderExportButton("pm")}
           </div>
           ${list.length === 0 ? `<div class="dd-empty">${state.parentMeetings.length === 0 ? "No parent meetings logged yet." : "No entries match this filter."}</div>` : `
           <div style="display:flex;flex-direction:column;gap:12px">${list.map(renderParentMeetingDetail).join("")}</div>`}

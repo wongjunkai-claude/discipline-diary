@@ -1498,4 +1498,8 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 }
 .dd-repeat-mark { display: inline-flex; align-items: center; vertical-align: -0.18em; margin-left: 6px; color: #A3372B; }
 .dd-repeat-icon { width: 1.15em; height: 1.15em; display: block; }
-.dd-report-actions .dd-print-btn svg:not(.dd-file-icon) { width: 23px; height: 23px; }
+.dd-report-actions { gap: 10px; }
+.dd-report-actions .dd-print-btn { padding: 2px; }
+.dd-search-with-export { display: flex; align-items: center; gap: 8px; }
+.dd-search-with-export .dd-search { flex: 1; min-width: 0; }
+.dd-search-export { padding: 2px; }
