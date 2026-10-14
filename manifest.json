@@ -1,6 +1,6 @@
 {
   "name": "Discipline Diary",
-  "short_name": "Discipline",
+  "short_name": "Discipline Diary",
   "description": "Shared discipline log & follow-up register",
   "start_url": "./",
   "scope": "./",
