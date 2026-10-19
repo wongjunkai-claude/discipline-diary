@@ -1,54 +1,38 @@
-const CACHE = "discipline-diary-v335";
-const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png",
-  "./fonts/geist-400.woff2", "./fonts/geist-500.woff2", "./fonts/geist-600.woff2", "./fonts/geist-700.woff2", "./fonts/geist-800.woff2",
-  "./lib/html2canvas.min.js", "./lib/jspdf.umd.min.js"];
-// Firebase's own code, loaded from Google's CDN. The URLs include the
-// version number, so a cached copy never goes stale — caching it lets the
-// app open (and show an "offline" note) with no connection.
-const FIREBASE_CDN = "https://www.gstatic.com/firebasejs/";
-// Saved at install time too, so the first offline open after an update
-// still works (the old version's copy is deleted when the new one takes
-// over). Keep the version in step with the imports at the top of app.js.
-const FIREBASE_FILES = ["firebase-app.js", "firebase-auth.js", "firebase-firestore.js"].map((f) => `${FIREBASE_CDN}10.12.2/${f}`);
+// WordPasture service worker: lets the app open and read offline, and keeps the Bible text close at hand.
+// The app itself (index.html) is always fetched fresh when there's a connection, so updates arrive straight away;
+// the saved copy is only used when offline. "Update now" in the app clears everything here and starts again.
+const VERSION = "wp-2.18.4";
+const SHELL = ["./", "index.html", "manifest.webmanifest", "firebase-config.js", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-180.png",
+  "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+  // Firebase's own code (the version is in the address, so a saved copy never goes stale); keep in step with FB_VERSION in index.html
+  ...["firebase-app.js", "firebase-auth.js", "firebase-firestore.js"].map(f => "https://www.gstatic.com/firebasejs/10.12.2/" + f)];
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ASSETS.map((url) => new Request(url, { cache: "reload" })))
-      // Best effort: a failed Firebase download mustn't stop the install.
-      .then(() => Promise.all(FIREBASE_FILES.map((url) => fetch(url).then((res) => (res.ok ? c.put(url, res) : null)).catch(() => null)))))
-  );
-  self.skipWaiting();
+self.addEventListener("install", e => {
+  e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: "reload" })).catch(() => {})))).then(() => self.skipWaiting()));
+});
+self.addEventListener("activate", e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-  );
-  self.clients.claim();
-});
+const fresh = async req => {   // network first, saved copy when offline
+  const c = await caches.open(VERSION);
+  try { const r = await fetch(req); if (r && r.ok) c.put(req, r.clone()); return r; }
+  catch (e) { return (await c.match(req, { ignoreSearch: true })) || (await c.match("index.html")) || Response.error(); }
+};
+const kept = async req => {    // saved copy first (Bible books, questions, icons, libraries never change at the same address)
+  const c = await caches.open(VERSION), hit = await c.match(req);
+  if (hit) return hit;
+  const r = await fetch(req); if (r && (r.ok || r.type === "opaque")) c.put(req, r.clone()); return r;
+};
 
-self.addEventListener("fetch", (e) => {
-  const req = e.request;
-  if (req.method !== "GET") return; // Sheet sync posts etc. go straight to the network
-
-  // Page loads: always try the network first (so a new release shows up),
-  // and fall back to the cached copy of the app when offline.
-  if (req.mode === "navigate") {
-    e.respondWith(fetch(req).catch(() => caches.match("./index.html")));
-    return;
-  }
-
-  const url = req.url;
-  const sameOrigin = url.startsWith(self.location.origin);
-  if (!sameOrigin && !url.startsWith(FIREBASE_CDN)) return; // Firestore and sign-in: network only
-
-  e.respondWith(
-    caches.match(req).then((cached) => cached || fetch(req).then((res) => {
-      if (res.ok && url.startsWith(FIREBASE_CDN)) {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy));
-      }
-      return res;
-    }))
-  );
+self.addEventListener("fetch", e => {
+  const req = e.request; if (req.method !== "GET") return;
+  const u = new URL(req.url);
+  // the database, sign-in and update checks always go straight to the network
+  if (/googleapis\.com|firebaseio|identitytoolkit|securetoken/.test(u.host)) return;
+  if (u.origin === location.origin && /version\.json$/.test(u.pathname)) return;
+  if (u.origin === location.origin && u.pathname.startsWith("/__/")) return;   // Firebase's own sign-in pages
+  if (req.mode === "navigate" || (u.origin === location.origin && /(\/|\.html|firebase-config\.js|manifest\.webmanifest)$/.test(u.pathname))) { e.respondWith(fresh(req)); return; }
+  if (u.origin === location.origin && /\/(en|zh|zq|questions|icons)\//.test(u.pathname)) { e.respondWith(kept(req)); return; }
+  if (/cdnjs\.cloudflare\.com|gstatic\.com|fonts\.(googleapis|gstatic)\.com/.test(u.host)) { e.respondWith(kept(req)); return; }
 });

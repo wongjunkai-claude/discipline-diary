@@ -1,181 +1,518 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ---------- Access control ----------
-    // Three tiers:
-    //   1. Owner  — always allowed in, always able to manage everyone else.
-    //               Two ways to hold this: (a) BOOTSTRAP_OWNER_EMAIL below,
-    //               a permanent hardcoded fallback that can only change by
-    //               editing this file (and app.js's OWNER_EMAIL) and
-    //               redeploying — this guarantees there's always at least
-    //               one account that can bootstrap/recover access even if
-    //               Firestore data is empty or wrong; or (b) whoever's
-    //               email is currently written to settings/owner, which
-    //               the current Owner can hand over from inside the app
-    //               (Settings → Authorised Teachers List → ⋮ → Make Owner) — no
-    //               redeploy needed for that day-to-day handover.
-    //   2. Admin  — emails listed in admins/{email}. Can manage the
-    //               Authorized Teachers list (below). Only the Owner can
-    //               add/remove admins.
-    //   3. Authorized Teacher — emails listed in authorizedUsers/{email}.
-    //               Can use the app (read/write logs) but cannot manage
-    //               who else has access.
-    // Removing someone from authorizedUsers (or admins), or transferring
-    // ownership away from them, takes effect immediately — every rule
-    // below re-evaluates on each request/listener update, so an active
-    // session is cut off in real time, not just blocked on next sign-in.
-    // email_verified: Google sign-in always verifies the address, but this
-    // also shuts out any other sign-in method that might ever be enabled in
-    // the Firebase console (e.g. email/password with an unconfirmed address).
-    function isMoeDomain() {
-      return request.auth != null
-        && request.auth.token.email != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.matches('.*@moe[.]edu[.]sg$');
-    }
-    function emailLower() {
-      return request.auth.token.email.lower();
-    }
-    // .get('email', '') rather than .data.email on purpose: if that document
-    // ever exists without an email field, reading it directly would make this
-    // rule error out, and since isOwner() feeds isAdmin() which feeds
-    // isMoeUser(), that single error would deny every request from everyone —
-    // a total app-wide lockout. The default keeps it degrading safely to
-    // "no transferred owner", leaving the hardcoded fallback owner working.
-    function currentOwnerEmail() {
-      return exists(/databases/$(database)/documents/settings/owner)
-        ? get(/databases/$(database)/documents/settings/owner).data.get('email', '').lower()
-        : '';
-    }
-    function isOwner() {
-      return isMoeDomain() &&
-        (emailLower() == 'wong_jun_kai@moe.edu.sg' || emailLower() == currentOwnerEmail());
-    }
-    function isAdmin() {
-      return isMoeDomain() && (isOwner() ||
-        exists(/databases/$(database)/documents/admins/$(emailLower())));
-    }
-    // Kept as "isMoeUser" (rather than renaming everywhere below) since
-    // every collection's rule already reads isMoeUser() — the meaning
-    // upgraded from "any @moe.edu.sg account" to "any @moe.edu.sg account
-    // that's also on the Authorized Teachers list (or an admin/owner)".
-    function isMoeUser() {
-      return isMoeDomain() && (isAdmin() ||
-        exists(/databases/$(database)/documents/authorizedUsers/$(emailLower())));
-    }
 
-    // Discipline log entries. A signed-in teacher can remove any entry
-    // directly, and deletion itself is still immediate — but the app now
-    // writes a full copy to deletedItems/{trashId} (below) just before
-    // deleting, so it stays recoverable from Settings → Recently Deleted
-    // afterwards, not just via the 5-second in-app undo.
-    match /incidents/{incidentId} {
-      allow read, create, update, delete: if isMoeUser();
-    }
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function shortText(v, n) { return v is string && v.size() <= n; }
+    function optText(f, n) { return !(f in request.resource.data) || shortText(request.resource.data[f], n); }
+    // The super admin: anyone with a record in admins/{uid}. That record is made by hand in the Firebase console, never by the app.
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    // Blacklisted people can't start or join a flock.
+    function isBlocked() { return exists(/databases/$(database)/documents/blacklist/$(request.auth.uid)); }
 
-    // ISS / OSS suspension records — same protection.
-    match /suspensions/{suspensionId} {
-      allow read, create, update, delete: if isMoeUser();
+    match /admins/{uid} {
+      allow get: if isMe(uid);
+      allow list, write: if false;
     }
-
-    // Time Out records (same shape as suspensions) — same protection.
-    match /timeOuts/{timeOutId} {
-      allow read, create, update, delete: if isMoeUser();
-    }
-
-    // Parent meeting logs — same protection.
-    match /parentMeetings/{meetingId} {
-      allow read, create, update, delete: if isMoeUser();
-    }
-
-    // Trash copies of deleted discipline-log records (see the comment on
-    // incidents above), keyed "{collectionName}_{docId}". Any authorised
-    // teacher can read the list and restore an entry — restoring only
-    // updates restoredAt/restoredBy, it never removes the trash doc — but
-    // only Admins/Owner can permanently purge one, same split as
-    // studentLinks below.
-    match /deletedItems/{trashId} {
-      allow read, create, update: if isMoeUser();
+    match /blacklist/{uid} {
+      allow get: if isMe(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'email', 'note', 'by', 'at'])
+        && shortText(request.resource.data.name, 60) && shortText(request.resource.data.email, 120)
+        && optText('note', 300) && request.resource.data.by == request.auth.uid;
       allow delete: if isAdmin();
     }
+    // A short card about each person, for the super admin: who they are, which flocks, when last seen. Written by the person themselves.
+    match /directory/{uid} {
+      allow get: if isMe(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create, update: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['email', 'name', 'lambName', 'flocks', 'seen', 'created', 'days', 'streak', 'chapters', 'books'])
+        && shortText(request.resource.data.email, 120) && shortText(request.resource.data.name, 60)
+        && optText('lambName', 20) && optText('seen', 10) && optText('created', 10)
+        && (!('flocks' in request.resource.data) || (request.resource.data.flocks is list && request.resource.data.flocks.size() <= 20));
+      allow delete: if isMe(uid) || isAdmin();
+    }
+    // The super admin can see every flock and everything in it (but never anyone's private journal), and can close a flock for good.
+    match /flocks/{fid} {
+      allow read, delete: if isAdmin();
+    }
+    match /flocks/{fid}/{rest=**} {
+      allow read, delete: if isAdmin();
+    }
+    // Secret missions (encourage someone in your fold): only the person on the mission and the super admin can see them.
+    match /missions/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.day
+        && request.resource.data.status in ['given', 'done', 'skipped']
+        && shortText(request.resource.data.day, 10);
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+    // A permanent record of what the super admin has done: it can be added to and read, never changed or erased.
+    match /adminlog/{id} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+    // News from the super admin, shown once to everyone.
+    match /announcements/{id} {
+      allow read: if signedIn();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['title', 'text', 'by', 'at', 'flocks'])
+        && shortText(request.resource.data.title, 80) && shortText(request.resource.data.text, 1000)
+        && request.resource.data.by == request.auth.uid
+        && (!('flocks' in request.resource.data) || request.resource.data.flocks is list);
+      allow delete: if isAdmin();
+    }
+    // The super admin sees reports from every flock.
+    match /{path=**}/reports/{id} {
+      allow read: if isAdmin();
+    }
+    // How much the app uses the database each day, counted by everyone's app, for the super admin's usage view.
+    match /usage/{day} {
+      allow read: if isAdmin();
+      allow create, update: if signedIn() && day.size() == 10
+        && request.resource.data.keys().hasOnly(['r', 'w', 'd'])
+        && request.resource.data.r is int && request.resource.data.w is int && request.resource.data.d is int;
+    }
 
-    // Rolling backup: "backups/index" lists the parts, one per log per year
-    // (e.g. "backups/incidents-2026", split further into "-p2"… if a year
-    // gets large). "backups/latest" is the old single-document backup, now
-    // just a pointer. Signed-in users can read them (to manually recover
-    // data) and the app can update them, but they can never be deleted from
-    // the client.
-    match /backups/{backupId} {
-      allow read, create, update: if isMoeUser();
-      allow delete: if false;
+    // ----- flocks -----
+    // Everything social lives inside a flock: flocks/{fid}/members, groups (folds, each with its own reflections), reflections, questions, cheers, notes, replies, rhearts, removed, config.
+    // Flocks never see each other.
+    // The founder (flocks/{fid}.createdBy) looks after the whole flock. A shepherd looks after their own fold. Everyone looks after their own posts.
+    function flockPath(fid) { return /databases/$(database)/documents/flocks/$(fid); }
+    function flock(fid) { return get(flockPath(fid)).data; }
+    function memberPath(fid, uid) { return /databases/$(database)/documents/flocks/$(fid)/members/$(uid); }
+    function isMember(fid) { return signedIn() && exists(memberPath(fid, request.auth.uid)); }
+    function myGroup(fid) { return get(memberPath(fid, request.auth.uid)).data.groupId; }
+    function isFounder(fid) { return signedIn() && flock(fid).createdBy == request.auth.uid; }
+    function isShepherd(fid) { return isMember(fid) && get(memberPath(fid, request.auth.uid)).data.role == 'shepherd'; }
+    function tendsFold(fid, gid) { return isFounder(fid) || (isShepherd(fid) && gid is string && gid != '' && gid == myGroup(fid)); }
+    function groupExists(fid, id) { return id is string && exists(/databases/$(database)/documents/flocks/$(fid)/groups/$(id)); }
+    function reflFields() {
+      return shortText(request.resource.data.see, 3000)
+        && shortText(request.resource.data.act, 1000)
+        && shortText(request.resource.data.ref, 80)
+        && shortText(request.resource.data.passage, 200)
+        && shortText(request.resource.data.day, 10)
+        && shortText(request.resource.data.name, 40)
+        && optText('us', 600) && optText('wonder', 600) && optText('pray', 600)
+        && optText('held', 200) && optText('heldRef', 160) && optText('heldText', 900)
+        && optText('kind', 20) && optText('milestone', 20);
     }
-    // Shared Singapore holiday calendar (public holidays + school holiday
-    // blocks) used to auto-schedule multi-day suspensions. Every teacher
-    // can read it; only admins and the Owner can change it.
-    match /holidays/{docId} {
-      allow read: if isMoeUser();
-      allow write: if isAdmin();
+    function wasRemoved(fid, uid) { return exists(/databases/$(database)/documents/flocks/$(fid)/removed/$(uid)); }
+    // a reflection lives in flocks/{fid}/reflections (whole flock) or flocks/{fid}/groups/{gid}/reflections (its fold only)
+    function flockRefl(fid, rid) { return /databases/$(database)/documents/flocks/$(fid)/reflections/$(rid); }
+    function foldRefl(fid, gid, rid) { return /databases/$(database)/documents/flocks/$(fid)/groups/$(gid)/reflections/$(rid); }
+    // a reply or heart must match the reflection it's on, and the person must be able to see that reflection
+    function onQuestion(fid, d) {
+      return d.scope == 'q' && exists(/databases/$(database)/documents/flocks/$(fid)/questions/$(d.reflId))
+        && get(/databases/$(database)/documents/flocks/$(fid)/questions/$(d.reflId)).data.uid == d.toUid;
+    }
+    function onFoldQuestion(fid, d) {
+      return d.scope == 'fq' && d.groupId == myGroup(fid)
+        && exists(/databases/$(database)/documents/flocks/$(fid)/groups/$(d.groupId)/questions/$(d.reflId))
+        && get(/databases/$(database)/documents/flocks/$(fid)/groups/$(d.groupId)/questions/$(d.reflId)).data.uid == d.toUid;
+    }
+    function onRefl(fid, d) {
+      return (d.scope == 'flock' && exists(flockRefl(fid, d.reflId)) && get(flockRefl(fid, d.reflId)).data.uid == d.toUid)
+        || (d.scope == 'group' && d.groupId == myGroup(fid) && exists(foldRefl(fid, d.groupId, d.reflId)) && get(foldRefl(fid, d.groupId, d.reflId)).data.uid == d.toUid);
     }
 
-    // App settings (class lists, school closure days, calendar overrides…).
-    // The `docId != 'owner'` guard matters: when two match blocks cover the
-    // same document, Firestore OR's them together — the more specific path
-    // does NOT override the broader one. Without this guard, the wildcard
-    // here would grant every authorized teacher write access to
-    // settings/owner, letting anyone make themselves Owner and then manage
-    // admins, regardless of the stricter rule directly below.
-    // Every teacher can read these; only admins and the Owner can change
-    // them (Classes For The Year, school closure / HBL days, school
-    // calendar changes).
-    match /settings/{docId} {
-      allow read: if isMoeUser();
-      allow write: if isAdmin() && docId != 'owner';
-    }
-    // The day-to-day Owner pointer (see the access-control note above).
-    // Any signed-in authorized user can read who the current Owner is, but
-    // only the current Owner can change it — which is also how a transfer
-    // gives up the outgoing owner's own rights immediately.
-    match /settings/owner {
-      allow read: if isMoeUser();
-      allow write: if isOwner();
-    }
-
-    // One doc per signed-in teacher, holding their chosen display name
-    // and confirmed school email — read by everyone (used to show "signed
-    // in as X" against the Authorized Teachers list). Each person can only
-    // write their own doc, and only with their own sign-in email. Admins
-    // (and the owner) delete it when they remove someone, so a removed
-    // teacher disappears completely.
+    // Each person's own lamb (reading plan, verses, wardrobe), and one record per journal entry. Shared by all their flocks; private to them.
     match /users/{uid} {
-      allow read: if isMoeUser();
-      allow create, update: if isMoeUser() && request.auth.uid == uid
-        && request.resource.data.get('email', '').lower() == emailLower();
-      allow delete: if isAdmin();
+      allow read, write: if isMe(uid);
+      allow get: if isAdmin();
+      match /journal/{entry} {
+        allow read, write: if isMe(uid);
+      }
     }
 
-    // Same-student links (across years and mid-year class changes): any
-    // authorised teacher answers a new question; only Admins and the Owner
-    // can change or remove an answer (Settings → Student Links).
-    match /studentLinks/{linkId} {
-      allow read, create: if isMoeUser();
-      allow update, delete: if isAdmin();
+    // Flock codes: typing a code finds its flock. A code can be looked up, but the list can't be read.
+    match /codes/{code} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['flockId', 'name'])
+        && shortText(request.resource.data.name, 40)
+        && isFounder(request.resource.data.flockId);
+      allow update: if isFounder(resource.data.flockId)
+        && request.resource.data.keys().hasOnly(['flockId', 'name'])
+        && request.resource.data.flockId == resource.data.flockId
+        && shortText(request.resource.data.name, 40);
+      allow delete: if isFounder(resource.data.flockId) || isAdmin();
     }
 
-    // The roster of who may sign in at all. Every authorized teacher can
-    // SEE this list (Settings → Authorized Teachers), but only admins/owner
-    // can change it (Settings → Authorised Teachers List, same page with extra
-    // controls for them).
-    match /authorizedUsers/{email} {
-      allow read: if isMoeUser();
-      allow create, update, delete: if isAdmin();
+    // Messages: the founder to the whole flock or any folds; a shepherd to their own fold, or to some lambs in it ('to');
+    // anyone else to their own whole fold. Everyone in the flock can read them (each person's app shows only the ones meant for them).
+    // The sender, the founder or the super admin can remove them.
+    match /flocks/{fid}/news/{id} {
+      allow read: if isMember(fid);
+      allow create: if request.resource.data.keys().hasOnly(['title', 'text', 'by', 'at', 'groups', 'byName', 'to'])
+        && shortText(request.resource.data.title, 80) && shortText(request.resource.data.text, 1000)
+        && request.resource.data.by == request.auth.uid
+        && (!('groups' in request.resource.data) || request.resource.data.groups is list)
+        && (!('to' in request.resource.data) || (request.resource.data.to is list && request.resource.data.to.size() <= 50))
+        && (isFounder(fid)
+            || (isShepherd(fid) && request.resource.data.groups == [myGroup(fid)])
+            || (isMember(fid) && request.resource.data.groups == [myGroup(fid)] && !('to' in request.resource.data)));
+      allow delete: if isFounder(fid) || isAdmin() || (signedIn() && resource.data.by == request.auth.uid);
     }
 
-    // Who's an admin. Anyone authorized can see who the admins are (so the
-    // Authorised Teachers List page can display the list to a non-owner admin too),
-    // but only the Owner can add or remove one.
-    match /admins/{email} {
-      allow read: if isMoeUser();
-      allow create, update, delete: if isOwner();
+    match /flocks/{fid} {
+      allow read: if isMember(fid) || (signedIn() && resource.data.createdBy == request.auth.uid);
+      allow create: if signedIn() && !isBlocked()
+        && request.resource.data.keys().hasOnly(['name', 'code', 'createdBy', 'created'])
+        && request.resource.data.createdBy == request.auth.uid
+        && shortText(request.resource.data.name, 40)
+        && shortText(request.resource.data.code, 12);
+      // Flock Growth: any lamb of the flock may add the days that have passed (and late catch-up), once; it only ever goes up
+      allow update: if isMember(fid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['growth', 'gday', 'gpart'])
+        && request.resource.data.growth is number && request.resource.data.growth >= resource.data.get('growth', 0)
+        && request.resource.data.growth <= resource.data.get('growth', 0) + 300
+        && request.resource.data.gday is string && request.resource.data.gday.size() == 10
+        && (!('gday' in resource.data) || request.resource.data.gday >= resource.data.gday)
+        && (!('gpart' in request.resource.data) || (request.resource.data.gpart is map && request.resource.data.gpart.size() <= 4));
+      // Flock Unity: lambs record reaching across folds; milestones once reached are kept
+      allow update: if isMember(fid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unity'])
+        && request.resource.data.unity is map
+        && request.resource.data.unity.get('ms', 0) >= resource.data.get('unity', {}).get('ms', 0)
+        && request.resource.data.unity.get('ms', 0) <= 8;
+      // The official weekly question: shepherds, the founder or an admin ask it; every lamb of the flock reads and answers.
+      match /weekly/{wid} {
+        allow read: if isMember(fid);
+        allow create: if (isShepherd(fid) || isFounder(fid) || isAdmin())
+          && request.resource.data.keys().hasOnly(['text', 'uid', 'name', 'at', 'day'])
+          && request.resource.data.uid == request.auth.uid
+          && shortText(request.resource.data.text, 300);
+        allow delete: if isShepherd(fid) || isFounder(fid) || isAdmin();
+        match /answers/{aid} {
+          allow read: if isMember(fid);
+          allow create: if isMember(fid)
+            && request.resource.data.keys().hasOnly(['uid', 'name', 'text', 'at'])
+            && request.resource.data.uid == request.auth.uid
+            && shortText(request.resource.data.text, 600);
+          allow delete: if (signedIn() && resource.data.uid == request.auth.uid) || isShepherd(fid) || isFounder(fid) || isAdmin();
+        }
+      }
+      // the founder renames the flock, changes its code, or hands it to someone already in it
+      allow update: if isFounder(fid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'code', 'createdBy'])
+        && shortText(request.resource.data.name, 40)
+        && exists(memberPath(fid, request.resource.data.createdBy));
+      // the super admin can hand a flock to someone already in it (for example when its founder has to be blacklisted)
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['createdBy'])
+        && exists(memberPath(fid, request.resource.data.createdBy));
+      // the founder deletes the flock's own record (reading plan etc. stay with their sub-records)
+      allow delete: if isFounder(fid);
+
+      // Fold names: readable before joining (the join screen lists them, before an account exists).
+      // Only someone holding the flock's code can find the flock's id. The founder tends the folds.
+      match /groups/{gid} {
+        allow read: if true;
+        allow create, update: if isFounder(fid) && shortText(request.resource.data.name, 40);
+        // Fold Growth: any lamb in the fold may add the days that have passed, once; it only ever goes up
+        allow update: if isMember(fid) && myGroup(fid) == gid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['growth', 'gday', 'gpart'])
+          && request.resource.data.growth is number && request.resource.data.growth >= resource.data.get('growth', 0)
+          && request.resource.data.growth <= resource.data.get('growth', 0) + 300
+          && request.resource.data.gday is string && request.resource.data.gday.size() == 10
+          && (!('gday' in resource.data) || request.resource.data.gday >= resource.data.gday)
+          && (!('gpart' in request.resource.data) || (request.resource.data.gpart is map && request.resource.data.gpart.size() <= 4));
+        allow delete: if isFounder(fid);
+
+        // A question shared with the fold only: the fold reads and answers it.
+        match /questions/{id} {
+          allow read: if isMember(fid) && (myGroup(fid) == gid || resource.data.uid == request.auth.uid);
+          allow create, update: if isMember(fid) && myGroup(fid) == gid
+            && request.resource.data.uid == request.auth.uid
+            && id.matches(request.auth.uid + '_.*')
+            && request.resource.data.groupId == gid
+            && shortText(request.resource.data.wonder, 600)
+            && shortText(request.resource.data.ref, 80)
+            && shortText(request.resource.data.day, 10)
+            && shortText(request.resource.data.name, 40);
+          allow delete: if isMember(fid) && (resource.data.uid == request.auth.uid || tendsFold(fid, gid));
+        }
+
+        // Fold-only reflections: only that fold can read them.
+        match /reflections/{id} {
+          allow read: if isMember(fid) && (myGroup(fid) == gid || resource.data.uid == request.auth.uid);
+          allow create, update: if isMember(fid) && myGroup(fid) == gid
+            && request.resource.data.uid == request.auth.uid
+            && id.matches(request.auth.uid + '_.*')
+            && request.resource.data.scope == 'group'
+            && request.resource.data.groupId == gid
+            && reflFields();
+          allow delete: if isMember(fid) && (resource.data.uid == request.auth.uid || tendsFold(fid, gid));
+        }
+      }
+
+      // People removed from the flock: the code won't let them back in until the founder allows it.
+      match /removed/{uid} {
+        allow read: if isFounder(fid) || isMe(uid);
+        allow create: if request.resource.data.keys().hasOnly(['name', 'by', 'at'])
+          && shortText(request.resource.data.name, 40)
+          && request.resource.data.by == request.auth.uid
+          && uid != flock(fid).createdBy
+          && exists(memberPath(fid, uid))
+          && (isFounder(fid)
+              || (isShepherd(fid)
+                  && get(memberPath(fid, uid)).data.groupId == myGroup(fid)
+                  && get(memberPath(fid, uid)).data.role != 'shepherd'));
+        allow delete: if isFounder(fid);
+      }
+
+      // Each person's public summary in this flock: name, lamb name, fold, streak, outfit.
+      match /members/{uid} {
+        allow read: if isMember(fid) || isMe(uid);
+        // join: the founder as shepherd, or anyone holding the flock's current code, as a member (never someone blacklisted)
+        allow create: if isMe(uid)
+          && request.resource.data.uid == uid
+          && shortText(request.resource.data.displayName, 40)
+          && !isBlocked()
+          && ((flock(fid).createdBy == uid && request.resource.data.role == 'shepherd')
+              || (request.resource.data.role == 'member'
+                  && request.resource.data.code == flock(fid).code
+                  && groupExists(fid, request.resource.data.groupId)));
+        // people update their own summary; they stay in their fold unless it was removed, and can't make themselves shepherds
+        allow update: if isMe(uid)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'code'])
+          && shortText(request.resource.data.displayName, 40)
+          && (!('lambName' in request.resource.data) || shortText(request.resource.data.lambName, 18))
+          && (request.resource.data.groupId == resource.data.groupId
+              || resource.data.groupId == ''
+              || !groupExists(fid, resource.data.groupId)
+              || isFounder(fid))
+          && (request.resource.data.groupId == '' || groupExists(fid, request.resource.data.groupId));
+        // only the founder moves someone to another fold, or makes or unmakes a shepherd
+        allow update: if isFounder(fid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupId', 'role', 'updated'])
+          && (request.resource.data.role in ['member', 'shepherd'])
+          && groupExists(fid, request.resource.data.groupId);
+        // the super admin makes the new founder a shepherd when handing a flock on
+        allow update: if isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'updated'])
+          && (request.resource.data.role in ['member', 'shepherd']);
+        // leaving; or removal by the founder, or by the shepherd of their fold (never the founder, and shepherds can't remove shepherds)
+        allow delete: if isMe(uid) || isAdmin()
+          || (uid != flock(fid).createdBy
+              && (isFounder(fid)
+                  || (isShepherd(fid) && resource.data.groupId == myGroup(fid) && resource.data.role != 'shepherd')));
+      }
+
+      // The flock's reading plan: everyone in the flock reads it, the founder sets it.
+      match /config/plan {
+        allow read: if isMember(fid);
+        allow write: if isFounder(fid)
+          && request.resource.data.keys().hasOnly(["base", "list", "name", "start", "weekdays", "ver", "updated"])
+          && (!("base" in request.resource.data) || shortText(request.resource.data.base, 20))
+          && (!("list" in request.resource.data) || (request.resource.data.list is list && request.resource.data.list.size() <= 500))
+          && (!("name" in request.resource.data) || shortText(request.resource.data.name, 40))
+          && request.resource.data.weekdays is bool;
+      }
+
+      // Hearts (one per person, per lamb, per day) and notes. Open: everyone in the flock can read them; the app tells only the person they're for.
+      match /cheers/{id} {
+        allow read: if isMember(fid);
+        allow create: if isMember(fid)
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.toUid is string
+          && request.resource.data.toUid != request.auth.uid
+          && request.resource.data.toGroup is string
+          && request.resource.data.kind == 'heart'
+          && shortText(request.resource.data.day, 10)
+          && shortText(request.resource.data.fromName, 40)
+          && id == 'h_' + request.auth.uid + '_' + request.resource.data.toUid + '_' + request.resource.data.day;
+        allow delete: if isMember(fid) && (resource.data.toUid == request.auth.uid
+          || resource.data.fromUid == request.auth.uid
+          || tendsFold(fid, resource.data.toGroup));
+      }
+      // Notes are private: only the sender and the person they're for can read them.
+      // Someone the founder or super admin has muted can't send notes (and isn't told).
+      match /notes/{id} {
+        allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+        allow create: if isMember(fid)
+          && !exists(/databases/$(database)/documents/flocks/$(fid)/muted/$(request.auth.uid))
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.toUid is string
+          && request.resource.data.toUid != request.auth.uid
+          && request.resource.data.toGroup is string
+          && request.resource.data.kind == 'note'
+          && shortText(request.resource.data.text, 280)
+          && shortText(request.resource.data.day, 10)
+          && shortText(request.resource.data.fromName, 40)
+          && request.resource.data.created == request.time;
+        // (the 7-day limit on deleting is kept by the app; leaving an account must still be able to clear old notes)
+        allow delete: if isMember(fid) && (resource.data.toUid == request.auth.uid
+          || resource.data.fromUid == request.auth.uid
+          || isFounder(fid));
+        allow update: if signedIn() && (
+          // the person a note is for can send a heart back for it
+          (resource.data.toUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hearted'])
+            && request.resource.data.hearted is bool)
+          // the writer can edit it for 7 days; earlier wording is kept (shown only if it's reported)
+          || (resource.data.fromUid == request.auth.uid
+            && request.time < resource.data.created + duration.value(7, 'd')
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt', 'prev'])
+            && shortText(request.resource.data.text, 280) && request.resource.data.text.size() > 0
+            && request.resource.data.editedAt == request.time
+            && request.resource.data.prev is list && request.resource.data.prev.size() <= 10)
+          // either of the two can mark when the conversation last moved, so it stays 14 days from the latest message
+          || ((resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastDay'])
+            && shortText(request.resource.data.lastDay, 10)));
+      }
+      // Replies under a private note: only between the same two people.
+      match /noteReplies/{id} {
+        allow read: if signedIn() && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+        allow create: if isMember(fid)
+          && !exists(/databases/$(database)/documents/flocks/$(fid)/muted/$(request.auth.uid))
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.kind == 'reply'
+          && request.resource.data.noteId is string
+          && exists(/databases/$(database)/documents/flocks/$(fid)/notes/$(request.resource.data.noteId))
+          && ((get(/databases/$(database)/documents/flocks/$(fid)/notes/$(request.resource.data.noteId)).data.fromUid == request.auth.uid
+                && get(/databases/$(database)/documents/flocks/$(fid)/notes/$(request.resource.data.noteId)).data.toUid == request.resource.data.toUid)
+            || (get(/databases/$(database)/documents/flocks/$(fid)/notes/$(request.resource.data.noteId)).data.toUid == request.auth.uid
+                && get(/databases/$(database)/documents/flocks/$(fid)/notes/$(request.resource.data.noteId)).data.fromUid == request.resource.data.toUid))
+          && shortText(request.resource.data.text, 280) && request.resource.data.text.size() > 0
+          && shortText(request.resource.data.day, 10)
+          && shortText(request.resource.data.fromName, 40)
+          && request.resource.data.created == request.time;
+        // the writer can delete their own reply; either of the two can clear replies left behind once the note is gone
+        allow delete: if (signedIn() && resource.data.fromUid == request.auth.uid)
+          || isFounder(fid)
+          || (signedIn() && resource.data.toUid == request.auth.uid
+            && !exists(/databases/$(database)/documents/flocks/$(fid)/notes/$(resource.data.noteId)));
+        allow update: if signedIn() && (
+          (resource.data.toUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hearted'])
+            && request.resource.data.hearted is bool)
+          // edit, or mark as deleted, within 7 days
+          || (resource.data.fromUid == request.auth.uid
+            && request.time < resource.data.created + duration.value(7, 'd')
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt', 'prev', 'deleted'])
+            && shortText(request.resource.data.text, 280)
+            && request.resource.data.editedAt == request.time
+            && request.resource.data.prev is list && request.resource.data.prev.size() <= 10
+            && (!('deleted' in request.resource.data) || request.resource.data.deleted is bool)));
+      }
+      // A note reported by the person it was sent to: a copy for the founder (and the super admin) to look at.
+      match /reports/{id} {
+        allow read, delete: if isFounder(fid);
+        allow create: if isMember(fid)
+          && request.resource.data.reporterUid == request.auth.uid
+          && ((exists(/databases/$(database)/documents/flocks/$(fid)/notes/$(id))
+              && get(/databases/$(database)/documents/flocks/$(fid)/notes/$(id)).data.toUid == request.auth.uid
+              && get(/databases/$(database)/documents/flocks/$(fid)/notes/$(id)).data.fromUid == request.resource.data.fromUid
+              && get(/databases/$(database)/documents/flocks/$(fid)/notes/$(id)).data.text == request.resource.data.text)
+            // or a reply under a note
+            || (exists(/databases/$(database)/documents/flocks/$(fid)/noteReplies/$(id))
+              && get(/databases/$(database)/documents/flocks/$(fid)/noteReplies/$(id)).data.toUid == request.auth.uid
+              && get(/databases/$(database)/documents/flocks/$(fid)/noteReplies/$(id)).data.fromUid == request.resource.data.fromUid
+              && get(/databases/$(database)/documents/flocks/$(fid)/noteReplies/$(id)).data.text == request.resource.data.text));
+      }
+      // People muted by the founder or the super admin: their notes aren't sent. Only the founder and the super admin can see this list.
+      match /muted/{uid} {
+        allow read, create, delete: if isFounder(fid) || isAdmin();
+      }
+
+      // Whole-flock reflections: everyone in the flock can read them.
+      match /reflections/{id} {
+        allow read: if isMember(fid);
+        allow create, update: if isMember(fid)
+          && request.resource.data.uid == request.auth.uid
+          && id.matches(request.auth.uid + '_.*')
+          && request.resource.data.scope == 'flock'
+          && request.resource.data.groupId == myGroup(fid)
+          && reflFields();
+        // the writer, the shepherd of their fold, or the founder
+        allow delete: if isMember(fid) && (resource.data.uid == request.auth.uid || tendsFold(fid, resource.data.groupId));
+      }
+
+      // The question in a fold-only reflection, on its own: the whole flock can read it.
+      match /questions/{id} {
+        allow read: if isMember(fid);
+        allow create, update: if isMember(fid)
+          && request.resource.data.uid == request.auth.uid
+          && id.matches(request.auth.uid + '_.*')
+          && request.resource.data.groupId == myGroup(fid)
+          && shortText(request.resource.data.wonder, 600)
+          && shortText(request.resource.data.ref, 80)
+          && shortText(request.resource.data.day, 10)
+          && shortText(request.resource.data.name, 40)
+          && optText('lambName', 18);
+        allow delete: if isMember(fid) && (resource.data.uid == request.auth.uid || tendsFold(fid, resource.data.groupId));
+      }
+
+      // Replies to a reflection's question: they follow the reflection. A fold-only reflection's replies stay in the fold.
+      // scope 'q': an answer to a question on its own (from a fold-only reflection), seen by the whole flock like the question.
+      match /replies/{id} {
+        allow read: if isMember(fid) && (resource.data.scope == 'flock' || resource.data.scope == 'q'
+          || resource.data.groupId == myGroup(fid)
+          || resource.data.fromUid == request.auth.uid
+          || resource.data.toUid == request.auth.uid);
+        allow create: if isMember(fid)
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.reflId is string
+          && (onRefl(fid, request.resource.data) || onQuestion(fid, request.resource.data) || onFoldQuestion(fid, request.resource.data))
+          && shortText(request.resource.data.text, 400)
+          && shortText(request.resource.data.fromName, 40);
+        allow delete: if isMember(fid) && (resource.data.fromUid == request.auth.uid
+          || resource.data.toUid == request.auth.uid
+          || tendsFold(fid, resource.data.groupId));
+      }
+
+      // Hearts given to a reflection, after reading it. One per person per reflection (the id is fixed). Same privacy as replies.
+      match /rhearts/{id} {
+        allow read: if isMember(fid) && (resource.data.scope == 'flock'
+          || resource.data.groupId == myGroup(fid)
+          || resource.data.fromUid == request.auth.uid
+          || resource.data.toUid == request.auth.uid);
+        allow create: if isMember(fid)
+          && request.resource.data.fromUid == request.auth.uid
+          && id == request.resource.data.reflId + '__' + request.auth.uid
+          && request.resource.data.toUid != request.auth.uid
+          && onRefl(fid, request.resource.data)
+          && shortText(request.resource.data.fromName, 40);
+        allow delete: if isMember(fid) && (resource.data.fromUid == request.auth.uid
+          || resource.data.toUid == request.auth.uid
+          || tendsFold(fid, resource.data.groupId));
+      }
+
+      // "Me too": someone has the same question. One per person per question (the id is fixed); never on your own.
+      match /metoo/{id} {
+        allow read: if isMember(fid);
+        allow create: if isMember(fid)
+          && request.resource.data.uid == request.auth.uid
+          && id == request.resource.data.qid + '__' + request.auth.uid
+          && request.resource.data.owner != request.auth.uid
+          && request.resource.data.qid is string;
+        allow delete: if isMember(fid) && (resource.data.uid == request.auth.uid || isFounder(fid));
+      }
+
+      // A thumbs up on an answer. One per person per answer (the id is fixed); never on your own.
+      match /rthumbs/{id} {
+        allow read: if isMember(fid);
+        allow create: if isMember(fid)
+          && request.resource.data.fromUid == request.auth.uid
+          && id == request.resource.data.replyId + '__' + request.auth.uid
+          && request.resource.data.toUid != request.auth.uid
+          && exists(/databases/$(database)/documents/flocks/$(fid)/replies/$(request.resource.data.replyId))
+          && get(/databases/$(database)/documents/flocks/$(fid)/replies/$(request.resource.data.replyId)).data.fromUid == request.resource.data.toUid
+          && shortText(request.resource.data.fromName, 40);
+        allow delete: if isMember(fid) && (resource.data.fromUid == request.auth.uid
+          || resource.data.toUid == request.auth.uid
+          || tendsFold(fid, resource.data.groupId));
+      }
     }
   }
 }
