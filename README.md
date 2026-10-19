@@ -517,7 +517,7 @@ Suspension line — in-school and out-of-school together.
 
 ## Data Check
 
-Settings → **Data Check** reads through a year's entries (pick the year at
+Settings → **Data Check** (Admins and the Owner only) reads through a year's entries (pick the year at
 the top) and lists anything that could throw the counts and the Annual
 Summary off: no student name, no class, a class not in that year's
 Classes For The Year list (or not a P1–P6 class if the list isn't set),
@@ -653,3 +653,16 @@ semester. Whole Year halves the year's totals (average per semester) and
 places them with the semester limits (any entry at all is at least Low).
 The period only breaks the year down; the symbols beside names always
 cover the last 8 school weeks.
+
+## Walkthrough (first-visit tour)
+
+Each page (Dashboard, the four logs, a student's profile, Settings, Annual
+Summary Reports and a report summary) has a short spotlight tour (`TOURS`).
+It starts the first time a **new user** opens that page: someone who hadn't
+logged anything on this device when first checked (`tourIsNewUser()`), so
+existing users aren't interrupted. A spotlight cuts out the part being
+described and a card beside it explains it (Next / Back / Skip; Esc closes).
+Steps for parts that aren't on screen (e.g. Admin-only rows) are skipped.
+Seen pages are remembered per account on the device. Help → **Show the
+walkthrough for this page** replays it any time. The overlay sits on
+`<html>` so it lines up with the zoomed tablet/desktop layout.

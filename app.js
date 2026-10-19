@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.66.2";
+const APP_VERSION = "3.67.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -4149,6 +4149,241 @@ function restoreScrollPositions(saved) {
     seen[c]++;
   });
 }
+// ---------- Walkthrough (spotlight tour) ----------
+// Each page has its own short tour, shown the first time a new user opens
+// that page. A spotlight cuts out the part being described and a card
+// beside it explains it. Steps whose part isn't on screen (e.g. Admin-only
+// rows) are skipped. Help → "Show the walkthrough for this page" replays it.
+const tourQ = (s) => document.querySelector(`#app ${s}`);
+const tourPanelWith = (text) => [...document.querySelectorAll("#app .dd-panel")].find((p) => p.querySelector(".dd-dash-title") && p.textContent.includes(text)) || null;
+const tourPanelOf = (s) => { const el = tourQ(s); return el ? el.closest(".dd-panel") : null; };
+const tourParentOf = (s) => { const el = tourQ(s); return el ? el.parentElement : null; };
+const tourLogSteps = (kind) => {
+  const what = { log: "grooming", suspensions: "suspension", timeOuts: "time out", parentMeetings: "parent meeting" }[kind];
+  const tab = { log: "set-discipline-filter", suspensions: "set-susp-tab", timeOuts: "set-to-tab", parentMeetings: "set-pm-tab" }[kind];
+  const steps = [
+    { el: () => tourQ(".dd-level-counters"), title: "By level", text: "This year's entries for each level. Tap a level to narrow the list down to its classes." },
+    { el: () => tourParentOf(`[data-action="${tab}"]`), title: kind === "log" ? "In progress or resolved" : "Filter by date", text: kind === "log" ? "Show every entry, only those still in progress, or only the resolved ones." : "Show everything, this week's, upcoming or completed entries." },
+    { el: () => tourQ(".dd-search-with-export input"), title: "Search", text: `Find a ${what} entry by student name, class, ${kind === "log" ? "issue" : "reason"} or teacher.` },
+    { el: () => tourQ(".dd-search-export"), title: "Download Excel", text: "Save this log as an Excel file for the dates you choose." },
+  ];
+  if (kind === "log") steps.push({ el: () => tourQ(".dd-detail-card"), title: "Each entry", text: "The dot is orange while an issue is in progress and green once it's resolved. Tap ▼ to see each issue, its warning and due date, and to mark it Resolved or Escalate it. A repeat issue shows the looping arrows." });
+  else if (kind === "parentMeetings") steps.push(
+    { el: () => tourQ(".dd-detail-card"), title: "Each meeting", text: "Date, time and room. Tap ▼ for the details, notes and history." },
+    { el: () => tourQ(".dd-pm-link-btn"), title: "Linked case", text: "Shows whether this meeting is linked to a suspension or time out. A struck-out link means it isn't. Tap it to change the link." },
+    { el: () => tourParentOf('[data-action="set-pm-status-quick"]'), title: "Postponed or cancelled", text: "Mark a meeting as postponed (and pick the new date) or cancelled." },
+  );
+  else steps.push({ el: () => tourQ(".dd-detail-card"), title: "Each entry", text: `Dates, class and reason for each ${what}. The dot turns green once it's completed. Tap ▼ for the days, notes and history.` });
+  steps.push({ el: () => tourQ(".dd-card-student-link"), title: "Student profile", text: "Tap a name to see all of that student's records across the four logs, and their Behavioural Trend." });
+  return steps;
+};
+const TOURS = {
+  dashboard: [
+    { title: "Welcome to Discipline Diary", text: "A quick look around this page. Each page shows its own short walkthrough the first time you open it." },
+    { el: () => tourParentOf(".dd-nav-home"), title: "Pages", text: "The home icon is this dashboard. The tabs open the Grooming, Suspension, Time Out and Parent Meet logs." },
+    { el: () => document.getElementById("btn-help"), title: "Help", text: "How everything works. You can replay the walkthrough for any page from here." },
+    { el: () => document.getElementById("btn-settings"), title: "Settings", text: "Holidays, classes for the year, report summaries, teacher access and more." },
+    { el: () => document.getElementById("btn-backup"), title: "Backup", text: "Download a full backup of all four logs as a file." },
+    { el: () => tourQ(".dd-new-entry-row"), title: "Log something new", text: "Add a grooming issue, suspension, time out or parent meeting. These buttons are on every log page too." },
+    { el: () => tourPanelWith("Grooming Follow-Up List"), title: "Grooming follow-ups", text: "Grooming issues due today, tomorrow and in 2 days. Tap a student to go straight to the entry." },
+    { el: () => tourQ(".dd-range-rows"), title: "Period", text: "Choose what to count: a day, week, month, year, a term, all, or your own range." },
+    { el: () => tourQ(".dd-show-box"), title: "Show", text: "Turn each kind of record on or off." },
+    { el: () => tourQ(".dd-tally-grid"), title: "Totals", text: "How many of each there are in the chosen period." },
+    { el: () => { const g = tourQ(".dd-cal-grid"); const nav = tourParentOf('[data-action="cal-prev-month"]'); return g ? [nav, g].filter(Boolean) : tourQ(".dd-trend-lines-wrap"); }, title: "Calendar", text: "Marks show what happened each day; weekends and holidays are shaded. Tap a day to list its records." },
+    { el: () => tourQ(".dd-cal-legend"), title: "Key", text: "What each colour and mark means." },
+    { el: () => tourPanelOf("#watch-period"), title: "Students' Watchlist", text: "Students at High, Medium or Low risk this semester. A red ! means getting worse and a green thumbs-up means improving. Tap ⓘ to see how risk is worked out." },
+  ],
+  log: tourLogSteps("log"),
+  suspensions: tourLogSteps("suspensions"),
+  timeOuts: tourLogSteps("timeOuts"),
+  parentMeetings: tourLogSteps("parentMeetings"),
+  settings: [
+    { el: () => tourQ('[data-action="settings-open-soy"]'), title: "Start of Year", text: "A checklist for the new school year: confirm classes, students who share a name, and students who have left." },
+    { el: () => tourQ('[data-action="settings-open-years"]'), title: "Report summaries", text: "Semester 1, Semester 2 and Annual report summaries, with charts, trend analysis and recommendations." },
+    { el: () => tourQ('[data-action="settings-open-classes"]'), title: "Classes For The Year", text: "The classes the school has this year." },
+    { el: () => tourQ('[data-action="settings-open-holidays"]'), title: "Holidays, closures and HBL", text: "Keeps due dates and the calendar on school days." },
+    { el: () => tourQ('[data-action="settings-open-access"]'), title: "Authorised Teachers", text: "Who can sign in, and who is an Admin." },
+    { el: () => tourQ('[data-action="settings-open-links"]'), title: "Student Links", text: "Students confirmed to be the same child across years or classes. Admins can change or remove a link." },
+    { el: () => tourQ('[data-action="settings-open-datacheck"]'), title: "Data Check", text: "Finds entries that could throw the counts off, like a missing class. Nothing is changed for you." },
+    { el: () => document.getElementById("btn-app-sign-out"), title: "Sign out", text: "Signs you out on this device." },
+  ],
+  yearList: [
+    { el: () => tourQ('[data-action="toggle-report-year"]'), title: "Each year", text: "Tap a year to show its Semester 1, Semester 2 and Annual report summaries. A lock means a summary isn't open yet." },
+    { el: () => tourQ(".dd-rep-kind-open"), title: "Open a summary", text: "Semester 1 opens on the first day of Term 1, Semester 2 on the first day of Term 3, and the Annual summary on the Saturday of Term 4's last week." },
+    { el: () => tourQ(".dd-rep-lock"), title: "Not open yet", text: "A lock means the summary isn't open yet. Admins can tap it to look early; it locks again after 5 seconds." },
+  ],
+  yearReport: [
+    { el: () => document.getElementById("btn-print-report"), title: "Print", text: "Print the summary, one section per page." },
+    { el: () => document.getElementById("btn-export-pdf"), title: "PDF", text: "Download the summary as a PDF." },
+    { el: () => document.getElementById("btn-export-report-xlsx"), title: "Excel", text: "Download the tables behind the summary, or the full logs, as Excel." },
+    { el: () => tourQ(".dd-tally-grid"), title: "At a glance", text: "Totals for the period, then breakdowns by term, month, day, level and class further down." },
+    { el: () => { const t = [...document.querySelectorAll("#app .dd-dash-title")].find((x) => x.textContent.trim() === "Trend Analysis"); return t ? [t, t.nextElementSibling].filter(Boolean) : null; }, title: "Trend analysis and recommendations", text: "What changed, when and who, with suggested next steps for specific students." },
+  ],
+  studentView: [
+    { el: () => { const t = [...document.querySelectorAll("#app .dd-dash-title")]; return t.length ? t[0] : null; }, title: "One student, all logs", text: "Everything on file for this student this year, grouped by log. Earlier years are listed at the bottom." },
+    { el: () => { const h = tourQ(".dd-trend-head"); const tb = tourQ(".dd-trend-table"); return h ? [h, tb].filter(Boolean) : null; }, title: "Behavioural Trend", text: "Counts for this student over time. Use Comparing to switch between month, term, semester and year." },
+  ],
+};
+let tour = null; // { key, steps, i }
+let tourTimer = null;
+function tourPageKey() {
+  if (state.section === "settings") return { menu: "settings", yearList: "yearList", yearReport: "yearReport" }[state.settingsView] || null;
+  return TOURS[state.section] ? state.section : null;
+}
+function tourStoreKey(name) { return `dd-tour-${name}:${(state.authUser && state.authUser.email) || ""}`; }
+function tourGet(name) { try { return localStorage.getItem(tourStoreKey(name)); } catch { return null; } }
+function tourSet(name, v) { try { localStorage.setItem(tourStoreKey(name), v); } catch { /* storage unavailable */ } }
+// "New user" is decided once per device: someone who hasn't logged anything
+// yet. Existing users don't get the tours automatically (Help replays them).
+function tourIsNewUser() {
+  const saved = tourGet("new");
+  if (saved !== null) return saved === "1";
+  const uid = state.authUser && state.authUser.uid, name = teacherName();
+  const mine = (r) => (uid && r.loggedByUid === uid) || (name && r.loggedBy === name);
+  const isNew = ![state.incidents, state.suspensions, state.timeOuts, state.parentMeetings].some((l) => (l || []).some(mine));
+  tourSet("new", isNew ? "1" : "0");
+  return isNew;
+}
+function tourSeen() { try { return JSON.parse(tourGet("seen") || "[]"); } catch { return []; } }
+function tourMarkSeen(key) { const s = tourSeen(); if (!s.includes(key)) { s.push(key); tourSet("seen", JSON.stringify(s)); } }
+function tourBusy() { return !!document.querySelector("#app .dd-modal-backdrop") || state.showHelp; }
+// Called after every render: re-place an open tour (the page was redrawn),
+// or start this page's tour if a new user hasn't seen it yet.
+function tourAfterRender() {
+  if (tour) {
+    if (tourPageKey() !== tour.key) { tourEnd(false); return; }
+    tourShow(false);
+    return;
+  }
+  clearTimeout(tourTimer);
+  const key = tourPageKey();
+  if (!key || tourSeen().includes(key) || !tourIsNewUser()) return;
+  tourTimer = setTimeout(() => {
+    if (tour || tourPageKey() !== key || tourBusy() || tourSeen().includes(key)) return;
+    tourStart(key);
+  }, 600);
+}
+function tourStart(key) {
+  const steps = (TOURS[key] || []);
+  if (!steps.some((s) => !s.el || tourTargets(s).length)) return;
+  tour = { key, steps, i: -1 };
+  tourBuild();
+  tourGo(1);
+}
+function tourTargets(step) {
+  if (!step.el) return [];
+  let t = step.el();
+  if (!t) return [];
+  if (!Array.isArray(t)) t = [t];
+  return t.filter((el) => el && el.isConnected && el.getClientRects().length && el.getBoundingClientRect().width > 0);
+}
+// Moves to the next step in the given direction that has something to show.
+function tourGo(dir) {
+  let i = tour.i + dir;
+  while (i >= 0 && i < tour.steps.length && tour.steps[i].el && !tourTargets(tour.steps[i]).length) i += dir;
+  if (i < 0) return;
+  if (i >= tour.steps.length) { tourEnd(true); return; }
+  tour.i = i;
+  tourShow(true);
+}
+function tourVisibleSteps() { return tour.steps.filter((s) => !s.el || tourTargets(s).length); }
+function tourBuild() {
+  let rootEl = document.getElementById("dd-tour");
+  if (rootEl) rootEl.remove();
+  rootEl = document.createElement("div");
+  rootEl.id = "dd-tour";
+  rootEl.innerHTML = `<div class="dd-tour-hole"></div><div class="dd-tour-card" role="dialog" aria-modal="true" aria-labelledby="dd-tour-title"><div class="dd-tour-title" id="dd-tour-title"></div><div class="dd-tour-text"></div><div class="dd-tour-foot"><span class="dd-tour-count"></span><button type="button" class="dd-tour-skip">Skip</button><button type="button" class="dd-tour-back">Back</button><button type="button" class="dd-tour-next">Next</button></div></div>`;
+  // On <html>, not <body>: tablets and desktops zoom <body> up, and the
+  // spotlight works in real screen pixels.
+  document.documentElement.appendChild(rootEl);
+  rootEl.querySelector(".dd-tour-next").addEventListener("click", () => tourGo(1));
+  rootEl.querySelector(".dd-tour-back").addEventListener("click", () => tourGo(-1));
+  rootEl.querySelector(".dd-tour-skip").addEventListener("click", () => tourEnd(true));
+  // Taps outside the card do nothing (the page underneath stays put).
+  rootEl.addEventListener("click", (e) => e.stopPropagation());
+  rootEl.addEventListener("touchend", (e) => e.stopPropagation());
+}
+function tourEnd(markSeen) {
+  if (tour && markSeen) tourMarkSeen(tour.key);
+  tour = null;
+  const rootEl = document.getElementById("dd-tour");
+  if (rootEl) rootEl.remove();
+}
+// Browsers differ in whether getBoundingClientRect() inside a zoomed <body>
+// is in screen pixels or unzoomed ones; measuring <body> (which fills the
+// window) tells which, so rects can be turned into screen pixels.
+function tourScale() {
+  const bw = document.body.getBoundingClientRect().width;
+  const k = bw ? document.documentElement.clientWidth / bw : 1;
+  return Math.abs(k - 1) < 0.02 ? 1 : k;
+}
+function tourZoom() { return parseFloat(getComputedStyle(document.body).zoom) || 1; }
+function tourUnionRect(els) {
+  const k = tourScale();
+  const rs = els.map((el) => { const r = el.getBoundingClientRect(); return { top: r.top * k, left: r.left * k, bottom: r.bottom * k, right: r.right * k }; });
+  const top = Math.min(...rs.map((r) => r.top)), left = Math.min(...rs.map((r) => r.left));
+  const bottom = Math.max(...rs.map((r) => r.bottom)), right = Math.max(...rs.map((r) => r.right));
+  return { top, left, bottom, right, width: right - left, height: bottom - top };
+}
+// Places the spotlight and the card. With `scroll`, first scrolls so the
+// part (and the card, when they fit together) is on screen.
+function tourShow(scroll) {
+  const rootEl = document.getElementById("dd-tour");
+  if (!tour || !rootEl) return;
+  const step = tour.steps[tour.i];
+  const targets = tourTargets(step);
+  if (step.el && !targets.length) { tourGo(1); return; }
+  const card = rootEl.querySelector(".dd-tour-card"), hole = rootEl.querySelector(".dd-tour-hole");
+  const visible = tourVisibleSteps();
+  card.querySelector(".dd-tour-title").textContent = step.title;
+  card.querySelector(".dd-tour-text").textContent = step.text;
+  card.querySelector(".dd-tour-count").textContent = `${visible.indexOf(step) + 1} of ${visible.length}`;
+  card.querySelector(".dd-tour-back").hidden = visible.indexOf(step) === 0;
+  card.querySelector(".dd-tour-next").textContent = visible.indexOf(step) === visible.length - 1 ? "Done" : "Next";
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight, z = tourZoom(), M = 12, GAP = 12, PAD = 6 * z;
+  const cw = Math.min(360 * z, vw - 2 * M);
+  card.style.fontSize = `${14 * z}px`;
+  card.style.width = `${cw}px`;
+  const ch = card.offsetHeight;
+  if (!targets.length) {
+    hole.classList.add("dd-tour-hole-none");
+    card.style.left = `${(vw - cw) / 2}px`;
+    card.style.top = `${Math.max(M, (vh - ch) / 2)}px`;
+    if (scroll) card.querySelector(".dd-tour-next").focus({ preventScroll: true });
+    return;
+  }
+  hole.classList.remove("dd-tour-hole-none");
+  if (scroll) {
+    const r = tourUnionRect(targets);
+    const docTop = r.top + window.scrollY;
+    const need = r.height + 2 * PAD + GAP + ch;
+    let want = need <= vh - 2 * M ? docTop - Math.max(M + PAD, (vh - need) / 2) : docTop - M - PAD;
+    want = Math.max(0, Math.min(want, document.documentElement.scrollHeight - vh));
+    if (Math.abs(want - window.scrollY) > 2) window.scrollTo(0, want);
+  }
+  const r = tourUnionRect(targets);
+  let top = Math.max(M, r.top - PAD), bottom = Math.min(vh - M, r.bottom + PAD);
+  const left = Math.max(4, r.left - PAD), right = Math.min(vw - 4, r.right + PAD);
+  const below = vh - bottom - GAP - M, above = top - GAP - M;
+  let cardTop;
+  if (below >= ch) cardTop = bottom + GAP;
+  else if (above >= ch) cardTop = top - GAP - ch;
+  else { cardTop = vh - M - ch; bottom = Math.min(bottom, cardTop - GAP); }
+  if (bottom - top < 8) { top = Math.max(M, cardTop - GAP - 40); bottom = cardTop - GAP; }
+  Object.assign(hole.style, { top: `${top}px`, left: `${left}px`, width: `${right - left}px`, height: `${bottom - top}px` });
+  const cx = (left + right) / 2;
+  card.style.left = `${Math.max(M, Math.min(vw - M - cw, cx - cw / 2))}px`;
+  card.style.top = `${cardTop}px`;
+  if (scroll) card.querySelector(".dd-tour-next").focus({ preventScroll: true });
+}
+window.addEventListener("resize", () => { if (tour) tourShow(true); });
+document.addEventListener("keydown", (e) => {
+  if (!tour) return;
+  if (e.key === "Escape") { e.preventDefault(); tourEnd(true); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); tourGo(1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); tourGo(-1); }
+});
+
 function render() {
   if (!state.authReady) { root.innerHTML = `<div class="dd-center" style="flex-direction:column"><div class="dd-mono">Opening the log…</div>${isOffline() ? OFFLINE_NOTE : ""}</div>`; return; }
   if (!state.authUser) { root.innerHTML = renderSignInScreen(); attachSignInListeners(); return; }
@@ -4162,6 +4397,7 @@ function render() {
   fitOneLine();
   restoreScrollPositions(scrolls);
   captureModalBaselines();
+  tourAfterRender();
   // The Authorised Teachers List's add/remove/promote actions can fail
   // silently-looking otherwise (e.g. a rules rejection) — the confirm
   // modal closes either way, so without this the only sign of trouble is
@@ -4309,6 +4545,7 @@ function renderHelpModal() {
           <div class="dd-modal-title">How to use Discipline Diary</div>
           <button type="button" class="dd-modal-close" id="help-modal-close">✕</button>
         </div>
+        ${tourPageKey() ? `<button type="button" class="dd-btn-primary dd-tour-replay" id="btn-tour-replay">Show the walkthrough for this page</button>` : ""}
         <div class="dd-help-section">
           <div class="dd-help-heading">Dashboard</div>
           <p>The home icon shows trend charts (Day/Week/Month/Year, Term 1–4, or a Custom range) and the Students' Watchlist — High/Medium/Low Risk, based on grooming warnings, suspensions and time outs this semester (Terms 1–2 until Term 3 starts, then Terms 3–4). Tap the ⓘ next to the watchlist heading to see exactly what puts a student in each tier. Tap a student's name anywhere in the app to see this year's records for them across all four logs, with earlier years listed at the bottom (tap a year to open it). Because two students can share a name and classes change every year, an earlier year is only added after a teacher confirms it's the same student: the app asks once (right after saving, and in the student's view) and remembers the answer for everyone. It also asks when the same name appears in another class of the same level in the same year (a mid-year class change); Yes counts both classes as one student, including on the Students' Watchlist. All answers are listed under Settings → Student Links, where Admins and the Owner can change or remove them. The P1–P6 boxes at the top of each log count this year's entries only.</p>
@@ -6339,7 +6576,7 @@ function renderSettingsSection() {
     body = `
       ${backRow("Settings", "settings-back-to-menu")}
       ${renderReportYearList()}`;
-  } else if (state.settingsView === "dataCheck") {
+  } else if (state.settingsView === "dataCheck" && state.isAdmin) {
     body = `
       ${backRow("Settings", "settings-back-to-menu")}
       ${renderDataCheck()}`;
@@ -6533,7 +6770,7 @@ function renderSettingsSection() {
         ${menuRow("Setting Holidays/School Closure/HBL Days", "settings-open-holidays")}
         ${menuRow("Authorised Teachers List", "settings-open-access")}
         ${menuRow("Student Links", "settings-open-links")}
-        ${(() => { const n = computeDataCheck(year).total; return menuRow(`Data Check${n ? ` <span class="dd-dc-badge">${n}</span>` : ""}`, "settings-open-datacheck"); })()}
+        ${state.isAdmin ? (() => { const n = computeDataCheck(year).total; return menuRow(`Data Check${n ? ` <span class="dd-dc-badge">${n}</span>` : ""}`, "settings-open-datacheck"); })() : ""}
       </div>
       <button type="button" class="dd-back-link" id="btn-app-sign-out" style="margin-top:16px">Sign out</button>`;
   }
@@ -10378,6 +10615,12 @@ function attachMainListeners() {
 
   const helpBtn = document.getElementById("btn-help");
   if (helpBtn) helpBtn.addEventListener("click", () => { state.showHelp = true; render(); });
+  const tourReplayBtn = document.getElementById("btn-tour-replay");
+  if (tourReplayBtn) tourReplayBtn.addEventListener("click", () => {
+    state.showHelp = false; render();
+    const key = tourPageKey();
+    if (key) setTimeout(() => { if (!tour) tourStart(key); }, 50);
+  });
   if (state.showHelp) {
     document.getElementById("help-modal-close").addEventListener("click", () => { state.showHelp = false; render(); });
     document.getElementById("help-modal-backdrop").addEventListener("click", (e) => {

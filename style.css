@@ -1503,3 +1503,20 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 .dd-search-with-export { display: flex; align-items: center; gap: 8px; }
 .dd-search-with-export .dd-search { flex: 1; min-width: 0; }
 .dd-search-export { padding: 2px; }
+
+/* Walkthrough: spotlight + card, above everything. */
+#dd-tour { position: fixed; inset: 0; z-index: 10000; }
+.dd-tour-hole { position: fixed; border-radius: 10px; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 0 0 9999px rgba(15, 23, 38, 0.66); transition: top 0.25s ease, left 0.25s ease, width 0.25s ease, height 0.25s ease; pointer-events: none; }
+.dd-tour-hole-none { top: 50% !important; left: 50% !important; width: 0 !important; height: 0 !important; box-shadow: 0 0 0 9999px rgba(15, 23, 38, 0.66); }
+.dd-tour-card { position: fixed; box-sizing: border-box; background: #FBFAF6; border-radius: 0.86em; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); padding: 1.15em 1.15em 0.86em; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1B2A41; transition: top 0.25s ease, left 0.25s ease; }
+.dd-tour-title { font-size: 1.15em; font-weight: 700; margin-bottom: 0.4em; }
+.dd-tour-text { font-size: 1em; line-height: 1.5; color: #4A4536; }
+.dd-tour-foot { display: flex; align-items: center; gap: 0.57em; margin-top: 1em; }
+.dd-tour-count { font-size: 0.86em; color: #8A8571; margin-right: auto; white-space: nowrap; }
+.dd-tour-foot button { font-family: inherit; font-size: 1em; font-weight: 600; border-radius: 0.57em; padding: 0.57em 1em; cursor: pointer; border: 1px solid transparent; }
+.dd-tour-skip { background: none; color: #8A8571; padding-left: 0.43em !important; padding-right: 0.43em !important; }
+.dd-tour-back { background: #fff; color: #1B2A41; border-color: #C9C4B4 !important; }
+.dd-tour-next { background: #1B2A41; color: #fff; min-width: 5.2em; }
+.dd-tour-back[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .dd-tour-hole, .dd-tour-card { transition: none; } }
+.dd-tour-replay { width: 100%; margin: 0 0 14px; }
