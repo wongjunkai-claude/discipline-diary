@@ -1520,3 +1520,11 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 .dd-tour-back[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .dd-tour-hole, .dd-tour-card { transition: none; } }
 .dd-tour-replay { width: 100%; margin: 0 0 14px; }
+
+/* "Install Discipline Diary as an app" bar (Android / desktop Chrome). */
+.dd-install-bar { display: flex; align-items: center; gap: 10px; background: #F3EBD8; border-bottom: 1px solid #D9C9A3; padding: 8px 16px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+.dd-install-text { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #1B2A41; }
+.dd-install-bar button { font-family: inherit; font-size: 13px; font-weight: 600; border-radius: 8px; padding: 7px 12px; cursor: pointer; border: none; white-space: nowrap; }
+.dd-install-later { background: none; color: #8A8571; padding-left: 4px !important; padding-right: 4px !important; }
+.dd-install-go { background: #1B2A41; color: #fff; }
+

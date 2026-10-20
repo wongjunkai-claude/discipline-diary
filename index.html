@@ -2,7 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" id="dd-viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <script>
+    // Phones narrower than an iPhone (many Androids, or a larger "Display
+    // size" setting) lay the app out at iPhone width (390) and shrink it to
+    // fit the screen, so it looks the same instead of re-wrapping.
+    (function () {
+      var BASE = 390, meta = document.getElementById('dd-viewport');
+      var normal = meta.getAttribute('content');
+      function fit() {
+        var portrait = !window.matchMedia || matchMedia('(orientation: portrait)').matches;
+        var a = screen.width, b = screen.height;
+        var w = portrait ? Math.min(a, b) : Math.max(a, b);
+        var sc = Math.floor((w / BASE) * 10000) / 10000;
+        var want = w > 0 && w < BASE ? 'width=' + BASE + ', initial-scale=' + sc + ', minimum-scale=' + sc + ', maximum-scale=' + sc + ', user-scalable=no, viewport-fit=cover' : normal;
+        if (meta.getAttribute('content') !== want) meta.setAttribute('content', want);
+      }
+      fit();
+      window.addEventListener('orientationchange', function () { setTimeout(fit, 50); });
+      window.addEventListener('resize', fit);
+    })();
+  </script>
   <meta name="theme-color" content="#1B2A41" />
   <title>Discipline Diary</title>
   <meta name="apple-mobile-web-app-title" content="Discipline Diary" />

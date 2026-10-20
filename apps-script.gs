@@ -124,6 +124,13 @@ function doPost(e) {
       sheet.appendRow(config.headers);
       sheet.setFrozenRows(1);
     }
+    // Records deleted for good (students who left more than two years
+    // ago) are removed from the sheet too.
+    if (data.purge === true) {
+      var purgeRow = findRowById(sheet, data.id);
+      if (purgeRow > 0) sheet.deleteRow(purgeRow);
+      return jsonOut({ ok: true, purged: purgeRow > 0 });
+    }
     var row = config.buildRow(data, new Date()).map(safeCell);
     var existingRow = findRowById(sheet, data.id);
     if (existingRow > 0) {

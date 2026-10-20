@@ -666,3 +666,38 @@ Steps for parts that aren't on screen (e.g. Admin-only rows) are skipped.
 Seen pages are remembered per account on the device. Help → **Show the
 walkthrough for this page** replays it any time. The overlay sits on
 `<html>` so it lines up with the zoomed tablet/desktop layout.
+
+## Who can delete
+
+Admins and the Owner can delete any entry. A teacher can delete only the
+entries they logged (`canDeleteRecord()`: matched on `loggedByUid`, or on the
+teacher's name for entries saved before that was recorded); the Delete Entry
+button is hidden on anyone else's. Editing is unchanged. `firestore.rules`
+enforces the same (`canDeleteEntry()`), so **republish the rules** after
+updating.
+
+## Records of students who have left
+
+Records are kept until two full years after the student finishes P6, then
+deleted. The P6 year is worked out from each record (year + 6 − level: a P4
+entry in 2024 → P6 in 2026 → kept through 2028). Start of Year step 4
+(Admins/Owner) lists the records now due and deletes them for good after a
+confirmation, including any copies in Recently Deleted and their rows in the
+Google Sheet (`purge: true`; **redeploy the Apps Script** for that part).
+The automatic Firestore backup drops them on its next write. A student who
+repeated a year counts from their class at the time.
+
+## Install app (Android)
+
+When an Android browser (or desktop Chrome/Edge) offers to install the app,
+a bar under the header shows **Install** and **Not now** (hidden for 14
+days). Install opens the phone's own install screen; the bar never shows
+once the app is running installed.
+
+## Narrow phones
+
+Phones narrower than an iPhone (many Androids, or a phone with a larger
+"Display size" setting) lay the app out at 390px wide, iPhone width, and
+shrink it to fit the screen (the viewport script in `index.html`), so it
+looks the same as on an iPhone instead of re-wrapping text and buttons.
+Screens 390px and wider (iPhones, tablets, computers) are unchanged.

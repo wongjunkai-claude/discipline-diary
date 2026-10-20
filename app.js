@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.67.1";
+const APP_VERSION = "3.68.1";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -733,6 +733,15 @@ function diffText(oldObj, newObj, fields) {
 
 // Deleting an entry now just asks "Delete the entry?" with Yes/No,
 // rather than a password — the confirmation IS the safeguard.
+// Deleting an entry: Admins and the Owner can delete any entry; a teacher
+// only the entries they logged themselves.
+function canDeleteRecord(r) {
+  if (!r) return false;
+  if (state.isAdmin) return true;
+  const uid = state.authUser && state.authUser.uid;
+  if (r.loggedByUid) return r.loggedByUid === uid;
+  return !!r.loggedBy && r.loggedBy === teacherName();
+}
 function requestDeleteConfirmation(type, id, extra) {
   // Drop focus first so any on-screen keyboard starts collapsing before the
   // modal is drawn, rather than shifting the modal underneath the finger
@@ -750,10 +759,13 @@ async function confirmDeleteYes() {
   if (!target) return;
   state.confirmDeleteTarget = null;
   if (target.type === "setPostponeDate") { render(); await setPmPostponedDate(target.id, target.date || "", target.slot); return; }
+  const ownLog = { incident: state.incidents, suspension: state.suspensions, timeOut: state.timeOuts, parentMeeting: state.parentMeetings }[target.type];
+  if (ownLog && !canDeleteRecord(ownLog.find((x) => x.id === target.id))) { render(); return; }
   if (target.type === "incident") await deleteIncident(target.id);
   else if (target.type === "suspension") await deleteSuspension(target.id);
   else if (target.type === "timeOut") await deleteTimeOut(target.id);
   else if (target.type === "parentMeeting") await deleteParentMeeting(target.id);
+  else if (target.type === "purgeGraduated") await purgeGraduatedRecords();
   else if (target.type === "publicHoliday") {
     const remaining = (state.holidays?.publicHolidayEntries || []).filter((e) => e.id !== target.id);
     try { await setDoc(doc(db, "holidays", "singapore"), { publicHolidayEntries: remaining }, { merge: true }); }
@@ -1269,6 +1281,26 @@ const state = {
 };
 
 const root = document.getElementById("app");
+// "Install app": Android browsers (and desktop Chrome/Edge) say when the app
+// can be installed. The bar offers it until it's installed or dismissed;
+// "Not now" hides it for 14 days on this device.
+let installPrompt = null;
+const INSTALL_SNOOZE_KEY = "dd-install-snoozed-until";
+function installSnoozed() { try { return Date.now() < Number(localStorage.getItem(INSTALL_SNOOZE_KEY) || 0); } catch { return false; } }
+function isStandaloneApp() { return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true; }
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; if (state.authUser) render(); });
+window.addEventListener("appinstalled", () => { installPrompt = null; render(); });
+async function runInstallPrompt() {
+  const p = installPrompt;
+  if (!p) return;
+  installPrompt = null;
+  render();
+  try { await p.prompt(); await p.userChoice; } catch (e) { /* the browser closed it */ }
+}
+function renderInstallBar() {
+  if (!installPrompt || isStandaloneApp() || installSnoozed()) return "";
+  return `<div class="dd-install-bar" role="region" aria-label="Install"><span class="dd-install-text">Install Discipline Diary as an app</span><button type="button" class="dd-install-later" id="btn-install-later">Not now</button><button type="button" class="dd-install-go" id="btn-install-app">Install</button></div>`;
+}
 let unsubIncidents = null;
 let unsubSuspensions = null;
 let unsubTimeOuts = null;
@@ -4349,7 +4381,7 @@ function tourShow(scroll) {
     hole.classList.add("dd-tour-hole-none");
     card.style.left = `${(vw - cw) / 2}px`;
     card.style.top = `${Math.max(M, (vh - ch) / 2)}px`;
-    if (scroll) card.querySelector(".dd-tour-next").focus({ preventScroll: true });
+    if (scroll && window.matchMedia && matchMedia("(hover: hover)").matches) card.querySelector(".dd-tour-next").focus({ preventScroll: true });
     return;
   }
   hole.classList.remove("dd-tour-hole-none");
@@ -4374,7 +4406,7 @@ function tourShow(scroll) {
   const cx = (left + right) / 2;
   card.style.left = `${Math.max(M, Math.min(vw - M - cw, cx - cw / 2))}px`;
   card.style.top = `${cardTop}px`;
-  if (scroll) card.querySelector(".dd-tour-next").focus({ preventScroll: true });
+  if (scroll && window.matchMedia && matchMedia("(hover: hover)").matches) card.querySelector(".dd-tour-next").focus({ preventScroll: true });
 }
 window.addEventListener("resize", () => { if (tour) tourShow(true); });
 document.addEventListener("keydown", (e) => {
@@ -4532,6 +4564,7 @@ function renderNav() {
         </div>
       </div>
     </div>
+    ${renderInstallBar()}
     ${isOffline() ? `<div class="dd-backup-warning" role="status">You're offline — new entries and changes can't be saved until you're connected again.</div>` : ""}
     ${state.backupError ? `<div class="dd-backup-warning" role="alert">Automatic backup failed (${escapeHtml(state.backupError)}). Your entries are still saved — but please tap the download button (top right) to keep a backup file, and let the app owner know.</div>` : ""}
     ${state.showHelp ? renderHelpModal() : ""}`;
@@ -6417,7 +6450,63 @@ function computeStartOfYear(year = new Date().getFullYear()) {
   });
   const left = [...leftMap.values()].sort((a, b) => a.cls.localeCompare(b.cls) || a.name.localeCompare(b.name));
   const classesDone = cl.source === "set";
-  return { year, cl, classesDone, questions, left, outstanding: (classesDone ? 0 : 1) + questions.length };
+  const purge = computeGraduatedPurge(year);
+  return { year, cl, classesDone, questions, left, purge, outstanding: (classesDone ? 0 : 1) + questions.length + (purge.items.length ? 1 : 0) };
+}
+// ---------- Keeping records after students leave ----------
+// A student's records are kept until two full years after they finish P6,
+// then deleted. The year a record's student finishes P6 is worked out from
+// the record itself: a P4 entry in 2024 → finishes P6 in 2026 → kept through
+// 2028 → deleted from 2029. Admins do the deleting from Start of Year.
+const RETAIN_YEARS_AFTER_P6 = 2;
+const PURGE_LOGS = [
+  { coll: "incidents", sheet: "Incident", date: (r) => r.date },
+  { coll: "suspensions", sheet: "Suspension", date: (r) => r.startDate },
+  { coll: "timeOuts", sheet: "TimeOut", date: (r) => r.startDate },
+  { coll: "parentMeetings", sheet: "ParentMeeting", date: (r) => pmDate(r) || r.date },
+];
+function recordP6Year(date, cls) {
+  const y = parseInt(String(date || "").slice(0, 4), 10), lvl = classLevel(cls);
+  return y && lvl >= 1 && lvl <= 6 ? y + (6 - lvl) : null;
+}
+function computeGraduatedPurge(year = new Date().getFullYear()) {
+  const lastP6Year = year - RETAIN_YEARS_AFTER_P6 - 1;
+  const items = [], byLog = {}, students = new Set();
+  PURGE_LOGS.forEach((L) => {
+    (state[L.coll] || []).forEach((r) => {
+      const g = recordP6Year(L.date(r), r.studentClass);
+      if (g === null || g > lastP6Year) return;
+      items.push({ L, r });
+      byLog[L.coll] = (byLog[L.coll] || 0) + 1;
+      students.add(`${normalizeName(r.studentName || "")}|${g}`);
+    });
+  });
+  return { lastP6Year, items, byLog, students: students.size };
+}
+async function purgeGraduatedRecords() {
+  const p = computeGraduatedPurge();
+  if (!state.isAdmin || !p.items.length) return;
+  state.purgeProgress = { done: 0, total: p.items.length };
+  state.saveError = false;
+  render();
+  try {
+    for (const { L, r } of p.items) {
+      await deleteDoc(doc(db, L.coll, r.id));
+      logToSheet({ recordType: L.sheet, id: r.id, purge: true });
+      state.purgeProgress.done++;
+      if (state.purgeProgress.done % 10 === 0) render();
+    }
+    // Copies kept in Recently Deleted go too.
+    for (const d of state.deletedItems || []) {
+      const data = d.data || {};
+      const L = PURGE_LOGS.find((x) => x.coll === d.collectionName);
+      const g = L ? recordP6Year(L.date(data), data.studentClass) : null;
+      if (g !== null && g <= p.lastP6Year) await deleteDoc(doc(db, "deletedItems", d.id));
+    }
+    try { await setDoc(doc(db, "settings", "retention"), { lastPurge: { at: Date.now(), by: teacherName(), count: p.items.length, finishedP6By: p.lastP6Year } }, { merge: true }); } catch (e) { /* the log of the clean-up is a nice-to-have */ }
+  } catch (err) { state.saveError = true; state.saveErrorDetail = err?.message || String(err); }
+  state.purgeProgress = null;
+  render();
 }
 function renderStartOfYear() {
   const r = computeStartOfYear();
@@ -6444,7 +6533,7 @@ function renderStartOfYear() {
   const leftOpen = !!state.soyLeftOpen;
   const leftInner = r.left.length === 0
     ? `<div class="dd-mono-muted" style="font-size:13px">No P6 students had entries in ${year - 1}.</div>`
-    : `<div class="dd-soy-text">${r.left.length} P6 student${r.left.length === 1 ? "" : "s"} from ${year - 1} had entries. They've left. Their records stay in the logs and past Annual Summaries. Nothing to do here.</div>
+    : `<div class="dd-soy-text">${r.left.length} P6 student${r.left.length === 1 ? "" : "s"} from ${year - 1} had entries. They've left. Their records stay in the logs and past Annual Summaries until two years after they left (see step 4).</div>
        <button type="button" class="dd-back-link" data-action="soy-toggle-left" style="display:inline;text-decoration:underline">${leftOpen ? "Hide list" : "Show list"}</button>
        ${leftOpen ? `<div class="dd-soy-left">${r.left.map((x) => `
          <button type="button" class="dd-dc-row" data-action="view-student" data-name="${escapeHtml(x.name)}" data-class="${escapeHtml(x.cls)}" data-year="${year - 1}" data-open-year="1">
@@ -6453,10 +6542,21 @@ function renderStartOfYear() {
          </button>`).join("")}</div>` : ""}`;
   return `
       <div class="dd-dash-title" style="color:#1B2A41;margin:10px 0 6px">Start of Year ${year}</div>
-      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:12px">What to sort out when a new school year begins. Entries aren't changed.</div>
+      <div class="dd-mono-muted" style="font-size:12px;margin-bottom:12px">What to sort out when a new school year begins.</div>
       ${step(1, `Classes for ${year}`, r.classesDone, classesInner)}
       ${step(2, `Same-name questions${r.questions.length ? ` <span class="dd-dc-badge">${r.questions.length}</span>` : ""}`, r.questions.length === 0, qInner)}
       ${step(3, `Left school (P6 in ${year - 1})`, true, leftInner)}
+      ${(() => {
+        const p = r.purge, n = p.items.length;
+        const logs = [["incidents", "grooming"], ["suspensions", "suspension"], ["timeOuts", "time out"], ["parentMeetings", "parent meeting"]].filter(([k]) => p.byLog[k]).map(([k, w]) => `${p.byLog[k]} ${w}`).join(" · ");
+        const inner = state.purgeProgress
+          ? `<div class="dd-soy-text">Deleting… ${state.purgeProgress.done} of ${state.purgeProgress.total}</div>`
+          : n === 0
+            ? `<div class="dd-mono-muted" style="font-size:13px">Nothing to delete. Records are kept until two years after a student finishes P6.</div>`
+            : `<div class="dd-soy-text">${plainCount(n, "record", "records")} of ${plainCount(p.students, "student", "students")} who finished P6 in ${p.lastP6Year} or earlier (${logs}). They've been kept for two years after leaving and can now be deleted for good.</div>
+               <div class="dd-soy-btns"><button type="button" class="dd-add-btn" style="background:#A3372B" data-action="soy-purge-graduated">Delete ${plainCount(n, "record", "records")}</button></div>`;
+        return step(4, `Students who left more than two years ago${n ? ` <span class="dd-dc-badge">${n}</span>` : ""}`, n === 0 && !state.purgeProgress, inner);
+      })()}
       ${state.linkError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.linkError)}</div>` : ""}
       ${state.saveError ? `<div class="dd-error" style="margin-top:10px">${escapeHtml(state.saveErrorDetail || "Couldn't save.")}</div>` : ""}`;
 }
@@ -8862,7 +8962,7 @@ function renderIncidentDetail(it) {
       ${state.historyOpen[it.id] ? `<div class="dd-history">${history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="open-edit-incident" data-id="${it.id}">Edit entry</button>
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Delete Entry</button>
+        ${canDeleteRecord(it) ? `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-incident" data-id="${it.id}">Delete Entry</button>` : ""}
       </div>` : ""}
     </div>`;
 }
@@ -9238,7 +9338,7 @@ function renderSuspensionDetail(s) {
       ${state.historyOpen[s.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-suspension" data-id="${s.id}">Edit entry</button>
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Delete Entry</button>
+        ${canDeleteRecord(s) ? `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-suspension" data-id="${s.id}">Delete Entry</button>` : ""}
       </div>` : ""}
     </div>`;
 }
@@ -9618,7 +9718,7 @@ function renderTimeOutDetail(t) {
       ${state.historyOpen[t.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-timeout" data-id="${t.id}">Edit entry</button>
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-timeout" data-id="${t.id}">Delete Entry</button>
+        ${canDeleteRecord(t) ? `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-timeout" data-id="${t.id}">Delete Entry</button>` : ""}
       </div>` : ""}
     </div>`;
 }
@@ -9957,7 +10057,7 @@ function renderParentMeetingDetail(m) {
       ${state.historyOpen[m.id] ? `<div class="dd-history">${history.length === 0 ? `<div class="dd-history-item"><div class="dd-history-detail" style="color:#8A8571">No history recorded yet.</div></div>` : history.map((h) => `<div class="dd-history-item"><div class="dd-history-detail">${escapeHtml(h.detail)}</div><div class="dd-history-meta">${formatDateTime(h.at)} · ${escapeHtml(h.by)}</div></div>`).join("")}</div>` : ""}
       <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #C9C4B4;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="dd-add-btn" data-action="edit-pm" data-id="${m.id}">Edit entry</button>
-        <button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Delete Entry</button>
+        ${canDeleteRecord(m) ? `<button class="dd-add-btn" style="background:#A3372B" data-action="delete-pm" data-id="${m.id}">Delete Entry</button>` : ""}
       </div>` : ""}
     </div>`;
 }
@@ -10174,6 +10274,8 @@ function attachMainListeners() {
     el.addEventListener("click", () => { state.section = "settings"; state.settingsView = "startOfYear"; state.linkError = ""; state.saveError = false; window.scrollTo(0, 0); render(); }));
   document.querySelectorAll('[data-action="soy-confirm-classes"]').forEach((el) =>
     el.addEventListener("click", () => { el.disabled = true; confirmCarriedClasses(); }));
+  document.querySelectorAll('[data-action="soy-purge-graduated"]').forEach((el) =>
+    el.addEventListener("click", () => { const p = computeGraduatedPurge(); requestDeleteConfirmation("purgeGraduated", "", { message: `Delete ${plainCount(p.items.length, "record", "records")} for good?`, details: [["Students", `Finished P6 in ${p.lastP6Year} or earlier`], ["Records", String(p.items.length)], ["Undo", "Not possible"]] }); }));
   document.querySelectorAll('[data-action="soy-toggle-left"]').forEach((el) =>
     el.addEventListener("click", () => { state.soyLeftOpen = !state.soyLeftOpen; renderKeepingPageScroll(); }));
   document.querySelectorAll('[data-action="settings-open-datacheck"]').forEach((el) =>
@@ -10613,6 +10715,10 @@ function attachMainListeners() {
       d.editing = false; d.error = ""; d.before = null; d.typed = {}; render();
     }));
 
+  const installBtn = document.getElementById("btn-install-app");
+  if (installBtn) installBtn.addEventListener("click", runInstallPrompt);
+  const installLater = document.getElementById("btn-install-later");
+  if (installLater) installLater.addEventListener("click", () => { try { localStorage.setItem(INSTALL_SNOOZE_KEY, String(Date.now() + 14 * 864e5)); } catch { /* storage unavailable */ } render(); });
   const helpBtn = document.getElementById("btn-help");
   if (helpBtn) helpBtn.addEventListener("click", () => { state.showHelp = true; render(); });
   const tourReplayBtn = document.getElementById("btn-tour-replay");
