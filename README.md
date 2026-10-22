@@ -701,3 +701,16 @@ Phones narrower than an iPhone (many Androids, or a phone with a larger
 shrink it to fit the screen (the viewport script in `index.html`), so it
 looks the same as on an iPhone instead of re-wrapping text and buttons.
 Screens 390px and wider (iPhones, tablets, computers) are unchanged.
+
+## No day twice (Suspension / Time Out)
+
+A suspension or time out can't have the same date on two days. When a day is
+set to a date another day already has, that other day (and any it then bumps
+into) moves on to the next free school day, in date order
+(`setSuspDayDate()`): 2, 3, 4 Nov with the first day changed to 3 Nov becomes
+3, 4, 5 Nov. A day set apart from the rest (an outlier) clashes with nothing,
+so nothing else moves. Days set by hand keep their dates first; a moved
+in-school day goes back to "Pending Location". Adding days never creates a
+duplicate (`dedupeSuspDays()`), an older entry that already has a duplicate
+is straightened out when it's opened for editing, and Data Check lists any
+"Suspension or Time Out with the same day twice".

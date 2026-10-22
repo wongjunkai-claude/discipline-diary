@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.68.1";
+const APP_VERSION = "3.68.2";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -2708,6 +2708,62 @@ function onSuspClassChange(d, newClass, isTimeOut) {
   if (movedStart || oldLevel !== level) resetSuspDays(d);
   if (isTimeOut) regenerateTimeOutDates(d); else regenerateSuspDates(d);
 }
+// A suspension or time out can't have the same day twice. When a day is set
+// to a date another day already has, that day (and any it then bumps into)
+// moves to the next free school day, in date order. A day set apart from
+// the rest (an outlier) clashes with nothing, so nothing else moves.
+function setSuspDayDate(d, kind, idx, date, regen) {
+  if (!date) return;
+  const level = classLevel(d.studentClass);
+  const slots = [
+    ...(d.ossDates || []).map((dt, i) => ({ kind: "oss", i, old: dt, dt })),
+    ...(d.issDates || []).map((dt, i) => ({ kind: "iss", i, old: dt, dt })),
+  ];
+  const edited = slots.find((x) => x.kind === kind && x.i === idx);
+  if (!edited) return;
+  edited.dt = date;
+  const venues = d.issVenues || {}, admins = d.issAdministrators || {};
+  const first = (d.issDates || []).slice().sort()[0];
+  const same = d.issSame ? { v: venues[first] || "", a: admins[first] || "" } : null;
+  const taken = new Set([date]);
+  slots.filter((x) => x !== edited).sort((a, b) => a.dt.localeCompare(b.dt)).forEach((x) => {
+    while (taken.has(x.dt)) x.dt = nextSchoolDay(x.dt, level);
+    taken.add(x.dt);
+  });
+  // Every day now has a set date (so nothing is re-laid out from the start
+  // date), and an in-school day keeps its room/administrator only if its
+  // date didn't change.
+  const newVenues = {}, newAdmins = {};
+  slots.forEach((x) => {
+    if (x.kind === "oss") { d.ossDates[x.i] = x.dt; return; }
+    d.issDates[x.i] = x.dt;
+    if (!Array.isArray(d.issOverridden)) d.issOverridden = [];
+    d.issOverridden[x.i] = true;
+    if (same) { newVenues[x.dt] = same.v; newAdmins[x.dt] = same.a; }
+    else if (x.dt === x.old) { if (venues[x.old]) newVenues[x.dt] = venues[x.old]; if (admins[x.old]) newAdmins[x.dt] = admins[x.old]; }
+  });
+  d.issVenues = newVenues;
+  if (d.issAdministrators) d.issAdministrators = newAdmins;
+  regen(d);
+}
+// Last safety net after any re-layout: a date used twice moves the later
+// day on to the next free school day.
+function dedupeSuspDays(d) {
+  const level = classLevel(d.studentClass);
+  const taken = new Set();
+  const ov = d.issOverridden || [];
+  const fix = (arr, iss, only) => (arr || []).forEach((dt, i) => {
+    if (!dt || (only && !only(i))) return;
+    let x = dt;
+    while (taken.has(x)) x = nextSchoolDay(x, level);
+    if (x !== dt) { arr[i] = x; if (iss) { if (!Array.isArray(d.issOverridden)) d.issOverridden = []; d.issOverridden[i] = true; } }
+    taken.add(x);
+  });
+  // Days a teacher set by hand keep their date first.
+  fix(d.issDates, true, (i) => !!ov[i]);
+  fix(d.ossDates, false);
+  fix(d.issDates, true, (i) => !ov[i]);
+}
 function resetSuspDays(d) {
   d.ossDates = [];
   d.issDates = [];
@@ -2758,6 +2814,7 @@ function regenerateSuspDates(d) {
   }
   d.issDates = newIssDates;
   d.issOverridden = newOverridden;
+  dedupeSuspDays(d);
   const keptVenues = {};
   d.issDates.forEach((dt) => { if (d.issVenues && d.issVenues[dt]) keptVenues[dt] = d.issVenues[dt]; });
   d.issVenues = keptVenues;
@@ -2948,6 +3005,7 @@ function openEditSuspension(id) {
     totalDays: s.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
     ossDates, issDates, issOverridden: issDates.map(() => false), issVenues,
   };
+  dedupeSuspDays(state._suspDraft);
   state.suspFormError = "";
   render();
 }
@@ -3200,6 +3258,7 @@ function openEditTimeOut(id) {
     totalDays: t.totalDays || entries.length, issDays: issDates.length, ossDays: ossDates.length,
     ossDates, issDates, issOverridden: issDates.map(() => false), issVenues, issAdministrators,
   };
+  dedupeSuspDays(state._toDraft);
   state.toFormError = "";
   render();
 }
@@ -6368,6 +6427,7 @@ function computeDataCheck(year) {
     { key: "noClass", title: "No class", items: [] },
     { key: "badClass", title: `Class not in ${year}'s class list`, items: [] },
     { key: "dup", title: "Possible duplicates (same student, same day, same log)", items: [] },
+    { key: "dupDay", title: "Suspension or Time Out with the same day twice", items: [] },
     { key: "noType", title: "Time Out with no type", items: [] },
     { key: "noReason", title: "Suspension or Time Out with no reason", items: [] },
     { key: "noIssue", title: "Grooming entry with no issue", items: [] },
@@ -6388,6 +6448,7 @@ function computeDataCheck(year) {
         if (seen.has(k)) { const first = seen.get(k); if (!first.flagged) { G.dup.items.push(first.item); first.flagged = true; } G.dup.items.push(item); }
         else seen.set(k, { item, flagged: false });
       }
+      if (lg.key === "suspension" || lg.key === "timeOut") { const ds = suspensionDayEntries(x).map((e) => e.date); if (new Set(ds).size < ds.length) G.dupDay.items.push(item); }
       if (lg.key === "timeOut" && !x.toType) G.noType.items.push(item);
       if ((lg.key === "suspension" || lg.key === "timeOut") && !multiReasonsFromSaved(x).selected.length && !String(x.reason || "").trim()) G.noReason.items.push(item);
       if (lg.key === "grooming" && Array.isArray(x.issues) && x.issues.length === 0) G.noIssue.items.push(item);
@@ -9554,17 +9615,10 @@ function attachSuspFieldListeners(form, idPrefix, d) {
   });
 
   form.querySelectorAll(`.${idPrefix}-oss-date-input`).forEach((el) =>
-    el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; regenerateSuspDates(d); onChange(); }));
+    el.addEventListener("change", () => { setSuspDayDate(d, "oss", parseInt(el.dataset.idx, 10), el.value, regenerateSuspDates); onChange(); }));
 
   form.querySelectorAll(`.${idPrefix}-iss-date-input`).forEach((el) =>
-    el.addEventListener("change", () => {
-      const idx = parseInt(el.dataset.idx, 10);
-      if (!Array.isArray(d.issOverridden)) d.issOverridden = [];
-      d.issDates[idx] = el.value;
-      d.issOverridden[idx] = true;
-      regenerateSuspDates(d);
-      onChange();
-    }));
+    el.addEventListener("change", () => { setSuspDayDate(d, "iss", parseInt(el.dataset.idx, 10), el.value, regenerateSuspDates); onChange(); }));
 
   // Availability: tap a location to book it for that (fixed) in-school day,
   // tap the same location again to clear it back to "Pending Location".
@@ -9874,17 +9928,10 @@ function attachTimeOutFieldListeners(form, idPrefix, d) {
   });
 
   form.querySelectorAll(`.${idPrefix}-oss-date-input`).forEach((el) =>
-    el.addEventListener("change", () => { d.ossDates[parseInt(el.dataset.idx, 10)] = el.value; regenerateTimeOutDates(d); onChange(); }));
+    el.addEventListener("change", () => { setSuspDayDate(d, "oss", parseInt(el.dataset.idx, 10), el.value, regenerateTimeOutDates); onChange(); }));
 
   form.querySelectorAll(`.${idPrefix}-iss-date-input`).forEach((el) =>
-    el.addEventListener("change", () => {
-      const idx = parseInt(el.dataset.idx, 10);
-      if (!Array.isArray(d.issOverridden)) d.issOverridden = [];
-      d.issDates[idx] = el.value;
-      d.issOverridden[idx] = true;
-      regenerateTimeOutDates(d);
-      onChange();
-    }));
+    el.addEventListener("change", () => { setSuspDayDate(d, "iss", parseInt(el.dataset.idx, 10), el.value, regenerateTimeOutDates); onChange(); }));
 
   form.querySelectorAll(`.${idPrefix}-iss-venue-input`).forEach((el) =>
     el.addEventListener("input", () => { d.issVenues[el.dataset.date] = el.value; state.toFormError = ""; }));
