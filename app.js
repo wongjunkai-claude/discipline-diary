@@ -20,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const APP_VERSION = "3.68.2";
+const APP_VERSION = "3.69.0";
 
 // Paste the Web app URL from your Google Apps Script deployment here (see
 // apps-script.gs for setup steps). Leave as-is to skip Sheets logging.
@@ -1297,7 +1297,21 @@ async function runInstallPrompt() {
   render();
   try { await p.prompt(); await p.userChoice; } catch (e) { /* the browser closed it */ }
 }
+// The app has moved from GitHub Pages to Firebase Hosting. The old address
+// keeps working, but shows a bar sending teachers to the new one, where they
+// install the app again (an installed app is tied to its address).
+const NEW_APP_URL = "https://discipline-diary.web.app";
+function onOldAddress() { return /\.github\.io$/i.test(location.hostname); }
+function renderMovedBar() {
+  if (!onOldAddress()) return "";
+  return `<div class="dd-moved-bar" role="region" aria-label="New address">
+      <div class="dd-moved-title">Discipline Diary has a new address</div>
+      <div class="dd-moved-text">Open it, add it to your Home Screen and sign in, then delete this icon. Your records are all there.</div>
+      <a class="dd-moved-go" href="${NEW_APP_URL}" target="_blank" rel="noopener">Open the new address</a>
+    </div>`;
+}
 function renderInstallBar() {
+  if (onOldAddress()) return renderMovedBar();
   if (!installPrompt || isStandaloneApp() || installSnoozed()) return "";
   return `<div class="dd-install-bar" role="region" aria-label="Install"><span class="dd-install-text">Install Discipline Diary as an app</span><button type="button" class="dd-install-later" id="btn-install-later">Not now</button><button type="button" class="dd-install-go" id="btn-install-app">Install</button></div>`;
 }
@@ -7951,7 +7965,27 @@ function recentSchoolDays(n) {
 // Watchlist symbol: the last 4 school weeks against the 4 before (weighted
 // 1 grooming / 2 time out / 3 suspension), or a move up a risk level this
 // semester within the last 4 school weeks.
+// A suspension or time out that hasn't finished yet (coming up, or still
+// going on today) always shows the alert, whatever the 4-week comparison
+// says: the student isn't in a good place right now.
+function pendingCaseFor(key) {
+  const today = todayISO();
+  let best = null;
+  [["suspension", state.suspensions, "Suspension"], ["timeOut", state.timeOuts, "Time out"]].forEach(([kind, list, word]) => {
+    (list || []).forEach((r) => {
+      if (r.deleted || !r.studentName) return;
+      const ds = suspensionDayEntries(r).map((x) => x.date).filter(Boolean).sort();
+      const first = ds[0] || r.startDate, last = ds[ds.length - 1] || r.startDate;
+      if (!first || last < today) return;
+      if (chainKeyFor(r.studentName, r.studentClass, r.startDate || first) !== key) return;
+      if (!best || first < best.first) best = { first, word, now: first <= today };
+    });
+  });
+  return best;
+}
 function recentDirection(entries, key) {
+  const pend = pendingCaseFor(key);
+  if (pend) return { dir: "up", title: pend.now ? `${pend.word} in progress` : `${pend.word} coming up on ${formatDate(pend.first)}` };
   const days = recentSchoolDays(40);
   if (days.length < 40) return null;
   const recStart = days[19], prevStart = days[39], prevEnd = addDays(recStart, -1), today = todayISO();
@@ -8204,7 +8238,7 @@ function renderDashboardSection() {
             ${RISK_TIER_CRITERIA.map((t) => `
             <div class="dd-risk-info-tier">${t.tier}</div>
             <ul class="dd-risk-info-list">${t.criteria.map((c) => `<li>${c}</li>`).join("")}</ul>`).join("")}
-            <div class="dd-risk-info-note" style="margin-top:8px"><span class="dd-watch-move">${ICON_WORSE}</span> worsening / <span class="dd-watch-move">${ICON_BETTER}</span> improving: the last 4 school weeks compared with the 4 before, or a move up a risk level in the last 4 school weeks. The same whichever period is chosen. Not shown for a single entry.</div>
+            <div class="dd-risk-info-note" style="margin-top:8px"><span class="dd-watch-move">${ICON_WORSE}</span> worsening / <span class="dd-watch-move">${ICON_BETTER}</span> improving: the last 4 school weeks compared with the 4 before, or a move up a risk level in the last 4 school weeks. A suspension or time out that is coming up or still going on always shows the alert. The same whichever period is chosen. Not shown for a single entry.</div>
           </div>` : ""}
           <div class="dd-range-pills" style="flex-wrap:nowrap">
             <button type="button" class="dd-range-pill${watchTier === "high" ? " active" : ""}" style="flex:1" data-action="set-watch-tier" data-tier="high">High Risk</button>

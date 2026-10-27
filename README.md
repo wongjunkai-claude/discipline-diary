@@ -714,3 +714,30 @@ in-school day goes back to "Pending Location". Adding days never creates a
 duplicate (`dedupeSuspDays()`), an older entry that already has a duplicate
 is straightened out when it's opened for editing, and Data Check lists any
 "Suspension or Time Out with the same day twice".
+
+**Watchlist alert for a case still to come.** A student with a suspension or
+time out that is coming up, or still going on today, always shows the red !
+(`pendingCaseFor()`), whatever the 4-week comparison says; the tooltip reads
+e.g. "Suspension coming up on 28 Oct 2026" or "Suspension in progress". Once
+its last day has passed, the usual comparison applies again.
+
+## Hosting on Firebase
+
+`firebase.json` publishes this folder with Firebase Hosting (the README,
+Apps Script and rules files aren't published). The HTML/JS/CSS/JSON files
+are sent with `Cache-Control: no-cache`, so phones always check for a newer
+version; icons and fonts are cached for a week. Publish with:
+
+    firebase deploy --only hosting --project discipline-diary
+
+The app is then at https://discipline-diary.web.app (and
+https://discipline-diary.firebaseapp.com).
+
+## Moving from GitHub Pages to Firebase Hosting
+
+The same files run on both addresses. On the old GitHub address
+(`*.github.io`) the app shows a "Discipline Diary has a new address" bar with
+an **Open the new address** button (https://discipline-diary.web.app);
+teachers open it, add it to their Home Screen, sign in, and delete the old
+icon. The bar never shows on the Firebase address. Publish each version to
+both until everyone has moved.

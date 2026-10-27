@@ -1528,3 +1528,9 @@ html.dd-pdf-render .dd-rep-insight { font-size: 11px; }
 .dd-install-later { background: none; color: #8A8571; padding-left: 4px !important; padding-right: 4px !important; }
 .dd-install-go { background: #1B2A41; color: #fff; }
 
+
+/* "Discipline Diary has a new address" bar, on the old GitHub address only. */
+.dd-moved-bar { background: #FBEFD9; border-bottom: 2px solid #B8863B; padding: 12px 16px 14px; font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1B2A41; }
+.dd-moved-title { font-size: 15px; font-weight: 700; margin-bottom: 3px; }
+.dd-moved-text { font-size: 13px; line-height: 1.45; color: #4A4536; margin-bottom: 10px; }
+.dd-moved-go { display: inline-block; background: #1B2A41; color: #fff; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 8px; padding: 9px 14px; }
